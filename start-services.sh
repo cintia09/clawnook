@@ -236,6 +236,27 @@ start_gateway() {
     GATEWAY_PID=$!
 }
 
+start_web_panel() {
+    echo "[start-services] Starting Web management panel on port 3000..."
+    cd /opt/openclaw-web || {
+        echo "[start-services] ERROR: /opt/openclaw-web not found"
+        return 1
+    }
+    nohup node server.js >> "$LOG_DIR/web-panel.log" 2>&1 &
+    WEB_PID=$!
+    echo "[start-services] Web panel PID: $WEB_PID"
+    return 0
+}
+
+web_is_healthy() {
+    local web_code
+    web_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ 2>/dev/null)
+    if [ "$web_code" = "200" ] || [ "$web_code" = "302" ] || [ "$web_code" = "401" ]; then
+        return 0
+    fi
+    return 1
+}
+
 gateway_is_healthy() {
     # 优先用健康检查接口判断（进程存在但卡死也能识别）
     local code
@@ -276,11 +297,7 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 # --- 2. 启动 Web 管理面板 ---
-echo "[start-services] Starting Web management panel on port 3000..."
-cd /opt/openclaw-web
-node server.js >> "$LOG_DIR/web-panel.log" 2>&1 &
-WEB_PID=$!
-echo "[start-services] Web panel PID: $WEB_PID"
+start_web_panel
 
 # 等待 Web 面板就绪（仅用于日志诊断，不阻塞启动）
 for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -380,7 +397,7 @@ echo "[start-services] All services started."
 
 # --- 4. 健康检查循环 ---
 while true; do
-    sleep 30
+    sleep 10
 
     # 检查 Gateway（仅在 openclaw 已安装时）
     if [ "$HAS_OPENCLAW" = "true" ] && ! gateway_is_healthy; then
@@ -389,11 +406,13 @@ while true; do
     fi
 
     # 检查 Web 面板
-    if ! kill -0 $WEB_PID 2>/dev/null; then
-        echo "[health] WARNING: Web panel died, restarting..."
-        cd /opt/openclaw-web
-        node server.js >> "$LOG_DIR/web-panel.log" 2>&1 &
-        WEB_PID=$!
+    if ! web_is_healthy; then
+        echo "[health] WARNING: Web panel unhealthy or down, restarting..."
+        if [ -n "${WEB_PID:-}" ]; then
+            kill -9 "$WEB_PID" 2>/dev/null || true
+        fi
+        pkill -f "node server.js" 2>/dev/null || true
+        start_web_panel
     fi
 
     # 检查 Caddy
