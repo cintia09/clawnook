@@ -507,7 +507,7 @@ function compareSemver(a, b) {
   return va.pre > vb.pre ? 1 : -1;
 }
 
-async function getLatestOpenClawVersion() {
+async function getLatestOpenClawVersion(timeoutMs = 2500) {
   const urls = [
     'https://registry.npmjs.org/openclaw/latest',
     'https://registry.npmmirror.com/openclaw/latest'
@@ -517,7 +517,7 @@ async function getLatestOpenClawVersion() {
     try {
       const resp = await fetchWithFallback(url, {
         headers: { 'User-Agent': 'openclaw-pro' },
-        timeout: 8000
+        timeout: timeoutMs
       });
       if (!resp || !resp.ok) continue;
       const data = await resp.json();
@@ -527,6 +527,42 @@ async function getLatestOpenClawVersion() {
   }
 
   return '';
+}
+
+const latestOpenClawVersionCache = {
+  version: '',
+  error: '',
+  checking: false,
+  updatedAt: 0,
+  lastAttemptAt: 0
+};
+const LATEST_VERSION_CACHE_TTL_MS = 10 * 60 * 1000;
+const LATEST_VERSION_ATTEMPT_GAP_MS = 30 * 1000;
+
+async function refreshLatestOpenClawVersionCache({ force = false } = {}) {
+  const now = Date.now();
+  if (latestOpenClawVersionCache.checking) return;
+  if (!force && latestOpenClawVersionCache.updatedAt && (now - latestOpenClawVersionCache.updatedAt) < LATEST_VERSION_CACHE_TTL_MS) return;
+  if (!force && latestOpenClawVersionCache.lastAttemptAt && (now - latestOpenClawVersionCache.lastAttemptAt) < LATEST_VERSION_ATTEMPT_GAP_MS) return;
+
+  latestOpenClawVersionCache.checking = true;
+  latestOpenClawVersionCache.lastAttemptAt = now;
+  try {
+    const version = await getLatestOpenClawVersion(2500);
+    if (version) {
+      latestOpenClawVersionCache.version = version;
+      latestOpenClawVersionCache.error = '';
+      latestOpenClawVersionCache.updatedAt = Date.now();
+    } else {
+      latestOpenClawVersionCache.error = '无法连接版本源';
+      if (!latestOpenClawVersionCache.updatedAt) latestOpenClawVersionCache.updatedAt = Date.now();
+    }
+  } catch (e) {
+    latestOpenClawVersionCache.error = e?.message || String(e || '版本检查失败');
+    if (!latestOpenClawVersionCache.updatedAt) latestOpenClawVersionCache.updatedAt = Date.now();
+  } finally {
+    latestOpenClawVersionCache.checking = false;
+  }
 }
 
 function createTerminalShell() {
@@ -1715,11 +1751,14 @@ app.get('/api/openclaw', async (req, res) => {
     let latestVersion = '';
     let updateCheckError = '';
     if (installed) {
-      try {
-        latestVersion = await getLatestOpenClawVersion();
-      } catch (e) {
-        updateCheckError = e?.message || String(e || '');
+      const forceCheck = String(req.query.force || '') === '1';
+      if (forceCheck) {
+        await refreshLatestOpenClawVersionCache({ force: true });
+      } else {
+        refreshLatestOpenClawVersionCache().catch(() => {});
       }
+      latestVersion = latestOpenClawVersionCache.version || '';
+      updateCheckError = latestVersion ? '' : (latestOpenClawVersionCache.error || '');
     }
 
     const hasUpdate = !!(installed && version && latestVersion && compareSemver(latestVersion, version) > 0);
