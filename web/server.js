@@ -1249,9 +1249,12 @@ function buildOpenClawNpmInstallCommand() {
     'npm config set registry https://registry.npmmirror.com',
     'npm install -g openclaw@latest',
     'NPM_PREFIX="$(npm config get prefix 2>/dev/null || echo /usr/local)"',
-    'case ":$PATH:" in *":${NPM_PREFIX}/bin:"*) ;; *) export PATH="$PATH:${NPM_PREFIX}/bin" ;; esac',
+    'case ":$PATH:" in',
+    '  *":${NPM_PREFIX}/bin:"*) ;;',
+    '  *) export PATH="$PATH:${NPM_PREFIX}/bin" ;;',
+    'esac',
     'openclaw -v || openclaw --version'
-  ].join('; ');
+  ].join('\n');
 }
 
 app.post('/api/openclaw/update', (req, res) => {
