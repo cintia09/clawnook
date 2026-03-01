@@ -123,6 +123,18 @@ try {
 const app = express();
 app.set('trust proxy', true);
 
+const terminalBackendState = {
+  wsEnabled: !!WebSocketServer,
+  ready: !!WebSocketServer,
+  mode: 'unknown',
+  reason: WebSocketServer ? '' : 'ws package not available',
+  updatedAt: Date.now()
+};
+
+function setTerminalBackendState(patch = {}) {
+  Object.assign(terminalBackendState, patch, { updatedAt: Date.now() });
+}
+
 const terminalWsTokens = new Map();
 
 function issueTerminalWsToken(username) {
@@ -254,6 +266,11 @@ function runCommandText(cmd, timeoutMs = 2500) {
 }
 
 function createTerminalShell() {
+  const hasBash = runCommandOk('command -v bash >/dev/null 2>&1', 800);
+  if (!hasBash) {
+    return { shell: null, mode: 'unavailable', reason: 'bash not found' };
+  }
+
   const useScriptPty = runCommandOk('command -v script >/dev/null 2>&1', 800);
   if (useScriptPty) {
     return {
@@ -261,7 +278,8 @@ function createTerminalShell() {
         env: { ...process.env, TERM: 'xterm-256color', SHELL: '/bin/bash' },
         cwd: '/root'
       }),
-      mode: 'pty'
+      mode: 'pty',
+      reason: ''
     };
   }
 
@@ -270,7 +288,8 @@ function createTerminalShell() {
       env: { ...process.env, TERM: 'xterm-256color', SHELL: '/bin/bash' },
       cwd: '/root'
     }),
-    mode: 'fallback'
+    mode: 'fallback',
+    reason: 'script not found; using bash fallback'
   };
 }
 
@@ -1102,6 +1121,14 @@ app.get('/api/status', (req, res) => {
     status.browser = false;
   }
 
+  status.terminal = {
+    wsEnabled: !!terminalBackendState.wsEnabled,
+    ready: !!terminalBackendState.ready,
+    mode: terminalBackendState.mode || 'unknown',
+    reason: terminalBackendState.reason || '',
+    updatedAt: terminalBackendState.updatedAt || 0
+  };
+
   const statusElapsed = Date.now() - statusStart;
   if (statusElapsed > 1200 || req.query.debug === '1') {
     console.log(`[status] elapsed=${statusElapsed}ms gateway=${status.gateway} caddy=${status.caddy} browser=${status.browser} version=${status.version}`);
@@ -1578,11 +1605,23 @@ if (WebSocketServer) {
     }
 
     if (!authenticated) {
+      setTerminalBackendState({ ready: false, reason: 'unauthorized websocket terminal request' });
       try { ws.close(1008, 'unauthorized'); } catch {}
       return;
     }
 
-    const { shell, mode } = createTerminalShell();
+    const { shell, mode, reason } = createTerminalShell();
+
+    if (!shell) {
+      setTerminalBackendState({ wsEnabled: true, ready: false, mode: mode || 'unavailable', reason: reason || 'terminal shell unavailable' });
+      try {
+        ws.send(JSON.stringify({ type: 'output', data: `\n[terminal] ${reason || 'terminal shell unavailable'}\n` }));
+      } catch {}
+      try { ws.close(1011, 'terminal-unavailable'); } catch {}
+      return;
+    }
+
+    setTerminalBackendState({ wsEnabled: true, ready: true, mode, reason: mode === 'fallback' ? (reason || '') : '' });
 
     const sendOutput = (data) => {
       if (ws.readyState !== 1) return;
@@ -1603,11 +1642,15 @@ if (WebSocketServer) {
 
     shell.on('close', (code) => {
       sendOutput(`\n[terminal] shell exited (code=${code ?? 0})\n`);
+      if (Number(code || 0) !== 0) {
+        setTerminalBackendState({ ready: false, mode, reason: `shell exited with code ${code}` });
+      }
       try { ws.close(); } catch {}
     });
 
     shell.on('error', (err) => {
       sendOutput(`\n[terminal] shell error: ${err.message}\n`);
+      setTerminalBackendState({ ready: false, mode, reason: `shell error: ${err.message}` });
       try { ws.close(); } catch {}
     });
 
@@ -1638,6 +1681,7 @@ if (WebSocketServer) {
     ws.on('error', cleanup);
   });
 } else {
+  setTerminalBackendState({ wsEnabled: false, ready: false, mode: 'unavailable', reason: 'ws package not available' });
   console.warn('[web] ws package not available: /api/ws/logs and /api/ws/terminal disabled');
 }
 
