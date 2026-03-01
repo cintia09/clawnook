@@ -9,6 +9,10 @@
 # ── dnsmasq 本地 DNS 缓存：让容器拥有独立的 DNS 解析能力 ──
 echo "[start-services] Setting up dnsmasq local DNS cache..."
 
+DNSMASQ_OK="false"
+RESOLV_BACKUP="/tmp/openclaw-resolv.conf.bak"
+cp /etc/resolv.conf "$RESOLV_BACKUP" 2>/dev/null || true
+
 # 1) 从当前 resolv.conf 提取原始上游 DNS（Docker 分配的 nameserver）
 ORIG_NS=$(grep '^nameserver' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | head -3)
 
@@ -33,16 +37,39 @@ echo "server=8.8.8.8" >> /etc/dnsmasq.conf
 echo "server=8.8.4.4" >> /etc/dnsmasq.conf
 echo "server=1.1.1.1" >> /etc/dnsmasq.conf
 
-# 3) 启动 dnsmasq
-dnsmasq --test 2>/dev/null && {
-    dnsmasq
-    echo "[start-services] dnsmasq started on 127.0.0.1:53"
-} || {
-    echo "[start-services] dnsmasq config error, skipping"
-}
+# 3) 启动 dnsmasq（必须确认真实启动成功）
+if command -v dnsmasq >/dev/null 2>&1 && dnsmasq --test >/dev/null 2>&1; then
+    pkill -x dnsmasq >/dev/null 2>&1 || true
+    dnsmasq >/tmp/openclaw-dnsmasq.err 2>&1 || true
+    sleep 0.2
+    if pgrep -x dnsmasq >/dev/null 2>&1; then
+        DNSMASQ_OK="true"
+        echo "[start-services] dnsmasq started on 127.0.0.1:53"
+    else
+        echo "[start-services] dnsmasq failed to start, fallback to direct DNS"
+        if [ -s /tmp/openclaw-dnsmasq.err ]; then
+            echo "[start-services] dnsmasq error: $(tail -1 /tmp/openclaw-dnsmasq.err)"
+        fi
+    fi
+else
+    echo "[start-services] dnsmasq unavailable or config invalid, fallback to direct DNS"
+fi
 
-# 4) 将 resolv.conf 指向本地 dnsmasq
-echo "nameserver 127.0.0.1" > /etc/resolv.conf
+# 4) 仅在 dnsmasq 可用时将 resolv.conf 指向本地 DNS
+if [ "$DNSMASQ_OK" = "true" ]; then
+    echo "nameserver 127.0.0.1" > /etc/resolv.conf
+else
+    if [ -s "$RESOLV_BACKUP" ]; then
+        cp "$RESOLV_BACKUP" /etc/resolv.conf 2>/dev/null || true
+    fi
+    if ! grep -q '^nameserver ' /etc/resolv.conf 2>/dev/null; then
+        {
+            echo "nameserver 1.1.1.1"
+            echo "nameserver 8.8.8.8"
+            echo "nameserver 8.8.4.4"
+        } > /etc/resolv.conf
+    fi
+fi
 
 # ── DNS 保障：确保容器能解析外部域名 ──
 # DNS-over-HTTPS 解析函数：通过 HTTPS 查询 Cloudflare DoH（绕过传统 DNS）
@@ -97,7 +124,7 @@ else
 fi
 
 # DNS nameserver 保障（通过 dnsmasq 测试，如果 dnsmasq 也不行则直连公共 DNS）
-if ! nslookup google.com 127.0.0.1 > /dev/null 2>&1; then
+if [ "$DNSMASQ_OK" = "true" ] && ! nslookup google.com 127.0.0.1 > /dev/null 2>&1; then
     echo "[start-services] dnsmasq upstream unreachable, adding direct public DNS as fallback"
     # 在 dnsmasq 后面追加直连 DNS，作为最后兜底
     echo "nameserver 8.8.8.8" >> /etc/resolv.conf
@@ -211,6 +238,7 @@ start_gateway() {
 
 gateway_is_healthy() {
     # 优先用健康检查接口判断（进程存在但卡死也能识别）
+    local code
     code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18789/health 2>/dev/null)
     if [ "$code" = "200" ] || [ "$code" = "401" ] || [ "$code" = "403" ]; then
         return 0
@@ -253,6 +281,17 @@ cd /opt/openclaw-web
 node server.js >> "$LOG_DIR/web-panel.log" 2>&1 &
 WEB_PID=$!
 echo "[start-services] Web panel PID: $WEB_PID"
+
+# 等待 Web 面板就绪（仅用于日志诊断，不阻塞启动）
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    web_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ 2>/dev/null)
+    if [ "$web_code" = "200" ] || [ "$web_code" = "302" ] || [ "$web_code" = "401" ]; then
+        echo "[start-services] Web panel healthy (attempt $i, code=$web_code)"
+        break
+    fi
+    [ "$i" = "10" ] && echo "[start-services] Web panel not ready yet (last code=${web_code:-none}), continue in background"
+    sleep 1
+done
 
 # --- 3. 启动浏览器服务（可选） ---
 if [ "$BROWSER_ENABLED" = "true" ]; then
