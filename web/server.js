@@ -171,6 +171,7 @@ app.use((req, res, next) => {
 const PORT = 3000;
 
 const CONFIG_PATH = '/root/.openclaw/openclaw.json';
+const WEB_AI_CONFIG_PATH = '/root/.openclaw/web-ai-config.json';
 const DOCKER_CONFIG_PATH = '/root/.openclaw/docker-config.json';
 const STT_CONFIG_PATH = '/root/.openclaw/stt-config.json';
 const PLUGINS_STATE_PATH = '/root/.openclaw/plugins-state.json';
@@ -196,6 +197,22 @@ function readJson(p, fallback) {
 function writeJson(p, obj) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify(obj, null, 2), { mode: 0o600 });
+}
+
+function repairOpenClawConfigProviders() {
+  const cfg = readJson(CONFIG_PATH, null);
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return false;
+  if (!Object.prototype.hasOwnProperty.call(cfg, 'providers')) return false;
+
+  const backupPath = `${CONFIG_PATH}.bak.providers-${Date.now()}`;
+  try {
+    fs.copyFileSync(CONFIG_PATH, backupPath);
+  } catch {}
+
+  delete cfg.providers;
+  writeJson(CONFIG_PATH, cfg);
+  console.log('[config] removed legacy providers from openclaw.json to keep gateway schema valid');
+  return true;
 }
 
 function deepMerge(target, source) {
@@ -238,6 +255,7 @@ function ensureGatewayWatchdog(callback) {
 }
 
 function restartGatewayForeground(callback) {
+  repairOpenClawConfigProviders();
   ensureGatewayWatchdog((watchdogErr, watchdogStdout, watchdogStderr) => {
     if (watchdogErr) {
       return callback(watchdogErr, watchdogStdout, watchdogStderr);
@@ -759,10 +777,10 @@ app.post('/api/bootstrap/setup', (req, res) => {
 // Openclaw config helpers
 // ============================================================
 function readConfig() {
-  return readJson(CONFIG_PATH, {});
+  return readJson(WEB_AI_CONFIG_PATH, {});
 }
 function writeConfig(config) {
-  writeJson(CONFIG_PATH, config);
+  writeJson(WEB_AI_CONFIG_PATH, config);
 }
 
 // ============================================================
@@ -1253,6 +1271,7 @@ app.post('/api/docker-config', (req, res) => {
 // API: config (basic; keep legacy behavior)
 // ============================================================
 app.get('/api/config', (req, res) => {
+  repairOpenClawConfigProviders();
   const config = readConfig();
   const safe = JSON.parse(JSON.stringify(config));
   if (safe.providers) {
@@ -1265,6 +1284,7 @@ app.get('/api/config', (req, res) => {
 
 app.post('/api/config', (req, res) => {
   try {
+    repairOpenClawConfigProviders();
     const config = readConfig();
     const updates = req.body || {};
     deepMerge(config, updates);
@@ -1840,5 +1860,6 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
+  repairOpenClawConfigProviders();
   console.log(`[web] OpenClaw Web 管理面板启动: http://0.0.0.0:${PORT}`);
 });
