@@ -696,10 +696,15 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
     toast('配置恢复完成', r.changed ? '已修复并建议重启 Gateway' : '未发现需要修复的配置项');
     setTimeout(refreshOpenClaw, 800);
   } else {
-    const err = r.error || '未知错误';
+    const isEmptyResponse = r && typeof r === 'object' && Object.keys(r).length === 0;
+    const err = r.error || (isEmptyResponse
+      ? '接口返回空响应（可能会话失效或页面缓存未更新，请刷新后重试）'
+      : '未知错误');
     appendOcLogLine(`[repair] 失败: ${err}`);
     if (/请求超时/.test(err)) {
       appendOcLogLine('[repair] 提示: 后端可能仍在执行，请稍后刷新状态并查看日志。');
+    } else if (/空响应|缓存未更新|会话失效/.test(err)) {
+      appendOcLogLine('[repair] 提示: 请强制刷新页面后重试（macOS: Command+Shift+R）。');
     }
     toast('配置恢复失败', err);
   }
@@ -720,8 +725,14 @@ $('btn-oc-install').addEventListener('click', async ()=>{
       appendOcLogLine('[openclaw] 未安装，正在提交安装任务...');
       const i = await api('/api/openclaw/install', { method:'POST' });
       if (!i.taskId){
-        const detail = i.error || `接口返回异常（${JSON.stringify(i || {}) || 'empty'}）`;
+        const isEmptyResponse = i && typeof i === 'object' && Object.keys(i).length === 0;
+        const detail = i.error || (isEmptyResponse
+          ? '接口返回空响应（可能会话失效或页面缓存未更新，请刷新后重试）'
+          : `接口返回异常（${JSON.stringify(i || {}) || 'empty'}）`);
         appendOcLogLine(`[openclaw] 安装启动失败: ${detail}`);
+        if (/空响应|缓存未更新|会话失效/.test(detail)) {
+          appendOcLogLine('[openclaw] 提示: 请强制刷新页面后重试（macOS: Command+Shift+R）。');
+        }
         toast('安装失败', detail);
         return;
       }
@@ -752,8 +763,14 @@ $('btn-oc-install').addEventListener('click', async ()=>{
     appendOcLogLine(`[openclaw] 检测到新版本：${current.version} -> ${current.latestVersion}，开始更新...`);
     const r = await api('/api/openclaw/update', { method:'POST' });
     if (!r.taskId){
-      const detail = r.error || `接口返回异常（${JSON.stringify(r || {}) || 'empty'}）`;
+      const isEmptyResponse = r && typeof r === 'object' && Object.keys(r).length === 0;
+      const detail = r.error || (isEmptyResponse
+        ? '接口返回空响应（可能会话失效或页面缓存未更新，请刷新后重试）'
+        : `接口返回异常（${JSON.stringify(r || {}) || 'empty'}）`);
       appendOcLogLine(`[openclaw] 更新启动失败: ${detail}`);
+      if (/空响应|缓存未更新|会话失效/.test(detail)) {
+        appendOcLogLine('[openclaw] 提示: 请强制刷新页面后重试（macOS: Command+Shift+R）。');
+      }
       toast('更新失败', detail);
       return;
     }
