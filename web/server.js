@@ -1507,8 +1507,8 @@ if (WebSocketServer) {
       return;
     }
 
-    const shell = spawn('bash', ['-li'], {
-      env: { ...process.env, TERM: 'xterm-256color' },
+    const shell = spawn('script', ['-qf', '-c', 'bash -li', '/dev/null'], {
+      env: { ...process.env, TERM: 'xterm-256color', SHELL: '/bin/bash' },
       cwd: '/root'
     });
 
@@ -1519,7 +1519,7 @@ if (WebSocketServer) {
       } catch {}
     };
 
-    sendOutput('OpenClaw Terminal connected. 输入命令并回车执行。\n');
+    sendOutput('OpenClaw Terminal connected (PTY). 输入命令并回车执行。\n');
 
     shell.stdout.on('data', (chunk) => sendOutput(chunk.toString('utf8')));
     shell.stderr.on('data', (chunk) => sendOutput(chunk.toString('utf8')));
@@ -1539,6 +1539,10 @@ if (WebSocketServer) {
         const msg = JSON.parse(String(raw || '{}'));
         if (msg.type === 'input' && typeof msg.data === 'string') {
           shell.stdin.write(msg.data);
+        } else if (msg.type === 'resize') {
+          const cols = Math.max(20, Math.min(500, Number(msg.cols) || 80));
+          const rows = Math.max(8, Math.min(200, Number(msg.rows) || 24));
+          shell.stdin.write(`stty cols ${cols} rows ${rows}\n`);
         }
       } catch {
         // ignore invalid payload

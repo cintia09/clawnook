@@ -792,6 +792,7 @@ document.addEventListener('click', async (e)=>{
 // ------------------------
 let termWs = null;
 let terminalBound = false;
+let termResizeTimer = null;
 
 function termAppendText(text){
   const el = $('terminal');
@@ -812,12 +813,26 @@ function sendTerminalData(data){
   return true;
 }
 
+function sendTerminalResize(){
+  if (!termWs || termWs.readyState !== WebSocket.OPEN) return;
+  const el = $('terminal');
+  if (!el) return;
+  const cols = Math.max(40, Math.floor(el.clientWidth / 8));
+  const rows = Math.max(12, Math.floor(el.clientHeight / 18));
+  termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+}
+
 function bindTerminalInteraction(){
   if (terminalBound) return;
   const terminalEl = $('terminal');
   if (!terminalEl) return;
 
   terminalEl.addEventListener('click', () => terminalEl.focus());
+
+  window.addEventListener('resize', () => {
+    if (termResizeTimer) clearTimeout(termResizeTimer);
+    termResizeTimer = setTimeout(sendTerminalResize, 120);
+  });
 
   terminalEl.addEventListener('keydown', (e) => {
     if (!termWs || termWs.readyState !== WebSocket.OPEN) {
@@ -881,8 +896,9 @@ function terminalConnect(){
 
   termWs.onopen = ()=> {
     $('term-state').textContent = '已连接';
-    termAppendText('[terminal] 已连接。直接在此区域输入命令并按回车执行。\n');
+    termAppendText('[terminal] 已连接（PTY）。直接在此区域输入命令并按回车执行。\n');
     $('terminal')?.focus();
+    sendTerminalResize();
   };
   termWs.onclose = ()=> {
     $('term-state').textContent = '已断开';
