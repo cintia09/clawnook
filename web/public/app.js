@@ -13,11 +13,16 @@ function qa(sel, root=document){ return Array.from(root.querySelectorAll(sel)); 
 // API helper
 // ------------------------
 async function api(url, opts={}){
+  const timeoutMs = Number(opts.timeoutMs || 15000);
+  const { timeoutMs: _ignoreTimeoutMs, ...fetchOpts } = opts;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try{
     const res = await fetch(url, {
       headers: { 'Content-Type': 'application/json' },
-      ...opts,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
+      ...fetchOpts,
+      signal: controller.signal,
+      body: fetchOpts.body ? JSON.stringify(fetchOpts.body) : undefined
     });
 
     if (res.status === 401){
@@ -30,7 +35,10 @@ async function api(url, opts={}){
     return data;
   }catch(e){
     console.error('api error', e);
+    if (e && e.name === 'AbortError') return { error: `请求超时（>${timeoutMs}ms）` };
     return { error: e.message };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -180,8 +188,11 @@ function formatUptime(sec){
 }
 
 async function refreshStatus(){
-  const s = await api('/api/status');
-  if (s.error) return;
+  if (window.__statusRefreshing) return;
+  window.__statusRefreshing = true;
+  try {
+    const s = await api('/api/status');
+    if (s.error) return;
 
   $('kpi-gateway').innerHTML = s.gateway
     ? `<span class="pulse online"></span>在线`
@@ -199,8 +210,11 @@ async function refreshStatus(){
   $('sidebar-status').textContent = s.gateway ? '● ONLINE' : '● OFFLINE';
 
   // Update sidebar version
-  if (s.version && s.version !== 'unknown') {
-    $('sidebar-version').textContent = s.version;
+    if (s.version && s.version !== 'unknown') {
+      $('sidebar-version').textContent = s.version;
+    }
+  } finally {
+    window.__statusRefreshing = false;
   }
 }
 
@@ -285,7 +299,19 @@ async function checkForUpdate(force = false) {
   return u;
 }
 
-$('btn-refresh-status').addEventListener('click', refreshStatus);
+$('btn-refresh-status').addEventListener('click', async ()=>{
+  const btn = $('btn-refresh-status');
+  if (!btn) return;
+  const oldText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '刷新中...';
+  try {
+    await refreshStatus();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+});
 $('btn-restart-gateway').addEventListener('click', async ()=>{
   const r = await api('/api/restart', { method:'POST' });
   toast(r.success ? '已触发重启' : '重启失败', r.output || r.error || '');
