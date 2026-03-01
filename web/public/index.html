@@ -123,9 +123,12 @@
               <div class="card" style="grid-column: span 3;">
                 <h2>资源</h2>
                 <div class="kpi"><div>
-                  <div class="big" id="kpi-memory">—</div>
+                  <button class="btn btn-primary" id="btn-oc-install">安装</button>
+                  <button class="btn" id="btn-oc-check-update">检查更新</button>
                   <div class="sub" id="kpi-uptime">—</div>
                 </div></div>
+                <div class="muted small" id="oc-update-status" style="margin-top:10px">更新状态：待检查</div>
+                <div class="muted small" style="margin-top:4px">当前：<span id="oc-current-ver">—</span> · 最新：<span id="oc-latest-ver">—</span></div>
               </div>
             </div>
           </div>
@@ -185,8 +188,10 @@
                 <div class="row">
                   <button class="btn" id="btn-ai-load">读取当前配置</button>
                   <button class="btn btn-primary" id="btn-ai-save">保存</button>
+                  <button class="btn" id="btn-ai-copilot-login" hidden>GitHub Copilot 登录</button>
                 </div>
               </div>
+              <div class="muted small" id="ai-status" style="margin-top:8px">状态：待读取</div>
               <div class="sep"></div>
               <div class="grid">
                 <div style="grid-column: span 6;">
@@ -220,6 +225,9 @@
                     <div class="label"><span>Base URL（自定义）</span></div>
                     <input class="input" id="ai-custom-url" placeholder="https://api.example.com/v1" />
                   </div>
+                </div>
+                <div style="grid-column: span 12;">
+                  <pre class="terminal" id="ai-auth-log" style="height:180px"></pre>
                 </div>
               </div>
             </div>

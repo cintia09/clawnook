@@ -297,6 +297,71 @@ function runCommandText(cmd, timeoutMs = 2500) {
   }
 }
 
+function extractJsonObject(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {}
+
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    const candidate = raw.slice(first, last + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+  }
+  return null;
+}
+
+function runOpenClawCli(command, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const escaped = String(command).replace(/'/g, `"'"'`);
+    exec(`bash --noprofile --norc -lc '${escaped}'`, { timeout: timeoutMs, env: { ...process.env, TERM: 'dumb' } }, (err, stdout, stderr) => {
+      const out = String(stdout || '');
+      const errText = String(stderr || '');
+      const output = `${out}${errText}`;
+      resolve({ ok: !err, code: err ? (err.code ?? 1) : 0, stdout: out, stderr: errText, output, error: err });
+    });
+  });
+}
+
+function runOpenClawCliWithPtyInput(command, inputText = '', timeoutMs = 45000) {
+  return new Promise((resolve) => {
+    if (!runCommandOk('command -v script >/dev/null 2>&1', 800)) {
+      resolve({ ok: false, code: 1, output: 'script 命令不可用，无法执行需要 TTY 的登录/令牌写入流程' });
+      return;
+    }
+
+    const child = spawn('script', ['-qf', '-c', command, '/dev/null'], {
+      env: { ...process.env, TERM: 'xterm-256color' },
+      cwd: '/root'
+    });
+
+    let output = '';
+    const timer = setTimeout(() => {
+      try { child.kill('SIGTERM'); } catch {}
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => { output += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk) => { output += chunk.toString('utf8'); });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ ok: false, code: 1, output: `${output}\n${err.message}` });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ ok: code === 0, code: code ?? 1, output });
+    });
+
+    if (inputText) {
+      try { child.stdin.write(`${inputText}\n`); } catch {}
+    }
+    try { child.stdin.end(); } catch {}
+  });
+}
+
 function parseOpenClawVersion(text) {
   const raw = compactOutput(text || '');
   if (!raw) return '';
@@ -1293,6 +1358,102 @@ app.post('/api/config', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+const aiAuthTasks = {};
+
+function appendAiTaskLog(task, chunk) {
+  const text = String(chunk || '');
+  if (!text) return;
+  task.log += text;
+  task.seq = (task.seq || 0) + 1;
+  task.chunks = task.chunks || [];
+  task.chunks.push(text);
+  if (task.chunks.length > 3000) {
+    task.chunks = task.chunks.slice(task.chunks.length - 3000);
+  }
+}
+
+function runAiAuthTask(command, title) {
+  const taskId = Date.now().toString();
+  aiAuthTasks[taskId] = {
+    status: 'running',
+    log: '',
+    startedAt: Date.now(),
+    seq: 0,
+    chunks: []
+  };
+  const task = aiAuthTasks[taskId];
+  appendAiTaskLog(task, `[ai] ${title}\n`);
+  appendAiTaskLog(task, `[ai] command: ${command}\n\n`);
+
+  (async () => {
+    const result = await runOpenClawCliWithPtyInput(command, '', 180000);
+    appendAiTaskLog(task, result.output || '');
+    task.status = result.ok ? 'success' : 'failed';
+    task.exitCode = result.code;
+    const keys = Object.keys(aiAuthTasks).sort();
+    while (keys.length > 8) delete aiAuthTasks[keys.shift()];
+  })();
+
+  return taskId;
+}
+
+app.get('/api/ai/status', async (req, res) => {
+  const statusResult = await runOpenClawCli('openclaw models status --json 2>&1', 12000);
+  const parsed = extractJsonObject(statusResult.output);
+
+  const providerHints = parsed?.auth?.oauth?.providers || [];
+  const configuredProviders = providerHints
+    .map((item) => item?.provider)
+    .filter(Boolean);
+
+  res.json({
+    success: statusResult.ok,
+    modelsStatus: parsed || null,
+    defaultModel: parsed?.defaultModel || '',
+    resolvedDefault: parsed?.resolvedDefault || '',
+    configuredProviders,
+    raw: parsed ? '' : compactOutput(statusResult.output),
+    ttySupported: runCommandOk('command -v script >/dev/null 2>&1', 800)
+  });
+});
+
+app.post('/api/ai/model', async (req, res) => {
+  const model = String(req.body?.model || '').trim();
+  if (!model) return res.status(400).json({ error: '模型不能为空' });
+  if (!/^[a-zA-Z0-9._/:\-]+$/.test(model)) return res.status(400).json({ error: '模型格式不合法' });
+
+  const result = await runOpenClawCli(`openclaw models set "${model.replace(/"/g, '')}" 2>&1`, 15000);
+  if (!result.ok) return res.status(500).json({ error: compactOutput(result.output) || '设置模型失败' });
+  res.json({ success: true, output: compactOutput(result.output) });
+});
+
+app.post('/api/ai/auth/token', async (req, res) => {
+  const provider = String(req.body?.provider || '').trim();
+  const token = String(req.body?.token || '').trim();
+  if (!provider || !/^[a-zA-Z0-9\-]+$/.test(provider)) return res.status(400).json({ error: 'provider 不合法' });
+  if (!token) return res.status(400).json({ error: 'token 不能为空' });
+
+  const command = `openclaw models auth paste-token --provider ${provider}`;
+  const result = await runOpenClawCliWithPtyInput(command, token, 60000);
+  if (!result.ok) return res.status(500).json({ error: compactOutput(result.output) || '保存认证失败' });
+  res.json({ success: true, output: compactOutput(result.output) });
+});
+
+app.post('/api/ai/auth/copilot/login', (req, res) => {
+  const taskId = runAiAuthTask('openclaw models auth login-github-copilot', 'GitHub Copilot 登录');
+  res.json({ success: true, taskId });
+});
+
+app.get('/api/ai/auth/task/:taskId', (req, res) => {
+  const task = aiAuthTasks[req.params.taskId];
+  if (!task) return res.status(404).json({ error: 'not found' });
+  const since = Math.max(0, parseInt(req.query.since || '0', 10) || 0);
+  let delta = '';
+  if (since <= 0) delta = task.log || '';
+  else if (since < (task.seq || 0)) delta = (task.chunks || []).slice(since).join('');
+  res.json({ ...task, delta });
 });
 
 // ============================================================

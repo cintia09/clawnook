@@ -580,6 +580,22 @@ async function refreshOpenClaw(){
     actionBtn.textContent = d.installed ? '更新' : '安装';
   }
 
+  if ($('oc-current-ver')) $('oc-current-ver').textContent = d.version || '—';
+  if ($('oc-latest-ver')) $('oc-latest-ver').textContent = d.latestVersion || (d.installed ? '未知' : '—');
+  if ($('oc-update-status')) {
+    if (!d.installed) {
+      $('oc-update-status').textContent = '更新状态：未安装，可执行安装';
+    } else if (d.updateCheckError) {
+      $('oc-update-status').textContent = `更新状态：检查失败（${d.updateCheckError}）`;
+    } else if (d.hasUpdate) {
+      $('oc-update-status').textContent = '更新状态：发现新版本，可更新';
+    } else if (d.latestVersion) {
+      $('oc-update-status').textContent = '更新状态：已是最新版本';
+    } else {
+      $('oc-update-status').textContent = '更新状态：待检查';
+    }
+  }
+
   return d;
 }
 
@@ -632,6 +648,21 @@ async function pollTask(taskId){
 }
 
 $('btn-oc-refresh').addEventListener('click', refreshOpenClaw);
+$('btn-oc-check-update')?.addEventListener('click', async ()=>{
+  const btn = $('btn-oc-check-update');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '检查中...';
+  }
+  try {
+    await refreshOpenClaw();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '检查更新';
+    }
+  }
+});
 $('btn-oc-install').addEventListener('click', async ()=>{
   const btn = $('btn-oc-install');
   btn.disabled = true;
@@ -710,44 +741,133 @@ $('btn-oc-start').addEventListener('click', async ()=>{
 // ------------------------
 // AI config
 // ------------------------
-function providerFromConfig(cfg){
-  if (!cfg || !cfg.providers) return '';
-  const keys = Object.keys(cfg.providers);
-  return keys[0] || '';
+let aiAuthTaskTimer = null;
+
+function providerFromModel(modelId = '') {
+  const text = String(modelId || '').trim();
+  if (!text.includes('/')) return '';
+  return text.split('/')[0];
+}
+
+function normalizeProviderIdForAuth(provider) {
+  const p = String(provider || '').trim();
+  if (p === 'github-copilot') return 'copilot-proxy';
+  return p;
+}
+
+function updateAiProviderUI() {
+  const provider = $('ai-provider').value;
+  $('ai-custom-url-wrap').hidden = provider !== 'custom';
+  if ($('btn-ai-copilot-login')) {
+    $('btn-ai-copilot-login').hidden = provider !== 'github-copilot';
+  }
+}
+
+function appendAiAuthLog(line){
+  const logEl = $('ai-auth-log');
+  if (!logEl) return;
+  appendColored(logEl, `${line}\n`, 3000, true);
 }
 
 async function loadAIConfig(){
-  const cfg = await api('/api/config');
-  if (cfg.error) return;
+  const d = await api('/api/ai/status');
+  if (d.error) {
+    $('ai-status').textContent = `状态：读取失败（${d.error}）`;
+    return;
+  }
 
-  const p = providerFromConfig(cfg) || 'anthropic';
-  $('ai-provider').value = p;
-  $('ai-model').value = cfg.providers?.[p]?.model || '';
-  $('ai-apikey').value = '';
-  $('ai-custom-url').value = cfg.providers?.[p]?.baseUrl || '';
-  $('ai-custom-url-wrap').hidden = p !== 'custom';
+  const defaultModel = d.defaultModel || d.resolvedDefault || '';
+  const provider = providerFromModel(defaultModel) || 'anthropic';
+  if ($('ai-provider')) $('ai-provider').value = provider;
+  if ($('ai-model')) $('ai-model').value = defaultModel;
+  if ($('ai-apikey')) $('ai-apikey').value = '';
+  updateAiProviderUI();
 
-  $('wizard').hidden = !!(cfg.providers && Object.keys(cfg.providers).length);
+  if (d.success) {
+    const providers = (d.configuredProviders || []).join(', ') || '无';
+    $('ai-status').textContent = `状态：已读取（默认模型：${defaultModel || '未设置'}；认证Provider：${providers}）`;
+  } else {
+    $('ai-status').textContent = `状态：读取失败（${d.raw || 'openclaw models status --json 执行失败'}）`;
+  }
 }
 
-$('ai-provider').addEventListener('change', ()=>{
-  $('ai-custom-url-wrap').hidden = $('ai-provider').value !== 'custom';
-});
+async function pollAiAuthTask(taskId){
+  if (aiAuthTaskTimer) clearInterval(aiAuthTaskTimer);
+  let lastSeq = 0;
+  const tick = async () => {
+    const st = await api('/api/ai/auth/task/' + taskId + '?since=' + lastSeq);
+    if (!st || st.error) return;
+    if (st.delta) appendColored($('ai-auth-log'), st.delta, 3000, true);
+    lastSeq = Number(st.seq || lastSeq || 0);
+    if (st.status && st.status !== 'running') {
+      if (aiAuthTaskTimer) clearInterval(aiAuthTaskTimer);
+      aiAuthTaskTimer = null;
+      toast(st.status === 'success' ? 'Copilot 登录完成' : 'Copilot 登录失败', st.status === 'success' ? '认证信息已写入 OpenClaw' : '请查看认证日志');
+      await loadAIConfig();
+    }
+  };
+  await tick();
+  aiAuthTaskTimer = setInterval(tick, 1000);
+}
+
+$('ai-provider').addEventListener('change', updateAiProviderUI);
 
 $('btn-ai-load').addEventListener('click', loadAIConfig);
+
+$('btn-ai-copilot-login')?.addEventListener('click', async ()=>{
+  appendAiAuthLog('[ai] 正在启动 GitHub Copilot 登录流程...');
+  const r = await api('/api/ai/auth/copilot/login', { method:'POST' });
+  if (!r.success || !r.taskId) {
+    toast('启动失败', r.error || '无法启动 Copilot 登录流程');
+    appendAiAuthLog(`[ai] 启动失败: ${r.error || '接口未返回 taskId'}`);
+    return;
+  }
+  appendAiAuthLog(`[ai] 认证任务已启动: ${r.taskId}`);
+  pollAiAuthTask(r.taskId);
+});
+
 $('btn-ai-save').addEventListener('click', async ()=>{
   const provider = $('ai-provider').value;
   const model = $('ai-model').value.trim();
-  const apiKey = $('ai-apikey').value;
-  const baseUrl = $('ai-custom-url').value.trim();
+  const apiKey = $('ai-apikey').value.trim();
 
-  const update = { providers: {} };
-  update.providers[provider] = { model };
-  if (apiKey && apiKey !== '***') update.providers[provider].apiKey = apiKey;
-  if (provider === 'custom' && baseUrl) update.providers[provider].baseUrl = baseUrl;
+  if (!model) {
+    toast('参数错误', '请先填写模型');
+    return;
+  }
 
-  const r = await api('/api/config', { method:'POST', body:update });
-  toast(r.success ? '保存成功' : '保存失败', r.error || '');
+  const modelRes = await api('/api/ai/model', { method:'POST', body:{ model } });
+  if (!modelRes.success) {
+    toast('保存失败', modelRes.error || '设置模型失败');
+    appendAiAuthLog(`[ai] 设置模型失败: ${modelRes.error || ''}`);
+    return;
+  }
+  appendAiAuthLog(`[ai] 已设置默认模型: ${model}`);
+
+  if (provider === 'github-copilot') {
+    toast('模型已保存', 'Copilot 请点击“GitHub Copilot 登录”完成认证');
+    await loadAIConfig();
+    return;
+  }
+
+  if (!apiKey) {
+    toast('保存成功', '模型已保存（未更新 API Key）');
+    await loadAIConfig();
+    return;
+  }
+
+  const authProvider = normalizeProviderIdForAuth(provider);
+  appendAiAuthLog(`[ai] 正在写入 ${authProvider} 认证信息...`);
+  const authRes = await api('/api/ai/auth/token', { method:'POST', body:{ provider: authProvider, token: apiKey } });
+  if (!authRes.success) {
+    toast('保存部分成功', `模型已保存；认证写入失败：${authRes.error || ''}`);
+    appendAiAuthLog(`[ai] 认证写入失败: ${authRes.error || ''}`);
+  } else {
+    toast('保存成功', '模型与认证信息已写入 OpenClaw');
+    if (authRes.output) appendAiAuthLog(`[ai] ${authRes.output}`);
+  }
+  if ($('ai-apikey')) $('ai-apikey').value = '';
+  await loadAIConfig();
 });
 
 // ------------------------
