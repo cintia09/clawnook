@@ -1227,13 +1227,29 @@ cmd_config() {
             fi
             ;;
         3)
-            read -p "HTTPS域名 [留空禁用]: " NEW_DOMAIN
-            # 域名格式校验，防止 jq 注入
-            if [ -n "$NEW_DOMAIN" ] && ! echo "$NEW_DOMAIN" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$'; then
+            read -p "HTTPS域名 [留空自动使用IP自签名HTTPS]: " NEW_DOMAIN
+            NEW_DOMAIN=$(echo "$NEW_DOMAIN" | xargs)
+            if [ -z "$NEW_DOMAIN" ]; then
+                local local_ip=""
+                local_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+                if [ -z "$local_ip" ]; then
+                    local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+                fi
+                if ! echo "$local_ip" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+                    local_ip="127.0.0.1"
+                fi
+                jq --arg d "$local_ip" '.domain = $d | .cert_mode = "internal"' "$CONFIG_FILE" > /tmp/cfg.tmp && mv /tmp/cfg.tmp "$CONFIG_FILE"
+                warn "未输入域名，已切换为 IP 自签名 HTTPS: ${local_ip}；需要重建容器: $0 rebuild"
+            elif ! echo "$NEW_DOMAIN" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$'; then
                 error "域名格式无效"
             else
-                jq --arg d "$NEW_DOMAIN" '.domain = $d' "$CONFIG_FILE" > /tmp/cfg.tmp && mv /tmp/cfg.tmp "$CONFIG_FILE"
-                warn "域名已更新，需要重建容器: $0 rebuild"
+                if echo "$NEW_DOMAIN" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+                    jq --arg d "$NEW_DOMAIN" '.domain = $d | .cert_mode = "internal"' "$CONFIG_FILE" > /tmp/cfg.tmp && mv /tmp/cfg.tmp "$CONFIG_FILE"
+                    warn "已更新为 IP 自签名 HTTPS: ${NEW_DOMAIN}；需要重建容器: $0 rebuild"
+                else
+                    jq --arg d "$NEW_DOMAIN" '.domain = $d | .cert_mode = "letsencrypt"' "$CONFIG_FILE" > /tmp/cfg.tmp && mv /tmp/cfg.tmp "$CONFIG_FILE"
+                    warn "已更新为域名 HTTPS（Let's Encrypt）: ${NEW_DOMAIN}；需要重建容器: $0 rebuild"
+                fi
             fi
             ;;
         4)
