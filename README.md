@@ -70,6 +70,21 @@ chmod +x openclaw-docker.sh
   - Web管理面板：`https://你的域名:8443`
   - Gateway UI：`https://你的域名:8443/gateway`
 
+## 对外分发（推荐做法）
+
+面向其他用户发布时，建议使用“**本地静态资源 + 免本机依赖安装**”模式：
+
+- 前端第三方资源（JS/CSS）固定放在仓库内，由本服务直接托管。
+- 页面只引用本地路径，不依赖公网 CDN。
+- 用户侧不需要执行 `npm install`、`pnpm install` 等前端依赖安装。
+
+这样可以减少网络波动导致的安装失败，并保证不同用户拿到一致版本。
+
+发布时请同时维护以下两份清单：
+
+- 资源版本清单：`docs/static-assets.md`
+- 发布前验收清单：`docs/release-checklist.md`
+
 ### Windows
 
 #### 方案A：Docker Desktop（有Docker Desktop的用户）
