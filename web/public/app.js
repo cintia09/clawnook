@@ -406,9 +406,14 @@ async function doHotPatch() {
               logPre.textContent += '\n检测到 start-services.sh 更新：建议重启容器以使入口脚本变更生效。';
             }
 
-            if (hasFrontend) {
-              if (logPre) logPre.textContent += '\n前端文件已更新，3 秒后自动刷新页面...';
-              setTimeout(() => location.reload(), 3000);
+            if (hasFrontend || hasWebServer) {
+              const reloadDelayMs = hasWebServer ? 8000 : 3000;
+              if (logPre) {
+                logPre.textContent += hasWebServer
+                  ? '\n检测到后端已更新，8 秒后自动刷新页面并重连...'
+                  : '\n前端文件已更新，3 秒后自动刷新页面...';
+              }
+              setTimeout(() => location.reload(), reloadDelayMs);
             } else {
               const recheckUpdateState = async () => {
                 for (let t = 0; t < 8; t++) {
