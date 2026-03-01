@@ -578,6 +578,19 @@ async function pollTask(taskId){
       clearInterval(ocPollTimer);
       ocPollTimer = null;
       toast(st.status === 'success' ? '完成' : '失败', st.status === 'success' ? 'OpenClaw 已就绪' : (st.log || '请查看日志'));
+      if (st.status === 'success') {
+        appendOcLogLine('[gateway] 安装/更新成功，正在自动重启 Gateway...');
+        try {
+          const rr = await api('/api/openclaw/start', { method:'POST' });
+          if (rr.success) {
+            appendOcLogLine(`[gateway] ${rr.message || '重启请求已提交，watchdog 将自动拉起'}`);
+          } else {
+            appendOcLogLine(`[gateway] 自动重启失败: ${rr.error || '请查看日志'}`);
+          }
+        } catch (e) {
+          appendOcLogLine(`[gateway] 自动重启请求失败: ${e.message || e}`);
+        }
+      }
       refreshOpenClaw();
       refreshStatus();
     }
