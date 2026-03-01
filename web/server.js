@@ -12,6 +12,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const net = require('net');
 const { execSync, exec } = require('child_process');
 const crypto = require('crypto');
 const dns = require('dns');
@@ -499,6 +500,27 @@ function proxyGatewayRequest(req, res) {
   }
 
   req.pipe(proxyReq);
+}
+
+function isGatewayProxyUpgradePath(url) {
+  const u = String(url || '');
+  return u === '/gateway-proxy' || u.startsWith('/gateway-proxy/');
+}
+
+function buildUpgradeRequestText(req, upstreamPath, gatewayPort) {
+  let requestText = `${req.method} ${upstreamPath} HTTP/${req.httpVersion}\r\n`;
+  const skipped = new Set(['host', 'connection', 'upgrade', 'proxy-connection']);
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    const key = req.rawHeaders[i];
+    const value = req.rawHeaders[i + 1];
+    if (!key || value === undefined) continue;
+    if (skipped.has(String(key).toLowerCase())) continue;
+    requestText += `${key}: ${value}\r\n`;
+  }
+  requestText += `Host: 127.0.0.1:${gatewayPort}\r\n`;
+  requestText += 'Connection: Upgrade\r\n';
+  requestText += 'Upgrade: websocket\r\n\r\n';
+  return requestText;
 }
 
 app.use(requireAuthPage);
@@ -1466,6 +1488,50 @@ if (WebSocketServer) {
 } else {
   console.warn('[web] ws package not available: /api/ws/logs disabled');
 }
+
+server.on('upgrade', (req, socket, head) => {
+  if (!isGatewayProxyUpgradePath(req.url)) return;
+
+  if (!isAuthenticated(req)) {
+    try {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+    } catch {}
+    socket.destroy();
+    return;
+  }
+
+  const cfg = readDockerConfig();
+  const gatewayPort = Number(cfg.port || 18789) || 18789;
+  const upstreamPath = gatewayProxyPathFromOriginalUrl(req.url);
+
+  const upstreamSocket = net.connect({ host: '127.0.0.1', port: gatewayPort });
+  upstreamSocket.setTimeout(15000);
+
+  upstreamSocket.on('connect', () => {
+    const requestText = buildUpgradeRequestText(req, upstreamPath, gatewayPort);
+    upstreamSocket.write(requestText);
+    if (head && head.length > 0) upstreamSocket.write(head);
+    socket.pipe(upstreamSocket);
+    upstreamSocket.pipe(socket);
+  });
+
+  upstreamSocket.on('timeout', () => {
+    upstreamSocket.destroy(new Error('gateway websocket upstream timeout'));
+  });
+
+  upstreamSocket.on('error', () => {
+    try {
+      if (!socket.destroyed) {
+        socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nGateway WebSocket unavailable');
+      }
+    } catch {}
+    socket.destroy();
+  });
+
+  socket.on('error', () => {
+    try { upstreamSocket.destroy(); } catch {}
+  });
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[web] OpenClaw Web 管理面板启动: http://0.0.0.0:${PORT}`);
