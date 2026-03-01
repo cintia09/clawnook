@@ -123,12 +123,9 @@
               <div class="card" style="grid-column: span 3;">
                 <h2>资源</h2>
                 <div class="kpi"><div>
-                  <button class="btn btn-primary" id="btn-oc-install">安装</button>
-                  <button class="btn" id="btn-oc-check-update">检查更新</button>
+                  <div class="big" id="kpi-memory">—</div>
                   <div class="sub" id="kpi-uptime">—</div>
                 </div></div>
-                <div class="muted small" id="oc-update-status" style="margin-top:10px">更新状态：待检查</div>
-                <div class="muted small" style="margin-top:4px">当前：<span id="oc-current-ver">—</span> · 最新：<span id="oc-latest-ver">—</span></div>
               </div>
             </div>
           </div>
@@ -167,9 +164,13 @@
               <div class="card" style="grid-column: span 4;">
                 <h2>操作</h2>
                 <div class="row">
-                  <button class="btn btn-primary" id="btn-oc-install">安装 / 更新</button>
+                  <button class="btn btn-primary" id="btn-oc-install">安装</button>
+                  <button class="btn" id="btn-oc-check-update">检查更新</button>
+                  <button class="btn" id="btn-oc-repair-config">配置恢复</button>
                   <button class="btn" id="btn-oc-start">重启 Gateway</button>
                 </div>
+                <div class="muted small" id="oc-update-status" style="margin-top:10px">更新状态：待检查</div>
+                <div class="muted small" style="margin-top:4px">当前：<span id="oc-current-ver">—</span> · 最新：<span id="oc-latest-ver">—</span></div>
                 <div class="muted small" style="margin-top:10px">安装/更新/Gateway启动过程会有日志输出</div>
               </div>
             </div>

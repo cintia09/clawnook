@@ -593,7 +593,10 @@ async function refreshOpenClaw(){
   if ($('oc-current-ver')) $('oc-current-ver').textContent = d.version || '—';
   if ($('oc-latest-ver')) $('oc-latest-ver').textContent = d.latestVersion || (d.installed ? '未知' : '—');
   if ($('oc-update-status')) {
-    if (!d.installed) {
+    const invalidKeys = Array.isArray(d.invalidConfigKeys) ? d.invalidConfigKeys : [];
+    if (invalidKeys.length > 0) {
+      $('oc-update-status').textContent = `配置状态：检测到无效 key（${invalidKeys.join(', ')}），请点击“配置恢复”`;
+    } else if (!d.installed) {
       $('oc-update-status').textContent = '更新状态：未安装，可执行安装';
     } else if (d.updateCheckError) {
       $('oc-update-status').textContent = `更新状态：检查失败（${d.updateCheckError}）`;
@@ -673,6 +676,20 @@ $('btn-oc-check-update')?.addEventListener('click', async ()=>{
     }
   }
 });
+
+$('btn-oc-repair-config')?.addEventListener('click', async ()=>{
+  appendOcLogLine('[repair] 正在检测并修复 OpenClaw 配置中的无效 key...');
+  const r = await api('/api/openclaw/config/repair', { method:'POST' });
+  if (r.success) {
+    if (r.log) appendOcLogLine(r.log);
+    toast('配置恢复完成', r.changed ? '已修复并建议重启 Gateway' : '未发现需要修复的配置项');
+    setTimeout(refreshOpenClaw, 800);
+  } else {
+    appendOcLogLine(`[repair] 失败: ${r.error || '未知错误'}`);
+    toast('配置恢复失败', r.error || '未知错误');
+  }
+});
+
 $('btn-oc-install').addEventListener('click', async ()=>{
   const btn = $('btn-oc-install');
   btn.disabled = true;
@@ -743,6 +760,9 @@ $('btn-oc-start').addEventListener('click', async ()=>{
     toast('已触发重启', r.message || 'Gateway 正在重启，请稍候');
   } else {
     appendOcLogLine(`[gateway] 重启失败: ${r.error || '请查看日志'}`);
+    if (/Unrecognized key|Invalid config|配置无效/i.test(String(r.error || ''))) {
+      appendOcLogLine('[gateway] 检测到配置无效，请点击“配置恢复”按钮后重试。');
+    }
     toast('重启失败', r.error || '请查看日志');
   }
   setTimeout(refreshOpenClaw, 2500);

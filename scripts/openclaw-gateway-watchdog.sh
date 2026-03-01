@@ -69,6 +69,9 @@ restart_gateway() {
     log "Gateway is ready (PID=$(get_gateway_pid))"
   else
     log "Gateway failed to become ready within ${STARTUP_TIMEOUT}s"
+    if [[ -f "$GATEWAY_LOG" ]] && tail -60 "$GATEWAY_LOG" 2>/dev/null | grep -qE 'Unrecognized key|Invalid config'; then
+      log "Detected invalid OpenClaw config key(s). Please click '配置恢复' in OpenClaw page, then retry Gateway restart."
+    fi
   fi
 }
 

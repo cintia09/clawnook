@@ -215,6 +215,66 @@ function repairOpenClawConfigProviders() {
   return true;
 }
 
+function readGatewayLogTail(lines = 200) {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return '';
+    return execSync(`tail -${Math.max(1, Math.min(lines, 2000))} "${LOG_FILE}"`, { encoding: 'utf8', timeout: 2500 });
+  } catch {
+    return '';
+  }
+}
+
+function detectInvalidConfigKeysFromText(text) {
+  const source = String(text || '');
+  const keys = new Set();
+  const keyRegex = /Unrecognized key:\s*"([^"]+)"/g;
+  let m;
+  while ((m = keyRegex.exec(source)) !== null) {
+    if (m[1]) keys.add(m[1]);
+  }
+  if (source.includes('Unrecognized key: "providers"')) keys.add('providers');
+  return Array.from(keys);
+}
+
+function deleteConfigPath(obj, pathExpr) {
+  const parts = String(pathExpr || '').split('.').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return false;
+  let cursor = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!cursor || typeof cursor !== 'object') return false;
+    cursor = cursor[parts[i]];
+  }
+  const leaf = parts[parts.length - 1];
+  if (!cursor || typeof cursor !== 'object') return false;
+  if (!Object.prototype.hasOwnProperty.call(cursor, leaf)) return false;
+  delete cursor[leaf];
+  return true;
+}
+
+function repairOpenClawConfigInvalidKeys(candidates = []) {
+  const cfg = readJson(CONFIG_PATH, null);
+  const result = { changed: false, removed: [], backupPath: '' };
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return result;
+
+  const keys = Array.from(new Set((candidates || []).map((k) => String(k || '').trim()).filter(Boolean)));
+  if (!keys.length) return result;
+
+  for (const key of keys) {
+    if (deleteConfigPath(cfg, key) || (Object.prototype.hasOwnProperty.call(cfg, key) && delete cfg[key])) {
+      result.changed = true;
+      result.removed.push(key);
+    }
+  }
+
+  if (result.changed) {
+    const backupPath = `${CONFIG_PATH}.bak.invalid-${Date.now()}`;
+    try { fs.copyFileSync(CONFIG_PATH, backupPath); result.backupPath = backupPath; } catch {}
+    writeJson(CONFIG_PATH, cfg);
+  }
+
+  return result;
+}
+
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
     if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])
@@ -1469,6 +1529,9 @@ app.post('/api/restart', (req, res) => {
       if (String(detail || '').includes('exit 21')) {
         return res.json({ success: false, error: 'watchdog 脚本不存在，无法自动拉起 Gateway' });
       }
+      if (/Unrecognized key|Invalid config/i.test(String(detail || ''))) {
+        return res.json({ success: false, error: `${detail || 'Gateway 配置无效'}；请点击“配置恢复”后重试` });
+      }
       res.json({ success: false, error: detail || 'Gateway 重启失败，请查看 watchdog 日志' });
     });
   } catch (e) {
@@ -1545,10 +1608,44 @@ app.get('/api/openclaw', async (req, res) => {
 
   const hasUpdate = !!(installed && version && latestVersion && compareSemver(latestVersion, version) > 0);
 
+  const invalidConfigKeys = detectInvalidConfigKeysFromText(readGatewayLogTail(300));
+
   const gatewayRunning = runCommandOk('curl -sS --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health >/dev/null 2>&1', 2500)
     || runCommandOk('pgrep -f "[o]penclaw.*gateway" >/dev/null 2>&1', 1200);
 
-  res.json({ installed, version, latestVersion, hasUpdate, updateCheckError, gatewayRunning });
+  res.json({ installed, version, latestVersion, hasUpdate, updateCheckError, gatewayRunning, invalidConfigKeys });
+});
+
+app.post('/api/openclaw/config/repair', (req, res) => {
+  try {
+    const gatewayLog = readGatewayLogTail(500);
+    const detected = detectInvalidConfigKeysFromText(gatewayLog);
+    if (!detected.includes('providers')) detected.push('providers');
+
+    const repair = repairOpenClawConfigInvalidKeys(detected);
+    const lines = [];
+    lines.push(`[repair] 检测到潜在无效 key: ${detected.length ? detected.join(', ') : '无'}`);
+
+    if (!repair.changed) {
+      lines.push('[repair] 未发现可修复项，配置保持不变。');
+      return res.json({ success: true, changed: false, detected, removed: [], backupPath: '', log: lines.join('\n') });
+    }
+
+    lines.push(`[repair] 已移除无效 key: ${repair.removed.join(', ')}`);
+    if (repair.backupPath) lines.push(`[repair] 已备份原配置: ${repair.backupPath}`);
+    lines.push('[repair] 修复完成，请点击“重启 Gateway”使配置重新加载。');
+
+    res.json({
+      success: true,
+      changed: true,
+      detected,
+      removed: repair.removed,
+      backupPath: repair.backupPath,
+      log: lines.join('\n')
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/openclaw/install', (req, res) => {
@@ -1606,6 +1703,9 @@ app.post('/api/openclaw/start', (req, res) => {
     const detail = compactOutput(stderr || stdout || err.message || '');
     if (String(detail || '').includes('exit 21')) {
       return res.json({ success: false, error: 'watchdog 脚本不存在，无法自动拉起 Gateway' });
+    }
+    if (/Unrecognized key|Invalid config/i.test(String(detail || ''))) {
+      return res.json({ success: false, error: `${detail || 'Gateway 配置无效'}；请点击“配置恢复”后重试` });
     }
     res.json({ success: false, error: detail || 'Gateway 重启失败，请查看 watchdog 日志' });
   });
