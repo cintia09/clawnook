@@ -791,6 +791,7 @@ document.addEventListener('click', async (e)=>{
 // Terminal (interactive shell)
 // ------------------------
 let termWs = null;
+let terminalBound = false;
 
 function termAppendText(text){
   const el = $('terminal');
@@ -805,16 +806,61 @@ function terminalDisconnect(){
   $('term-state').textContent = '未连接';
 }
 
-function terminalSendInput(){
-  const inputEl = $('term-input');
-  const cmd = (inputEl?.value || '').trim();
-  if (!cmd) return;
-  if (!termWs || termWs.readyState !== WebSocket.OPEN) {
-    toast('终端未连接', '请等待连接完成后再发送命令');
-    return;
-  }
-  termWs.send(JSON.stringify({ type: 'input', data: `${cmd}\n` }));
-  inputEl.value = '';
+function sendTerminalData(data){
+  if (!termWs || termWs.readyState !== WebSocket.OPEN) return false;
+  termWs.send(JSON.stringify({ type: 'input', data }));
+  return true;
+}
+
+function bindTerminalInteraction(){
+  if (terminalBound) return;
+  const terminalEl = $('terminal');
+  if (!terminalEl) return;
+
+  terminalEl.addEventListener('click', () => terminalEl.focus());
+
+  terminalEl.addEventListener('keydown', (e) => {
+    if (!termWs || termWs.readyState !== WebSocket.OPEN) {
+      if (e.key.length === 1 || e.key === 'Enter' || e.key === 'Backspace') {
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if (e.ctrlKey || e.metaKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'c') { e.preventDefault(); sendTerminalData('\x03'); return; }
+      if (k === 'd') { e.preventDefault(); sendTerminalData('\x04'); return; }
+      if (k === 'l') { e.preventDefault(); sendTerminalData('\x0c'); return; }
+      if (k === 'u') { e.preventDefault(); sendTerminalData('\x15'); return; }
+    }
+
+    switch (e.key) {
+      case 'Enter': e.preventDefault(); sendTerminalData('\r'); return;
+      case 'Backspace': e.preventDefault(); sendTerminalData('\x7f'); return;
+      case 'Tab': e.preventDefault(); sendTerminalData('\t'); return;
+      case 'ArrowUp': e.preventDefault(); sendTerminalData('\x1b[A'); return;
+      case 'ArrowDown': e.preventDefault(); sendTerminalData('\x1b[B'); return;
+      case 'ArrowRight': e.preventDefault(); sendTerminalData('\x1b[C'); return;
+      case 'ArrowLeft': e.preventDefault(); sendTerminalData('\x1b[D'); return;
+      case 'Escape': e.preventDefault(); sendTerminalData('\x1b'); return;
+      default:
+        if (!e.altKey && !e.ctrlKey && !e.metaKey && e.key.length === 1) {
+          e.preventDefault();
+          sendTerminalData(e.key);
+        }
+    }
+  });
+
+  terminalEl.addEventListener('paste', (e) => {
+    if (!termWs || termWs.readyState !== WebSocket.OPEN) return;
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (!text) return;
+    e.preventDefault();
+    sendTerminalData(text);
+  });
+
+  terminalBound = true;
 }
 
 function terminalConnect(){
@@ -829,16 +875,24 @@ function terminalConnect(){
   try{ termWs = new WebSocket(url); }
   catch{
     $('term-state').textContent = 'WebSocket 不可用';
+    termAppendText('[terminal] WebSocket 不可用，无法建立交互会话\n');
     return;
   }
 
   termWs.onopen = ()=> {
     $('term-state').textContent = '已连接';
-    const inputEl = $('term-input');
-    if (inputEl) inputEl.focus();
+    termAppendText('[terminal] 已连接。直接在此区域输入命令并按回车执行。\n');
+    $('terminal')?.focus();
   };
-  termWs.onclose = ()=> { $('term-state').textContent = '已断开'; termWs = null; };
-  termWs.onerror = ()=> { $('term-state').textContent = '连接错误'; };
+  termWs.onclose = ()=> {
+    $('term-state').textContent = '已断开';
+    termAppendText('\n[terminal] 连接已断开。\n');
+    termWs = null;
+  };
+  termWs.onerror = ()=> {
+    $('term-state').textContent = '连接错误';
+    termAppendText('\n[terminal] 连接错误。\n');
+  };
 
   termWs.onmessage = (ev)=>{
     try {
@@ -857,13 +911,7 @@ function terminalConnect(){
 }
 
 $('btn-term-clear').addEventListener('click', ()=>{ $('terminal').innerHTML=''; });
-$('btn-term-send').addEventListener('click', terminalSendInput);
-$('term-input').addEventListener('keydown', (e)=>{
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    terminalSendInput();
-  }
-});
+bindTerminalInteraction();
 
 // clean ws when leaving
 setInterval(()=>{
