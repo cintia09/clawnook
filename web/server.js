@@ -994,6 +994,11 @@ function runOpenClawTask(command, title) {
     timeout: 900000,
     env: { ...process.env, TERM: 'dumb' }
   });
+  child.on('error', (err) => {
+    appendInstallLog(task, `[openclaw] 任务启动失败: ${err.message}\n`);
+    task.status = 'failed';
+    task.exitCode = -1;
+  });
   child.stdout.on('data', d => appendInstallLog(task, d));
   child.stderr.on('data', d => appendInstallLog(task, d));
   child.on('close', code => {

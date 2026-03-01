@@ -382,6 +382,13 @@ async function doHotPatch() {
 // OpenClaw install/update
 // ------------------------
 let ocPollTimer = null;
+function appendOcLogLine(line){
+  const logEl = $('oc-log');
+  if (!logEl) return;
+  logEl.textContent += `${line}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
 async function refreshOpenClaw(){
   const d = await api('/api/openclaw');
   if (d.error) return;
@@ -398,6 +405,7 @@ async function refreshOpenClaw(){
 async function pollTask(taskId){
   if (ocPollTimer) clearInterval(ocPollTimer);
   const logEl = $('oc-log');
+  if (!logEl) return;
   logEl.textContent = '';
 
   let lastSeq = 0;
@@ -433,16 +441,26 @@ $('btn-oc-install').addEventListener('click', async ()=>{
   const btn = $('btn-oc-install');
   btn.disabled = true;
   try{
+    appendOcLogLine('[openclaw] 正在提交安装/更新任务...');
     const r = await api('/api/openclaw/update', { method:'POST' });
     if (!r.taskId){
       const i = await api('/api/openclaw/install', { method:'POST' });
-      if (!i.taskId){ toast('启动失败', i.error||''); return; }
+      if (!i.taskId){
+        appendOcLogLine(`[openclaw] 启动失败: ${i.error || r.error || '接口未返回 taskId'}`);
+        toast('启动失败', i.error || r.error || '接口未返回 taskId');
+        return;
+      }
       toast('开始安装', '正在执行 OpenClaw 官方安装流程...');
+      appendOcLogLine(`[openclaw] 任务已启动: ${i.taskId}`);
       pollTask(i.taskId);
     }else{
       toast('开始更新', '正在按稳定渠道更新 OpenClaw（未安装时会自动安装）...');
+      appendOcLogLine(`[openclaw] 任务已启动: ${r.taskId}`);
       pollTask(r.taskId);
     }
+  } catch (e) {
+    appendOcLogLine(`[openclaw] 请求失败: ${e.message || e}`);
+    toast('请求失败', e.message || String(e));
   }finally{
     btn.disabled = false;
   }
