@@ -555,15 +555,32 @@ function appendOcLogLine(line){
 
 async function refreshOpenClaw(){
   const d = await api('/api/openclaw');
-  if (d.error) return;
+  if (d.error) return null;
 
   $('oc-installed').innerHTML = d.installed
     ? `<span class="pulse online"></span>已安装`
     : `<span class="pulse offline"></span>未安装`;
-  $('oc-version').textContent = d.version ? `版本：${d.version}` : '—';
+  if (d.installed) {
+    if (d.version && d.latestVersion && d.hasUpdate) {
+      $('oc-version').textContent = `版本：${d.version}（可更新到 ${d.latestVersion}）`;
+    } else if (d.version) {
+      $('oc-version').textContent = `版本：${d.version}`;
+    } else {
+      $('oc-version').textContent = '版本：检测失败';
+    }
+  } else {
+    $('oc-version').textContent = '—';
+  }
   $('oc-gateway').innerHTML = d.gatewayRunning
     ? `<span class="pulse online"></span>运行中`
     : `<span class="pulse offline"></span>未启动`;
+
+  const actionBtn = $('btn-oc-install');
+  if (actionBtn) {
+    actionBtn.textContent = d.installed ? '更新' : '安装';
+  }
+
+  return d;
 }
 
 async function pollTask(taskId){
@@ -619,23 +636,55 @@ $('btn-oc-install').addEventListener('click', async ()=>{
   const btn = $('btn-oc-install');
   btn.disabled = true;
   try{
-    appendOcLogLine('[openclaw] 正在提交安装/更新任务...');
-    const r = await api('/api/openclaw/update', { method:'POST' });
-    if (!r.taskId){
+    const current = await refreshOpenClaw();
+    if (!current) {
+      appendOcLogLine('[openclaw] 状态读取失败，无法继续。');
+      toast('读取失败', '无法获取当前 OpenClaw 状态');
+      return;
+    }
+
+    if (!current.installed) {
+      appendOcLogLine('[openclaw] 未安装，正在提交安装任务...');
       const i = await api('/api/openclaw/install', { method:'POST' });
       if (!i.taskId){
-        appendOcLogLine(`[openclaw] 启动失败: ${i.error || r.error || '接口未返回 taskId'}`);
-        toast('启动失败', i.error || r.error || '接口未返回 taskId');
+        appendOcLogLine(`[openclaw] 安装启动失败: ${i.error || '接口未返回 taskId'}`);
+        toast('安装失败', i.error || '接口未返回 taskId');
         return;
       }
-      toast('开始安装', '正在执行 OpenClaw 官方安装流程...');
-      appendOcLogLine(`[openclaw] 任务已启动: ${i.taskId}`);
+      toast('开始安装', '正在执行 OpenClaw 安装...');
+      appendOcLogLine(`[openclaw] 安装任务已启动: ${i.taskId}`);
       pollTask(i.taskId);
-    }else{
-      toast('开始更新', '正在按稳定渠道更新 OpenClaw（未安装时会自动安装）...');
-      appendOcLogLine(`[openclaw] 任务已启动: ${r.taskId}`);
-      pollTask(r.taskId);
+      return;
     }
+
+    if (!current.version) {
+      appendOcLogLine('[openclaw] 未检测到本地版本，已取消更新。');
+      toast('更新已取消', '未检测到本地版本，请先检查安装状态');
+      return;
+    }
+
+    if (!current.latestVersion) {
+      appendOcLogLine('[openclaw] 无法获取远端最新版本，已取消更新。');
+      toast('更新已取消', current.updateCheckError || '无法获取远端版本');
+      return;
+    }
+
+    if (!current.hasUpdate) {
+      appendOcLogLine(`[openclaw] 当前已是最新版本（${current.version}），无需更新。`);
+      toast('无需更新', `当前已是最新版本：${current.version}`);
+      return;
+    }
+
+    appendOcLogLine(`[openclaw] 检测到新版本：${current.version} -> ${current.latestVersion}，开始更新...`);
+    const r = await api('/api/openclaw/update', { method:'POST' });
+    if (!r.taskId){
+      appendOcLogLine(`[openclaw] 更新启动失败: ${r.error || '接口未返回 taskId'}`);
+      toast('更新失败', r.error || '接口未返回 taskId');
+      return;
+    }
+    toast('开始更新', `正在更新到 ${current.latestVersion}...`);
+    appendOcLogLine(`[openclaw] 更新任务已启动: ${r.taskId}`);
+    pollTask(r.taskId);
   } catch (e) {
     appendOcLogLine(`[openclaw] 请求失败: ${e.message || e}`);
     toast('请求失败', e.message || String(e));

@@ -279,6 +279,83 @@ function runCommandText(cmd, timeoutMs = 2500) {
   }
 }
 
+function parseOpenClawVersion(text) {
+  const raw = compactOutput(text || '');
+  if (!raw) return '';
+
+  const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/(?:openclaw@|version\s*)?v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/i);
+    if (m && m[1]) return `v${m[1]}`;
+  }
+
+  return lines[0] || '';
+}
+
+function getInstalledOpenClawVersion() {
+  const candidates = [
+    runCommandText('openclaw --version 2>&1 || true', 2500),
+    runCommandText('openclaw -v 2>&1 || true', 2500),
+    runCommandText('npm list -g openclaw --depth=0 2>/dev/null | sed -n "s/.*openclaw@\\([^[:space:]]*\\).*/\\1/p" | head -1', 2500)
+  ];
+
+  for (const output of candidates) {
+    const version = parseOpenClawVersion(output);
+    if (version) return version;
+  }
+
+  return '';
+}
+
+function normalizeSemver(version) {
+  const s = String(version || '').trim().replace(/^v/i, '');
+  const m = s.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/);
+  if (!m) return null;
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    pre: m[4] || ''
+  };
+}
+
+function compareSemver(a, b) {
+  const va = normalizeSemver(a);
+  const vb = normalizeSemver(b);
+  if (!va || !vb) return 0;
+
+  if (va.major !== vb.major) return va.major - vb.major;
+  if (va.minor !== vb.minor) return va.minor - vb.minor;
+  if (va.patch !== vb.patch) return va.patch - vb.patch;
+
+  if (!va.pre && vb.pre) return 1;
+  if (va.pre && !vb.pre) return -1;
+  if (va.pre === vb.pre) return 0;
+  return va.pre > vb.pre ? 1 : -1;
+}
+
+async function getLatestOpenClawVersion() {
+  const urls = [
+    'https://registry.npmjs.org/openclaw/latest',
+    'https://registry.npmmirror.com/openclaw/latest'
+  ];
+
+  for (const url of urls) {
+    try {
+      const resp = await fetchWithFallback(url, {
+        headers: { 'User-Agent': 'openclaw-pro' },
+        timeout: 8000
+      });
+      if (!resp || !resp.ok) continue;
+      const data = await resp.json();
+      const ver = parseOpenClawVersion(data?.version || '');
+      if (ver) return ver;
+    } catch {}
+  }
+
+  return '';
+}
+
 function createTerminalShell() {
   const hasBash = runCommandOk('command -v bash >/dev/null 2>&1', 800);
   if (!hasBash) {
@@ -1271,19 +1348,26 @@ function runOpenClawTask(command, title) {
   return taskId;
 }
 
-app.get('/api/openclaw', (req, res) => {
-  const rawVersion = runCommandText('openclaw --version 2>&1 || openclaw -v 2>&1', 2500);
-  const versionLine = compactOutput(rawVersion)
-    .split('\n')
-    .map((line) => line.trim())
-    .find(Boolean);
-  const version = versionLine || '';
+app.get('/api/openclaw', async (req, res) => {
+  const version = getInstalledOpenClawVersion();
   const installed = !!version || runCommandOk('command -v openclaw >/dev/null 2>&1', 800);
+
+  let latestVersion = '';
+  let updateCheckError = '';
+  if (installed) {
+    try {
+      latestVersion = await getLatestOpenClawVersion();
+    } catch (e) {
+      updateCheckError = e?.message || String(e || '');
+    }
+  }
+
+  const hasUpdate = !!(installed && version && latestVersion && compareSemver(latestVersion, version) > 0);
 
   const gatewayRunning = runCommandOk('curl -sS --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health >/dev/null 2>&1', 2500)
     || runCommandOk('pgrep -f "[o]penclaw.*gateway" >/dev/null 2>&1', 1200);
 
-  res.json({ installed, version, gatewayRunning });
+  res.json({ installed, version, latestVersion, hasUpdate, updateCheckError, gatewayRunning });
 });
 
 app.post('/api/openclaw/install', (req, res) => {
