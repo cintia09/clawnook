@@ -822,7 +822,7 @@ async function loadAIConfig(){
 
   if (d.success) {
     const providers = (d.configuredProviders || []).join(', ') || '无';
-    $('ai-status').textContent = `状态：已读取（默认模型：${defaultModel || '未设置'}；认证Provider：${providers}）`;
+    $('ai-status').textContent = `状态：已读取（默认模型：${defaultModel || '未设置'}；认证来源：${providers}）`;
   } else {
     $('ai-status').textContent = `状态：读取失败（${d.raw || 'openclaw models status --json 执行失败'}）`;
   }

@@ -189,8 +189,8 @@
             <div class="card" style="grid-column: span 12;">
               <div class="row" style="justify-content:space-between">
                 <div>
-                  <div style="font-weight:900;font-size:18px">AI Provider</div>
-                  <div class="muted small" style="margin-top:4px">设置 Provider / API Key / 模型</div>
+                  <div style="font-weight:900;font-size:18px">AI 模型配置</div>
+                  <div class="muted small" style="margin-top:4px">设置模型来源 / API Key / 模型</div>
                 </div>
                 <div class="row">
                   <button class="btn" id="btn-ai-load">读取当前配置</button>
@@ -203,7 +203,7 @@
               <div class="grid">
                 <div style="grid-column: span 6;">
                   <div class="field">
-                    <div class="label"><span>Provider</span></div>
+                    <div class="label"><span>模型来源</span></div>
                     <select class="input" id="ai-provider">
                       <option value="anthropic">Anthropic (Claude)</option>
                       <option value="openai">OpenAI (GPT)</option>
@@ -537,7 +537,7 @@
       <div id="wizard" hidden>
         <div class="toast">
           <div class="t"><b>首次使用提示</b></div>
-          <div class="s">检测到尚未配置 Provider。请到「AI 配置」完成基础设置。</div>
+          <div class="s">检测到尚未完成模型配置。请到「AI 模型配置」完成基础设置。</div>
         </div>
       </div>
     </main>
