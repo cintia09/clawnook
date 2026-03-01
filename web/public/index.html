@@ -452,19 +452,12 @@
       <!-- Settings -->
       <section class="page" id="page-settings" data-title="系统设置">
         <div class="grid">
-          <div class="card" style="grid-column: span 6;">
+          <div class="card" style="grid-column: span 12;">
             <div style="font-weight:900;font-size:16px">常规</div>
             <div class="sep"></div>
             <div class="field">
               <div class="label"><span>时区</span></div>
-              <select class="input" id="settings-tz">
-                <option value="Asia/Shanghai">Asia/Shanghai (UTC+8)</option>
-                <option value="Asia/Tokyo">Asia/Tokyo (UTC+9)</option>
-                <option value="America/New_York">America/New_York (UTC-5)</option>
-                <option value="America/Los_Angeles">America/Los_Angeles (UTC-8)</option>
-                <option value="Europe/London">Europe/London (UTC+0)</option>
-                <option value="UTC">UTC</option>
-              </select>
+              <div class="muted small" id="settings-tz-auto">自动探测中...</div>
             </div>
             <div class="field">
               <div class="label"><span>容器浏览器功能</span></div>
@@ -475,47 +468,7 @@
               <div class="muted small" style="margin-top:6px">保存后需重启容器生效。</div>
             </div>
             <div class="row">
-              <button class="btn btn-primary" id="btn-settings-save">保存时区</button>
               <button class="btn" id="btn-browser-save">保存浏览器设置</button>
-            </div>
-          </div>
-
-          <div class="card" style="grid-column: span 6;">
-            <div style="font-weight:900;font-size:16px">语音识别（STT）</div>
-            <div class="sep"></div>
-            <div class="grid">
-              <div style="grid-column: span 6;" class="field">
-                <div class="label"><span>Provider</span></div>
-                <select class="input" id="stt-provider">
-                  <option value="gemini">Google (Gemini)</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="groq">Groq</option>
-                  <option value="deepgram">Deepgram</option>
-                  <option value="local">本地(免费)</option>
-                </select>
-              </div>
-              <div style="grid-column: span 6;" class="field" id="stt-model-wrap">
-                <div class="label"><span>模型</span></div>
-                <select class="input" id="stt-model">
-                  <option value="whisper-1">whisper-1</option>
-                  <option value="distil-whisper-large-v3">distil-whisper-large-v3</option>
-                  <option value="whisper-large-v3">whisper-large-v3</option>
-                  <option value="local-whisper">local-whisper</option>
-                </select>
-              </div>
-              <div style="grid-column: span 12;" class="field" id="stt-key-wrap">
-                <div class="label"><span>API Key</span></div>
-                <input class="input" type="password" id="stt-api-key" placeholder="仅在非本地 Provider 需要" />
-              </div>
-            </div>
-            <div class="row" id="stt-local-hint" hidden>
-              <span class="muted small">无需 API Key，使用本地 Whisper 模型</span>
-              <button class="btn" id="btn-stt-install">一键安装</button>
-            </div>
-            <div class="sep"></div>
-            <div class="row">
-              <button class="btn btn-primary" id="btn-stt-save">保存 STT 配置</button>
-              <button class="btn" id="btn-stt-load">读取当前配置</button>
             </div>
           </div>
 

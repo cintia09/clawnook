@@ -172,8 +172,18 @@ function setActiveRoute(route){
   if (route === 'terminal') terminalConnect();
   if (route !== 'terminal') terminalDisconnect();
   if (route === 'browser') loadBrowserFrame();
-  if (route === 'settings') { loadSttConfig(); bindSttVisibility(); loadBrowserSettings(); checkForUpdate(); }
+  if (route === 'settings') { loadBrowserSettings(); renderDetectedTimezone(); checkForUpdate(); }
   if (route === 'logs') refreshLogs();
+}
+
+function renderDetectedTimezone(){
+  const el = $('settings-tz-auto');
+  if (!el) return;
+  let timezone = 'UTC';
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {}
+  el.textContent = `${timezone}（自动探测）`;
 }
 
 function loadBrowserFrame(){
@@ -1263,15 +1273,6 @@ $('btn-password').addEventListener('click', async ()=>{
   }
 });
 
-// Settings — timezone save
-$('btn-settings-save').addEventListener('click', async ()=> {
-  const tz = $('settings-tz') ? $('settings-tz').value : '';
-  try {
-    const r = await api('/api/config', { method: 'POST', body: { timezone: tz } });
-    toast(r.success ? '已保存' : '保存失败', r.error || '');
-  } catch(e) { toast('保存失败', e.message); }
-});
-
 $('btn-browser-save').addEventListener('click', async ()=> {
   const browserEnabled = $('settings-browser-enabled')?.value === 'true';
   const r = await api('/api/docker-config', { method: 'POST', body: { browserEnabled } });
@@ -1281,45 +1282,6 @@ $('btn-browser-save').addEventListener('click', async ()=> {
   } else {
     toast('保存失败', r.error || '');
   }
-});
-
-// ------------------------
-// STT config
-// ------------------------
-function bindSttVisibility(){
-  const p = $('stt-provider').value;
-  const isLocal = p === 'local';
-  $('stt-key-wrap').hidden = isLocal;
-  $('stt-local-hint').hidden = !isLocal;
-}
-
-$('stt-provider').addEventListener('change', bindSttVisibility);
-
-async function loadSttConfig(){
-  const d = await api('/api/stt/config');
-  if (d.error) return;
-  if (d.provider) $('stt-provider').value = d.provider;
-  if (d.model) $('stt-model').value = d.model;
-  $('stt-api-key').value = '';
-  bindSttVisibility();
-}
-
-$('btn-stt-load').addEventListener('click', loadSttConfig);
-$('btn-stt-save').addEventListener('click', async ()=>{
-  const provider = $('stt-provider').value;
-  const model = $('stt-model').value;
-  const apiKey = $('stt-api-key').value;
-
-  const body = { provider, model };
-  if (provider !== 'local') body.apiKey = apiKey;
-
-  const r = await api('/api/stt/config', { method:'POST', body });
-  toast(r.success ? '保存成功' : '保存失败', r.error || '');
-});
-
-$('btn-stt-install').addEventListener('click', async ()=>{
-  const r = await api('/api/stt/install-local', { method:'POST' });
-  toast(r.success ? '已触发安装' : '安装失败', r.output || r.error || '');
 });
 
 // ------------------------
