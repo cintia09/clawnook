@@ -51,6 +51,9 @@ async function api(url, opts={}){
 
     let data = {};
     try{ data = await res.json(); }catch{ data = {}; }
+    if (!res.ok) {
+      return { error: data?.error || `请求失败（HTTP ${res.status}）`, status: res.status };
+    }
     return data;
   }catch(e){
     console.error('api error', e);
@@ -707,8 +710,9 @@ $('btn-oc-install').addEventListener('click', async ()=>{
       appendOcLogLine('[openclaw] 未安装，正在提交安装任务...');
       const i = await api('/api/openclaw/install', { method:'POST' });
       if (!i.taskId){
-        appendOcLogLine(`[openclaw] 安装启动失败: ${i.error || '接口未返回 taskId'}`);
-        toast('安装失败', i.error || '接口未返回 taskId');
+        const detail = i.error || `接口返回异常（${JSON.stringify(i || {}) || 'empty'}）`;
+        appendOcLogLine(`[openclaw] 安装启动失败: ${detail}`);
+        toast('安装失败', detail);
         return;
       }
       toast('开始安装', '正在执行 OpenClaw 安装...');
@@ -738,8 +742,9 @@ $('btn-oc-install').addEventListener('click', async ()=>{
     appendOcLogLine(`[openclaw] 检测到新版本：${current.version} -> ${current.latestVersion}，开始更新...`);
     const r = await api('/api/openclaw/update', { method:'POST' });
     if (!r.taskId){
-      appendOcLogLine(`[openclaw] 更新启动失败: ${r.error || '接口未返回 taskId'}`);
-      toast('更新失败', r.error || '接口未返回 taskId');
+      const detail = r.error || `接口返回异常（${JSON.stringify(r || {}) || 'empty'}）`;
+      appendOcLogLine(`[openclaw] 更新启动失败: ${detail}`);
+      toast('更新失败', detail);
       return;
     }
     toast('开始更新', `正在更新到 ${current.latestVersion}...`);

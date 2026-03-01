@@ -1587,7 +1587,7 @@ function appendInstallLog(task, chunk) {
 }
 
 function runOpenClawTask(command, title) {
-  const taskId = Date.now().toString();
+  const taskId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   installLogs[taskId] = {
     status: 'running',
     log: '',
@@ -1706,9 +1706,16 @@ app.post('/api/openclaw/config/repair', async (req, res) => {
 });
 
 app.post('/api/openclaw/install', (req, res) => {
-  const command = buildOpenClawNpmInstallCommand();
-  const taskId = runOpenClawTask(command, '按 NodeSource + npm 镜像安装 OpenClaw');
-  res.json({ taskId });
+  try {
+    const command = buildOpenClawNpmInstallCommand();
+    const taskId = runOpenClawTask(command, '按 NodeSource + npm 镜像安装 OpenClaw');
+    if (!taskId) {
+      return res.status(500).json({ success: false, error: '任务创建失败：未生成 taskId' });
+    }
+    res.json({ success: true, taskId });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || '安装任务创建失败' });
+  }
 });
 
 app.get('/api/openclaw/install/:taskId', (req, res) => {
@@ -1747,9 +1754,16 @@ function buildOpenClawNpmInstallCommand() {
 }
 
 app.post('/api/openclaw/update', (req, res) => {
-  const command = buildOpenClawNpmInstallCommand();
-  const taskId = runOpenClawTask(command, '按 NodeSource + npm 镜像更新 OpenClaw');
-  res.json({ taskId });
+  try {
+    const command = buildOpenClawNpmInstallCommand();
+    const taskId = runOpenClawTask(command, '按 NodeSource + npm 镜像更新 OpenClaw');
+    if (!taskId) {
+      return res.status(500).json({ success: false, error: '任务创建失败：未生成 taskId' });
+    }
+    res.json({ success: true, taskId });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || '更新任务创建失败' });
+  }
 });
 
 app.post('/api/openclaw/start', (req, res) => {
