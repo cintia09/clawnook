@@ -168,7 +168,6 @@ function toast(title, detail=''){
 const ROUTES = [
   { id: 'dashboard', title: '仪表盘' },
   { id: 'openclaw-engine', title: 'OpenClaw 引擎' },
-  { id: 'openclaw-ai', title: 'AI 模型配置' },
   { id: 'messaging', title: '消息平台' },
   { id: 'trading', title: '交易系统' },
   { id: 'plugins', title: '插件市场' },
@@ -180,7 +179,7 @@ const ROUTES = [
 
 function getRouteFromHash(){
   const h = (location.hash || '').replace('#','').trim();
-  if (h === 'ai') return 'openclaw-ai';
+  if (h === 'ai') return 'openclaw-engine';
   if (h === 'openclaw') return 'openclaw-engine';
   const found = ROUTES.find(r => r.id === h);
   return found ? found.id : 'dashboard';
@@ -195,21 +194,19 @@ function setActiveRoute(route){
   const page = $('page-' + route);
   $('page-title').textContent = page?.dataset?.title || (ROUTES.find(r => r.id===route)?.title ?? '');
 
-  qa('.oc-inner-tab').forEach(tab => {
-    tab.classList.toggle('active', tab.dataset.ocTab === route);
-  });
-
   // close sidebar on mobile
   $('sidebar').classList.remove('open');
 
   // hooks
   if (route === 'dashboard') refreshStatus();
-  if (route === 'openclaw-engine') { refreshOpenClaw(); }
-  if (route === 'openclaw-ai') { loadAIConfig(); }
+  if (route === 'openclaw-engine') { refreshOpenClaw(); loadAIConfig(); }
   if (route === 'messaging') loadMessagingConfig();
   if (route === 'trading') refreshTrading();
   if (route === 'plugins') refreshPlugins();
-  if (route === 'terminal') terminalConnect();
+  if (route === 'terminal') {
+    terminalDisconnect();
+    setTimeout(() => terminalConnect(), 60);
+  }
   if (route !== 'terminal') terminalDisconnect();
   if (route === 'browser') loadBrowserFrame();
   if (route === 'settings') { loadBrowserSettings(); renderDetectedTimezone(); checkForUpdate(); }
@@ -252,13 +249,29 @@ async function loadBrowserSettings(){
 
 window.addEventListener('hashchange', ()=> setActiveRoute(getRouteFromHash()));
 
-qa('.oc-inner-tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const route = btn.dataset.ocTab;
-    if (!route) return;
-    if (getRouteFromHash() === route) return;
-    location.hash = route;
-  });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (getRouteFromHash() !== 'terminal') return;
+  if (termWs && termWs.readyState === WebSocket.OPEN) return;
+  terminalConnect();
+});
+
+$('btn-gateway-console')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const direct = `${location.protocol === 'https:' ? 'http:' : location.protocol}//${location.hostname}:18789/`;
+  const w = window.open(direct, '_blank', 'noopener');
+  if (!w) {
+    window.open('/gateway-proxy/', '_blank', 'noopener');
+    return;
+  }
+  setTimeout(() => {
+    try {
+      if (w.closed) return;
+    } catch {}
+    if (!w || w.location.href === 'about:blank') {
+      window.open('/gateway-proxy/', '_blank', 'noopener');
+    }
+  }, 1200);
 });
 
 // mobile sidebar

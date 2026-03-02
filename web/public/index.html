@@ -25,7 +25,6 @@
 
         <div class="nav-group-label">OpenClaw</div>
         <a href="#openclaw-engine" data-route="openclaw-engine"><span class="ico">🐾</span><span>OpenClaw 引擎</span></a>
-        <a href="#openclaw-ai" data-route="openclaw-ai"><span class="ico">🤖</span><span>AI 模型配置</span></a>
         <a href="#messaging" data-route="messaging"><span class="ico">💬</span><span>消息平台</span></a>
         <a href="#plugins" data-route="plugins"><span class="ico">🧩</span><span>插件市场</span></a>
 
@@ -52,7 +51,7 @@
         <h1 id="page-title">仪表盘</h1>
       </div>
       <div class="user-actions">
-        <a class="btn btn-ghost" href="/gateway" target="_blank" rel="noopener">打开 OpenClaw Gateway 控制台</a>
+        <a class="btn btn-ghost" href="#" id="btn-gateway-console" rel="noopener">打开 OpenClaw Gateway 控制台</a>
         <button class="btn" id="btn-logout">退出</button>
       </div>
     </header>
@@ -143,12 +142,6 @@
       <!-- OpenClaw Engine -->
       <section class="page" id="page-openclaw-engine" data-title="OpenClaw 引擎">
         <div class="grid">
-          <div class="card" style="grid-column: span 12; padding:12px 14px;">
-            <div class="tabs" style="margin:0">
-              <button class="tab oc-inner-tab active" data-oc-tab="openclaw-engine">OpenClaw 引擎</button>
-              <button class="tab oc-inner-tab" data-oc-tab="openclaw-ai">AI 模型配置</button>
-            </div>
-          </div>
           <div class="card" style="grid-column: span 12;">
             <div class="row" style="justify-content:space-between">
               <div>
@@ -193,69 +186,58 @@
               <pre class="terminal" id="oc-log" style="height:260px"></pre>
             </div>
           </div>
-        </div>
-      </section>
 
-      <!-- OpenClaw AI -->
-      <section class="page" id="page-openclaw-ai" data-title="AI 模型配置">
-        <div class="grid">
-          <div class="card" style="grid-column: span 12; padding:12px 14px;">
-            <div class="tabs" style="margin:0">
-              <button class="tab oc-inner-tab" data-oc-tab="openclaw-engine">OpenClaw 引擎</button>
-              <button class="tab oc-inner-tab active" data-oc-tab="openclaw-ai">AI 模型配置</button>
-            </div>
-          </div>
           <div class="card" style="grid-column: span 12;">
-              <div class="row" style="justify-content:space-between">
-                <div>
-                  <div style="font-weight:900;font-size:18px">AI 模型配置</div>
-                  <div class="muted small" style="margin-top:4px">设置模型来源 / API Key / 模型</div>
-                </div>
-                <div class="row">
-                  <button class="btn" id="btn-ai-load">读取当前配置</button>
-                  <button class="btn btn-primary" id="btn-ai-save">保存</button>
-                  <button class="btn" id="btn-ai-copilot-login" hidden>GitHub Copilot 登录</button>
+            <div class="row" style="justify-content:space-between">
+              <div>
+                <div style="font-weight:900;font-size:18px">AI 模型配置</div>
+                <div class="muted small" style="margin-top:4px">设置模型来源 / API Key / 模型</div>
+              </div>
+              <div class="row">
+                <button class="btn" id="btn-ai-load">读取当前配置</button>
+                <button class="btn btn-primary" id="btn-ai-save">保存</button>
+                <button class="btn" id="btn-ai-copilot-login" hidden>GitHub Copilot 登录</button>
+              </div>
+            </div>
+            <div class="muted small" id="ai-status" style="margin-top:8px">状态：待读取</div>
+            <div class="sep"></div>
+            <div class="grid">
+              <div style="grid-column: span 6;">
+                <div class="field">
+                  <div class="label"><span>模型来源</span></div>
+                  <select class="input" id="ai-provider">
+                    <option value="anthropic">Anthropic (Claude)</option>
+                    <option value="openai">OpenAI (GPT)</option>
+                    <option value="github-copilot">GitHub Copilot</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="custom">自定义</option>
+                  </select>
                 </div>
               </div>
-              <div class="muted small" id="ai-status" style="margin-top:8px">状态：待读取</div>
-              <div class="sep"></div>
-              <div class="grid">
-                <div style="grid-column: span 6;">
-                  <div class="field">
-                    <div class="label"><span>模型来源</span></div>
-                    <select class="input" id="ai-provider">
-                      <option value="anthropic">Anthropic (Claude)</option>
-                      <option value="openai">OpenAI (GPT)</option>
-                      <option value="github-copilot">GitHub Copilot</option>
-                      <option value="gemini">Google Gemini</option>
-                      <option value="openrouter">OpenRouter</option>
-                      <option value="custom">自定义</option>
-                    </select>
-                  </div>
-                </div>
-                <div style="grid-column: span 6;">
-                  <div class="field">
-                    <div class="label"><span>模型</span></div>
-                    <input class="input" id="ai-model" placeholder="claude-sonnet-4-20250514" />
-                  </div>
-                </div>
-                <div style="grid-column: span 6;">
-                  <div class="field">
-                    <div class="label"><span>API Key</span></div>
-                    <input class="input" type="password" id="ai-apikey" placeholder="sk-..." autocomplete="off" />
-                    <div class="muted small" style="margin-top:6px">不输入则保持原值（如后端支持 mask 逻辑）。</div>
-                  </div>
-                </div>
-                <div style="grid-column: span 6;" id="ai-custom-url-wrap" hidden>
-                  <div class="field">
-                    <div class="label"><span>Base URL（自定义）</span></div>
-                    <input class="input" id="ai-custom-url" placeholder="https://api.example.com/v1" />
-                  </div>
-                </div>
-                <div style="grid-column: span 12;">
-                  <pre class="terminal" id="ai-auth-log" style="height:180px"></pre>
+              <div style="grid-column: span 6;">
+                <div class="field">
+                  <div class="label"><span>模型</span></div>
+                  <input class="input" id="ai-model" placeholder="claude-sonnet-4-20250514" />
                 </div>
               </div>
+              <div style="grid-column: span 6;">
+                <div class="field">
+                  <div class="label"><span>API Key</span></div>
+                  <input class="input" type="password" id="ai-apikey" placeholder="sk-..." autocomplete="off" />
+                  <div class="muted small" style="margin-top:6px">不输入则保持原值（如后端支持 mask 逻辑）。</div>
+                </div>
+              </div>
+              <div style="grid-column: span 6;" id="ai-custom-url-wrap" hidden>
+                <div class="field">
+                  <div class="label"><span>Base URL（自定义）</span></div>
+                  <input class="input" id="ai-custom-url" placeholder="https://api.example.com/v1" />
+                </div>
+              </div>
+              <div style="grid-column: span 12;">
+                <pre class="terminal" id="ai-auth-log" style="height:180px"></pre>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -563,6 +545,6 @@
 
   <script src="/vendor/xterm/xterm.js"></script>
   <script src="/vendor/xterm/addon-fit.js"></script>
-  <script src="/app.js?v=1.1.57"></script>
+  <script src="/app.js?v=1.1.58"></script>
 </body>
 </html>
