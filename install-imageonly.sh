@@ -48,6 +48,39 @@ ensure_docker(){
   exit 1
 }
 
+is_port_available(){
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ! ss -ltn | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1
+    return $?
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    ! netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1
+    return $?
+  fi
+  return 0
+}
+
+find_available_port(){
+  local preferred="$1"
+  local start="$2"
+  local end="$3"
+  local p
+  if is_port_available "$preferred"; then
+    echo "$preferred"
+    return 0
+  fi
+  p="$start"
+  while [ "$p" -le "$end" ]; do
+    if is_port_available "$p"; then
+      echo "$p"
+      return 0
+    fi
+    p=$((p+1))
+  done
+  echo "$preferred"
+}
+
 get_latest_tag(){
   curl -sL --max-time 10 "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
     | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || true
@@ -191,8 +224,7 @@ pull_from_ghcr(){
 
 generate_strong_password(){
   if command -v openssl >/dev/null 2>&1; then
-    openssl rand -base64 24 | tr -d '
-' | cut -c1-20
+    openssl rand -base64 24 | tr -d '\n' | cut -c1-20
   else
     tr -dc 'A-Za-z0-9!@#%^*_-+=' < /dev/urandom | head -c 20
   fi
@@ -228,6 +260,23 @@ prompt_ports(){
     printf "Web 面板端口 (默认 ${WEB_PORT}): " > "$TTY_IN"; IFS= read -r t < "$TTY_IN" || true; WEB_PORT="${t:-$WEB_PORT}"
     printf "SSH 端口 (默认 ${SSH_PORT}): " > "$TTY_IN"; IFS= read -r t < "$TTY_IN" || true; SSH_PORT="${t:-$SSH_PORT}"
   fi
+
+  local ng nw ns
+  ng="$(find_available_port "$GW_PORT" 18790 18999)"
+  if [ "$ng" != "$GW_PORT" ]; then
+    warn "Gateway 端口 ${GW_PORT} 已占用，自动调整为 ${ng}"
+    GW_PORT="$ng"
+  fi
+  nw="$(find_available_port "$WEB_PORT" 3001 3099)"
+  if [ "$nw" != "$WEB_PORT" ]; then
+    warn "Web 端口 ${WEB_PORT} 已占用，自动调整为 ${nw}"
+    WEB_PORT="$nw"
+  fi
+  ns="$(find_available_port "$SSH_PORT" 2223 2299)"
+  if [ "$ns" != "$SSH_PORT" ]; then
+    warn "SSH 端口 ${SSH_PORT} 已占用，自动调整为 ${ns}"
+    SSH_PORT="$ns"
+  fi
 }
 
 create_and_start(){
@@ -252,18 +301,25 @@ create_and_start(){
   sleep 2
   echo "root:${ROOT_PASS}" | docker exec -i "$CONTAINER_NAME" chpasswd || true
 
-  for keyfile in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub"; do
+  docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /run/sshd && (/usr/sbin/sshd >/dev/null 2>&1 || service ssh start >/dev/null 2>&1 || true)" || true
+  docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /etc/ssh/sshd_config.d && printf '%s\n' 'PermitRootLogin prohibit-password' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'ChallengeResponseAuthentication no' 'PubkeyAuthentication yes' > /etc/ssh/sshd_config.d/99-openclaw-security.conf" || true
+  docker exec "$CONTAINER_NAME" bash -lc "if [ -f /etc/ssh/sshd_config ]; then sed -i -E 's|^[#[:space:]]*PermitRootLogin[[:space:]]+.*|PermitRootLogin prohibit-password|' /etc/ssh/sshd_config; sed -i -E 's|^[#[:space:]]*PasswordAuthentication[[:space:]]+.*|PasswordAuthentication no|' /etc/ssh/sshd_config; sed -i -E 's|^[#[:space:]]*KbdInteractiveAuthentication[[:space:]]+.*|KbdInteractiveAuthentication no|' /etc/ssh/sshd_config; sed -i -E 's|^[#[:space:]]*ChallengeResponseAuthentication[[:space:]]+.*|ChallengeResponseAuthentication no|' /etc/ssh/sshd_config; fi" || true
+  docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /run/sshd; pkill -x sshd >/dev/null 2>&1 || true; (/usr/sbin/sshd >/dev/null 2>&1 || service ssh restart >/dev/null 2>&1 || true)" || true
+
+  for keyfile in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ecdsa.pub"; do
     if [ -f "$keyfile" ]; then
       info "注入公钥 $(basename "$keyfile") 到容器"
       docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
       docker cp "$keyfile" "$CONTAINER_NAME":/root/.ssh/authorized_keys.tmp
-      docker exec "$CONTAINER_NAME" bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp"
+      docker exec "$CONTAINER_NAME" bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp"
       break
     fi
   done
 
   success "容器已部署并启动"
   info "访问：Gateway http://<host>:${GW_PORT}  管理面板 http://<host>:${WEB_PORT}  SSH root@<host> -p ${SSH_PORT}"
+  info "SSH 密码登录：已禁用（仅密钥登录）"
+  info "Root 初始密码文件：$ROOT_PASSWORD_FILE"
   info "日志文件：$LOG_FILE"
 }
 
