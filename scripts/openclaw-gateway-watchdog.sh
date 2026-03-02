@@ -24,14 +24,40 @@ HOME="${HOME:-/root}"
 export HOME
 export DISPLAY=:99
 
-GATEWAY_CMD="openclaw gateway run --allow-unconfigured"
+if [[ ":$PATH:" != *":/root/.npm-global/bin:"* ]]; then
+  export PATH="$PATH:/root/.npm-global/bin"
+fi
+if [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
+  export PATH="$PATH:/usr/local/bin"
+fi
+
+OPENCLAW_BIN=""
+
+resolve_openclaw_bin() {
+  if command -v openclaw >/dev/null 2>&1; then
+    OPENCLAW_BIN="$(command -v openclaw)"
+    return 0
+  fi
+  if [[ -x "/root/.npm-global/bin/openclaw" ]]; then
+    OPENCLAW_BIN="/root/.npm-global/bin/openclaw"
+    return 0
+  fi
+  if [[ -x "/usr/local/bin/openclaw" ]]; then
+    OPENCLAW_BIN="/usr/local/bin/openclaw"
+    return 0
+  fi
+  OPENCLAW_BIN=""
+  return 1
+}
+
+GATEWAY_CMD=""
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
 get_gateway_pids() {
-  pgrep -f "[o]penclaw.*gateway" 2>/dev/null || true
+  pgrep -f "[o]penclaw gateway run" 2>/dev/null || true
 }
 
 get_gateway_pid() {
@@ -57,7 +83,33 @@ is_gateway_process_alive() {
 }
 
 is_port_listening() {
-  ss -tlnp 2>/dev/null | grep -q ":${PORT} "
+  if command -v ss >/dev/null 2>&1; then
+    ss -tlnp 2>/dev/null | grep -q ":${PORT} "
+    if [[ $? -eq 0 ]]; then
+      return 0
+    fi
+  fi
+
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -tln 2>/dev/null | grep -q ":${PORT} "
+    if [[ $? -eq 0 ]]; then
+      return 0
+    fi
+  fi
+
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1
+    if [[ $? -eq 0 ]]; then
+      return 0
+    fi
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 && return 0
+    curl -kfsS --connect-timeout 2 --max-time 3 "https://127.0.0.1/gateway/health" >/dev/null 2>&1 && return 0
+  fi
+
+  return 1
 }
 
 dedupe_gateway_processes() {
@@ -95,7 +147,7 @@ kill_gateway() {
 
   pkill -9 -x "openclaw-gatewa" 2>/dev/null || true
   pkill -9 -x "openclaw" 2>/dev/null || true
-  pkill -9 -f "[o]penclaw.*gateway" 2>/dev/null || true
+  pkill -9 -f "[o]penclaw gateway run" 2>/dev/null || true
   if [[ -n "$LAST_PID" ]]; then
     kill -9 "$LAST_PID" 2>/dev/null || true
   fi
@@ -131,6 +183,12 @@ wait_for_ready() {
 }
 
 start_gateway() {
+  if ! resolve_openclaw_bin; then
+    log "Cannot start gateway: openclaw CLI not found"
+    return 1
+  fi
+  GATEWAY_CMD="$OPENCLAW_BIN gateway run --allow-unconfigured"
+
   if is_gateway_process_alive; then
     kill_gateway
   fi
@@ -222,7 +280,7 @@ trap 'rm -rf "$LOCK_DIR" >/dev/null 2>&1 || true' EXIT
 log "Watchdog v2 started (check=${CHECK_INTERVAL}s, poll=${POLL_INTERVAL}s, timeout=${STARTUP_TIMEOUT}s, port=$PORT)"
 
 while true; do
-  if ! command -v openclaw >/dev/null 2>&1; then
+  if ! resolve_openclaw_bin; then
     log "openclaw CLI not found, watchdog idle"
     sleep "$CHECK_INTERVAL"
     continue
