@@ -261,6 +261,43 @@ start_gateway_watchdog() {
     echo "[start-services] Gateway watchdog PID: $GATEWAY_WATCHDOG_PID"
 }
 
+ensure_gateway_watchdog_running() {
+    if [ "$HAS_OPENCLAW" != "true" ]; then
+        return 0
+    fi
+
+    if pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "[start-services] WARNING: watchdog process not detected, trying to start now..."
+    start_gateway_watchdog
+    sleep 1
+
+    if pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
+        local wd_pid
+        wd_pid=$(pgrep -f "[o]penclaw-gateway-watchdog.sh" | head -1)
+        echo "[start-services] watchdog recovered, pid=$wd_pid"
+        return 0
+    fi
+
+    echo "[start-services] ERROR: watchdog still not running after retry"
+    if [ ! -f "$GATEWAY_WATCHDOG_SCRIPT" ]; then
+        echo "[start-services] reason: watchdog script file not found ($GATEWAY_WATCHDOG_SCRIPT)"
+    elif [ ! -x "$GATEWAY_WATCHDOG_SCRIPT" ]; then
+        echo "[start-services] reason: watchdog script is not executable ($GATEWAY_WATCHDOG_SCRIPT)"
+    fi
+
+    if [ -f "$LOG_DIR/gateway-watchdog.log" ]; then
+        echo "[start-services] watchdog last log lines:"
+        tail -n 15 "$LOG_DIR/gateway-watchdog.log" 2>/dev/null | sed 's/^/[start-services]   /'
+    else
+        echo "[start-services] reason: watchdog log file not found ($LOG_DIR/gateway-watchdog.log)"
+    fi
+
+    return 1
+}
+
 start_web_panel() {
     echo "[start-services] Starting Web management panel on port 3000..."
     cd /opt/openclaw-web || {
@@ -312,6 +349,7 @@ echo "[start-services] Starting OpenClaw services..."
 
 # --- 1. 启动 Gateway Watchdog（由 watchdog 管理 Gateway 生命周期） ---
 start_gateway_watchdog
+ensure_gateway_watchdog_running || echo "[start-services] WARNING: watchdog hard fallback failed; health loop will retry"
 # 等待 gateway 实际就绪
 for i in 1 2 3 4 5 6 7 8 9 10; do
     if gateway_is_healthy; then
@@ -431,7 +469,7 @@ while true; do
     # 检查 Gateway watchdog（仅在 openclaw 已安装时）
     if [ "$HAS_OPENCLAW" = "true" ] && ! pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
         echo "[health] WARNING: Gateway watchdog not found, restarting watchdog..."
-        start_gateway_watchdog
+        ensure_gateway_watchdog_running || true
     fi
 
     # 检查 Web 面板
