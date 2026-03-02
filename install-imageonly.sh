@@ -316,16 +316,38 @@ tag_loaded_image_if_needed(){
 
 load_image(){
   local f="$TMP_DIR/$IMAGE_TARBALL"
+  local load_log="$TMP_DIR/.docker-load.log"
+  local load_pid start_ts elapsed spin_i rc
+  local spinner='|/-\\'
   if ! check_local_tarball; then return 1; fi
 
   info "正在导入镜像（docker load）: $f"
-  if docker load < "$f"; then
+  rm -f "$load_log" || true
+  docker load < "$f" >"$load_log" 2>&1 &
+  load_pid=$!
+  start_ts="$(date +%s)"
+  spin_i=0
+  while kill -0 "$load_pid" >/dev/null 2>&1; do
+    elapsed=$(( $(date +%s) - start_ts ))
+    printf "\r[INFO] 正在导入镜像（docker load） %s 已耗时 %ss" "${spinner:$((spin_i%4)):1}" "$elapsed"
+    sleep 1
+    spin_i=$((spin_i+1))
+  done
+  wait "$load_pid" || rc=$?
+  rc="${rc:-0}"
+  printf "\r\033[K"
+
+  if [ "$rc" -eq 0 ]; then
+    cat "$load_log"
     tag_loaded_image_if_needed
     success "镜像导入完成"
+    rm -f "$load_log" || true
     return 0
   fi
 
   warn "docker load 失败，尝试流式解压导入"
+  cat "$load_log" || true
+  rm -f "$load_log" || true
   if command -v unpigz >/dev/null 2>&1; then
     if unpigz -c "$f" | docker load; then tag_loaded_image_if_needed; success "流式解压导入成功"; return 0; fi
   elif command -v gunzip >/dev/null 2>&1; then
@@ -730,28 +752,28 @@ create_and_start(){
   fi
 
   # SSH hardening
-  docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /run/sshd && (/usr/sbin/sshd >/dev/null 2>&1 || service ssh start >/dev/null 2>&1 || true)" || true
+  docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /run/sshd && (/usr/sbin/sshd >/dev/null 2>&1 || service ssh start >/dev/null 2>&1 || true)" >/dev/null 2>&1 || true
   docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /etc/ssh/sshd_config.d && printf '%s\n' \
     'PermitRootLogin no' \
     'PasswordAuthentication no' \
     'KbdInteractiveAuthentication no' \
     'ChallengeResponseAuthentication no' \
     'PubkeyAuthentication yes' \
-    > /etc/ssh/sshd_config.d/99-openclaw-security.conf" || true
+    > /etc/ssh/sshd_config.d/99-openclaw-security.conf" >/dev/null 2>&1 || true
   docker exec "$CONTAINER_NAME" bash -lc "
     if [ -f /etc/ssh/sshd_config ]; then
       sed -i -E 's|^[#[:space:]]*PermitRootLogin[[:space:]]+.*|PermitRootLogin no|' /etc/ssh/sshd_config
       sed -i -E 's|^[#[:space:]]*PasswordAuthentication[[:space:]]+.*|PasswordAuthentication no|' /etc/ssh/sshd_config
       sed -i -E 's|^[#[:space:]]*KbdInteractiveAuthentication[[:space:]]+.*|KbdInteractiveAuthentication no|' /etc/ssh/sshd_config
       sed -i -E 's|^[#[:space:]]*ChallengeResponseAuthentication[[:space:]]+.*|ChallengeResponseAuthentication no|' /etc/ssh/sshd_config
-    fi" || true
-  docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /run/sshd; pkill -x sshd >/dev/null 2>&1 || true; (/usr/sbin/sshd >/dev/null 2>&1 || service ssh restart >/dev/null 2>&1 || true)" || true
+    fi" >/dev/null 2>&1 || true
+  docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /run/sshd; pkill -x sshd >/dev/null 2>&1 || true; (/usr/sbin/sshd >/dev/null 2>&1 || service ssh restart >/dev/null 2>&1 || true)" >/dev/null 2>&1 || true
 
   # Create host-mapped normal user (optional best-effort)
   if [ -n "$host_user" ] && [ "$host_user" != "root" ]; then
     if [[ "$host_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
       if docker exec "$CONTAINER_NAME" bash -lc "id -u '$host_user' >/dev/null 2>&1 || (useradd -m -s /bin/bash '$host_user' >/dev/null 2>&1 || adduser --disabled-password --gecos '' '$host_user' >/dev/null 2>&1)"; then
-        docker exec "$CONTAINER_NAME" bash -lc "usermod -aG sudo '$host_user' >/dev/null 2>&1 || true"
+        docker exec "$CONTAINER_NAME" bash -lc "usermod -aG sudo '$host_user' >/dev/null 2>&1 || true" >/dev/null 2>&1
         docker exec "$CONTAINER_NAME" bash -lc "printf '%s\n' '$host_user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-openclaw-host-user && chmod 440 /etc/sudoers.d/90-openclaw-host-user" || true
         host_user_created="true"
         info "已在容器中创建同名用户：$host_user"
@@ -764,14 +786,14 @@ create_and_start(){
     if [ -f "$keyfile" ]; then
       key_injected="true"
       info "注入公钥 $(basename "$keyfile") 到容器"
-      docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
-      docker cp "$keyfile" "$CONTAINER_NAME":/root/.ssh/authorized_keys.tmp
-      docker exec "$CONTAINER_NAME" bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp"
+      docker exec "$CONTAINER_NAME" bash -lc "mkdir -p /root/.ssh && chmod 700 /root/.ssh" >/dev/null 2>&1
+      docker cp "$keyfile" "$CONTAINER_NAME":/root/.ssh/authorized_keys.tmp >/dev/null 2>&1
+      docker exec "$CONTAINER_NAME" bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" >/dev/null 2>&1
 
       if [ "$host_user_created" = "true" ]; then
-        docker exec "$CONTAINER_NAME" bash -lc "mkdir -p '/home/$host_user/.ssh' && chmod 700 '/home/$host_user/.ssh' && chown -R '$host_user:$host_user' '/home/$host_user/.ssh'"
-        docker cp "$keyfile" "$CONTAINER_NAME":/tmp/host_user_authorized_keys.tmp
-        docker exec "$CONTAINER_NAME" bash -lc "cat /tmp/host_user_authorized_keys.tmp >> '/home/$host_user/.ssh/authorized_keys' && sort -u -o '/home/$host_user/.ssh/authorized_keys' '/home/$host_user/.ssh/authorized_keys' && chmod 600 '/home/$host_user/.ssh/authorized_keys' && chown '$host_user:$host_user' '/home/$host_user/.ssh/authorized_keys' && rm -f /tmp/host_user_authorized_keys.tmp"
+        docker exec "$CONTAINER_NAME" bash -lc "mkdir -p '/home/$host_user/.ssh' && chmod 700 '/home/$host_user/.ssh' && chown -R '$host_user:$host_user' '/home/$host_user/.ssh'" >/dev/null 2>&1
+        docker cp "$keyfile" "$CONTAINER_NAME":/tmp/host_user_authorized_keys.tmp >/dev/null 2>&1
+        docker exec "$CONTAINER_NAME" bash -lc "cat /tmp/host_user_authorized_keys.tmp >> '/home/$host_user/.ssh/authorized_keys' && sort -u -o '/home/$host_user/.ssh/authorized_keys' '/home/$host_user/.ssh/authorized_keys' && chmod 600 '/home/$host_user/.ssh/authorized_keys' && chown '$host_user:$host_user' '/home/$host_user/.ssh/authorized_keys' && rm -f /tmp/host_user_authorized_keys.tmp" >/dev/null 2>&1
       fi
       break
     fi
@@ -791,6 +813,8 @@ create_and_start(){
   if [ "$host_user_created" = "true" ] && [ "$key_injected" = "true" ]; then
     info "同名用户登录：SSH ${host_user}@<host> -p ${SSH_PORT}"
     info "容器内提权：ssh 登录后执行 sudo -i"
+  else
+    info "SSH 登录：请使用已注入公钥登录，端口 ${SSH_PORT}"
   fi
   if [ -n "$ROOT_PASS" ]; then
     info "root 密码由 ROOT_PASS 提供（未写入本地文件）"

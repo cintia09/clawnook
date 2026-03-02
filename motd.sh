@@ -51,11 +51,16 @@ if [ -f "$CONFIG_FILE" ]; then
     GW_PORT=$(jq -r '.port // 18789' "$CONFIG_FILE" 2>/dev/null)
     WEB_PORT=$(jq -r '.web_port // 3000' "$CONFIG_FILE" 2>/dev/null)
     HTTPS_PORT=$(jq -r '.https_port // 8443' "$CONFIG_FILE" 2>/dev/null)
+    SSH_PORT=$(jq -r '.ssh_port // 2222' "$CONFIG_FILE" 2>/dev/null)
 else
     GW_PORT=18789
     WEB_PORT=3000
     HTTPS_PORT=8443
+    SSH_PORT=2222
 fi
+
+SSH_USER=$(awk -F: '$3>=1000 && $1!="nobody" {print $1; exit}' /etc/passwd 2>/dev/null)
+[ -z "$SSH_USER" ] && SSH_USER="root"
 
 if [ -n "$DOMAIN" ]; then
     echo -e "${CYAN}║${NC}  🌐 Web管理: ${BLUE}https://${DOMAIN}:${HTTPS_PORT}${NC}"
@@ -64,6 +69,8 @@ else
     echo -e "${CYAN}║${NC}  🌐 Web管理: ${BLUE}http://localhost:${WEB_PORT}${NC}"
     echo -e "${CYAN}║${NC}  📋 Gateway: ${BLUE}http://localhost:${GW_PORT}${NC}"
 fi
+echo -e "${CYAN}║${NC}  🔐 SSH登录: ${BLUE}ssh ${SSH_USER}@<host> -p ${SSH_PORT}${NC}"
+echo -e "${CYAN}║${NC}  🛡  Root提权: ${BLUE}sudo -i${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
 
