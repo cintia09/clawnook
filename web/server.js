@@ -436,10 +436,10 @@ function parseOpenClawVersion(text) {
 }
 
 function getInstalledOpenClawVersion() {
+  if (!isOpenClawInstalledByPath()) return '';
+
   const candidates = [
     runCommandText('openclaw --version 2>&1 || true', 1800),
-    runCommandText('openclaw -v 2>&1 || true', 1800),
-    runCommandText('bash --noprofile --norc -lc "openclaw --version 2>&1 || true"', 2200),
     runCommandText('npm list -g openclaw --depth=0 2>/dev/null | sed -n "s/.*openclaw@\\([^[:space:]]*\\).*/\\1/p" | head -1', 2200),
     runCommandText('npm root -g 2>/dev/null | xargs -I{} sh -c "test -f \"{}/openclaw/package.json\" && sed -n \"s/.*\\\"version\\\": *\\\"\\([^\\\"]*\\\)\\\".*/\\1/p\" \"{}/openclaw/package.json\" | head -1"', 2200)
   ];
@@ -1515,6 +1515,12 @@ app.post('/api/config', (req, res) => {
 });
 
 const aiAuthTasks = {};
+const aiStatusCache = {
+  data: null,
+  checkedAt: 0,
+  inFlight: null
+};
+const AI_STATUS_CACHE_TTL_MS = 10000;
 
 function appendAiTaskLog(task, chunk) {
   const text = String(chunk || '');
@@ -1554,23 +1560,41 @@ function runAiAuthTask(command, title) {
 }
 
 app.get('/api/ai/status', async (req, res) => {
-  const statusResult = await runOpenClawCli('openclaw models status --json 2>&1', 12000);
-  const parsed = extractJsonObject(statusResult.output);
+  const now = Date.now();
+  if (aiStatusCache.data && (now - aiStatusCache.checkedAt) < AI_STATUS_CACHE_TTL_MS) {
+    return res.json(aiStatusCache.data);
+  }
 
-  const providerHints = parsed?.auth?.oauth?.providers || [];
-  const configuredProviders = providerHints
-    .map((item) => item?.provider)
-    .filter(Boolean);
+  if (!aiStatusCache.inFlight) {
+    aiStatusCache.inFlight = (async () => {
+      const statusResult = await runOpenClawCli('openclaw models status --json 2>&1', 7000);
+      const parsed = extractJsonObject(statusResult.output);
 
-  res.json({
-    success: statusResult.ok,
-    modelsStatus: parsed || null,
-    defaultModel: parsed?.defaultModel || '',
-    resolvedDefault: parsed?.resolvedDefault || '',
-    configuredProviders,
-    raw: parsed ? '' : compactOutput(statusResult.output),
-    ttySupported: runCommandOk('command -v script >/dev/null 2>&1', 800)
-  });
+      const providerHints = parsed?.auth?.oauth?.providers || [];
+      const configuredProviders = providerHints
+        .map((item) => item?.provider)
+        .filter(Boolean);
+
+      const payload = {
+        success: statusResult.ok,
+        modelsStatus: parsed || null,
+        defaultModel: parsed?.defaultModel || '',
+        resolvedDefault: parsed?.resolvedDefault || '',
+        configuredProviders,
+        raw: parsed ? '' : compactOutput(statusResult.output),
+        ttySupported: runCommandOk('command -v script >/dev/null 2>&1', 800)
+      };
+
+      aiStatusCache.data = payload;
+      aiStatusCache.checkedAt = Date.now();
+      return payload;
+    })().finally(() => {
+      aiStatusCache.inFlight = null;
+    });
+  }
+
+  const payload = await aiStatusCache.inFlight;
+  res.json(payload);
 });
 
 app.post('/api/ai/model', async (req, res) => {
