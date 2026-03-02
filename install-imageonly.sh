@@ -462,12 +462,14 @@ prompt_deploy_config(){
   HTTPS_PORT="${HTTPS_PORT:-443}"
   [ "$HTTPS_PORT" -eq 0 ] && HTTPS_PORT=443
   HTTPS_PORT="$(find_available_port "$HTTPS_PORT" 8443 8499)"
+  info "HTTPS 端口采用自动选择：${HTTPS_PORT}（不手工输入，冲突自动调整）"
 
   SSH_PORT="${SSH_PORT:-2222}"
   [ "$SSH_PORT" -eq 0 ] && SSH_PORT=2222
   SSH_PORT="$(find_available_port "$SSH_PORT" 2223 2299)"
 
   apply_port_conflicts
+  info "最终端口：Gateway=${GW_PORT}, Web=${WEB_PORT}, SSH=${SSH_PORT}, HTTPS=${HTTPS_PORT}"
 }
 
 # ─── upgrade detection ────────────────────────────────────────
