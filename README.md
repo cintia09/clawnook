@@ -1,262 +1,186 @@
-# OpenClaw Pro — Docker 部署包
+# OpenClaw Pro（Docker 部署包）
 
-一键部署 OpenClaw AI 助手到任意平台（Linux / macOS / Windows）。
+面向 Linux / macOS / Windows 的 OpenClaw 一键部署仓库。  
+当前发布策略以 **ImageOnly + Lite 镜像** 为主：不要求先下载仓库源码，即可完成安装。
 
-## 快速开始
+---
 
-### 一键安装（推荐）
+## 1. 当前能力概览
 
-#### Linux / macOS
+- 一键安装：Linux、Windows 都支持向导化流程。
+- 默认镜像模式：优先 ImageOnly（仅拉取/加载发布镜像，不 clone 源码）。
+- 自动恢复：本地镜像损坏会自动删除并重下，失败自动回退 GHCR。
+- 安全默认：容器 SSH 默认禁用密码登录，仅密钥登录。
+- Web 管理面板：内置管理 UI（默认 `3000`），含状态、配置、日志、插件/终端能力。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install.sh | bash
-```
+---
 
-#### Windows
+## 2. 一键安装（推荐）
 
-优先方式（更稳）：下载仓库后，右键 `install-windows.bat` → **以管理员身份运行**。
-
-或在 **管理员 PowerShell** 中执行：
-
-```powershell
-irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows.ps1 | iex
-```
-
-#### 安装器会自动做什么
-
-- 检测并准备环境（Windows 下自动处理 WSL2 / Ubuntu / Docker）
-- 拉取并部署 Release 镜像（ImageOnly 优先，当前仅发布 Lite 镜像）
-- 自动检查 SSH 状态并关闭 SSH 密码登录（仅密钥登录）
-- 尝试注入公钥（无公钥时自动生成 `id_ed25519` 再注入）
-- 生成 root 初始密码文件（仅用于容器内本地管理）
-- 安装结束后默认进入容器终端（`docker exec -it <container> bash`）
-
-> 目录说明：安装目录在当前路径的 `openclaw-pro/`，持久化数据目录在 `openclaw-pro/home-data/`（多实例时为 `home-data-2`、`home-data-3` ...）。
-
-### 一键升级（推荐）
-
-统一方式：**重新执行一键安装脚本**。安装器会自动识别已部署实例并执行升级。
-
-Linux / macOS：
+### Linux / macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install.sh | bash
 ```
 
-Windows：
+### Windows（管理员 PowerShell）
 
 ```powershell
 irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows.ps1 | iex
 ```
 
-> 升级默认保留 `home-data` 与配置。
+或下载后右键 `install-windows.bat` 以管理员身份运行。
 
-### 手动安装（源码模式）
+---
+
+## 3. Linux 安装流程（与 Windows 对齐）
+
+`install.sh` 的行为：
+
+- `curl | bash` 且检测到 `/dev/tty`：进入交互向导（通过 tty 交互）。
+- `curl | bash` 且无 tty：走非交互 ImageOnly。
+- 本地执行 `bash install.sh`：可选源码安装或 ImageOnly（默认 ImageOnly）。
+
+`install-imageonly.sh` 的关键流程：
+
+1. 选择/确认端口（并自动处理端口冲突）。
+2. 检查本地镜像完整性（`gzip -t`）。
+3. 若损坏或不存在：自动下载（多源 + `.part` 原子文件 + 校验）。
+4. `docker load`；失败则尝试流式解压导入（`unpigz/gunzip`）。
+5. 仍失败则自动回退 `ghcr.io` 拉取。
+6. 创建并启动容器、注入公钥、应用 SSH 安全策略。
+
+> 注意：Linux 已改为与 Windows 一样，**不再要求用户手工输入 root 密码**。脚本会自动生成并保存本地密码文件。
+
+---
+
+## 4. Windows 安装流程（当前实现）
+
+`install-windows.ps1` 主要步骤：
+
+1. 环境检测（管理员权限、系统版本、WSL/Ubuntu 状态）。
+2. 必要时安装 WSL2 + Ubuntu（可重启后自动继续）。
+3. 在 Ubuntu 中准备 Docker/运行环境。
+4. 部署 OpenClaw（默认对齐 Lite / ImageOnly 流程）。
+5. 收尾：SSH 配置加固、公钥注入、root 初始密码文件保存、完成信息展示。
+
+Windows 侧同样采用：
+
+- 自动端口冲突处理。
+- SSH 密钥优先，禁用密码登录。
+- 生成并保存 root 初始密码文件（本地可查）。
+
+---
+
+## 5. ImageOnly 落盘目录（Linux）
+
+当在目录 `X` 执行安装时（`TARGET_DIR=X`）：
+
+- 工作根目录：`X/openclaw-pro`
+- 镜像文件：`X/openclaw-pro/openclaw-pro-image-lite.tar.gz`
+- 安装日志：`X/openclaw-pro/install.log`
+- root 初始密码文件：`X/openclaw-pro/root-initial-password.txt`
+- 持久化数据：`X/openclaw-pro/home-data`
+
+---
+
+## 6. Docker 镜像内部功能
+
+### Lite 镜像（当前主发布）
+
+来源：`Dockerfile.lite`
+
+内置能力：
+
+- Ubuntu 24.04 基础环境。
+- 基础运维工具（curl/wget/git/ssh/net-tools 等）。
+- Node.js 22。
+- Caddy。
+- Web 管理面板（`/opt/openclaw-web`）。
+- `start-services.sh` 作为容器入口。
+
+不内置（按需安装/恢复）：
+
+- Chrome/noVNC 图形浏览器能力。
+- LightGBM 等交易推理依赖。
+- `openclaw` CLI（若缺失，网关会被跳过）。
+
+### Full 镜像（仓库支持）
+
+来源：`Dockerfile`
+
+额外内置：
+
+- Chrome + noVNC。
+- LightGBM/pandas/numpy/baostock。
+- `openclaw` CLI。
+
+---
+
+## 7. 容器运行与服务编排
+
+入口脚本：`start-services.sh`
+
+主要职责：
+
+- 配置 DNS（dnsmasq + DoH 兜底 + hosts 预写）。
+- 恢复/加固 SSH（host key 持久化、禁用密码登录）。
+- 启动 Web 管理面板（3000）。
+- 启动 OpenClaw 网关（若 CLI 可用）及 watchdog。
+- 根据配置决定 Caddy/HTTPS/浏览器相关服务。
+
+Web 后端：`web/server.js`
+
+- Express + cookie 签名认证。
+- 提供状态、配置、日志、插件市场、终端等 API。
+- WebSocket 支持日志与终端通道。
+- DNS 失败时提供 fetch/curl 回退策略。
+
+---
+
+## 8. 常用命令（源码模式）
 
 ```bash
-git clone https://github.com/cintia09/openclaw-pro.git openclaw-pro
-cd openclaw-pro
-chmod +x openclaw-docker.sh
 ./openclaw-docker.sh run
-```
-
-首次运行会引导你完成配置（root 密码、端口、HTTPS 域名等）。
-
-访问地址：
-- **内网/直连模式（不填域名）**:
-  - Gateway：`http://服务器IP:18789`
-  - Web管理面板：`http://服务器IP:3000`
-- **HTTPS模式（填写域名）**:
-  - Web管理面板：`https://你的域名:8443`
-  - Gateway UI：`https://你的域名:8443/gateway`
-
-## 对外分发（推荐做法）
-
-面向其他用户发布时，建议使用“**本地静态资源 + 免本机依赖安装**”模式：
-
-- 前端第三方资源（JS/CSS）固定放在仓库内，由本服务直接托管。
-- 页面只引用本地路径，不依赖公网 CDN。
-- 用户侧不需要执行 `npm install`、`pnpm install` 等前端依赖安装。
-
-这样可以减少网络波动导致的安装失败，并保证不同用户拿到一致版本。
-
-发布时请同时维护以下两份清单：
-
-- 资源版本清单：`docs/static-assets.md`
-- 发布前验收清单：`docs/release-checklist.md`
-
-### Windows
-
-#### 方案A：Docker Desktop（有Docker Desktop的用户）
-
-1. 安装 [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)
-2. 打开 PowerShell：
-```powershell
-git clone https://github.com/cintia09/openclaw-pro.git openclaw-pro
-cd openclaw-pro
-bash openclaw-docker.sh run
-```
-
-#### 方案B：自动安装 WSL2 + Docker Engine（无需 Docker Desktop）
-
-1. 下载解压部署包
-2. 右键 `install-windows.bat` → **以管理员身份运行**
-3. 按提示操作（可能需要重启一次，重启后会自动继续）
-4. 完成后访问：
-   - Gateway：`http://localhost:18789`
-   - Web管理面板：`http://localhost:3000`
-
-**Windows 系统要求：**
-- Windows 10 版本 2004（Build 19041）或更高
-- Windows 11 全版本支持
-- 需要管理员权限
-
-**安装过程概览：**
-```
-[1/5] 检测环境（Windows版本/WSL2/Ubuntu）
-[2/5] 安装 WSL2 + Ubuntu 24.04     ← 首次安装约需 3-5 分钟
-[3/5] 安装 Docker Engine           ← 约需 5-10 分钟
-[4/5] 部署 OpenClaw Pro
-[5/5] 启动服务 + 显示完成信息
-```
-
-> 如果脚本提示需要重启，重启后会**自动继续**（已创建 Windows 计划任务）。
-> 所有操作日志保存在 `install-log.txt`。
-> 安装完成后会默认进入容器终端；如需返回 PowerShell，输入 `exit`。
-
-**Windows 管理命令（部署完成后，在 WSL 终端中运行）：**
-```bash
-wsl -d Ubuntu-24.04
-cd /root/openclaw-pro
-./openclaw-docker.sh status   # 查看状态
-./openclaw-docker.sh logs     # 查看日志
-./openclaw-docker.sh stop     # 停止服务
-./openclaw-docker.sh run      # 重新启动
-```
-
-## 命令参考
-
-| 命令 | 说明 |
-|------|------|
-| `./openclaw-docker.sh run` | 启动（首次进入配置向导） |
-| `./openclaw-docker.sh stop` | 停止容器 |
-| `./openclaw-docker.sh status` | 查看状态 |
-| `./openclaw-docker.sh config` | 修改配置 |
-| `./openclaw-docker.sh shell` | 进入容器终端 |
-| `./openclaw-docker.sh rebuild` | 重建镜像 |
-| `./openclaw-docker.sh logs` | 查看日志 |
-
-## 目录结构
-
-```
-openclaw-pro/          ← 部署脚本和Docker文件
-├── openclaw-docker.sh    # 主管理脚本
-├── install.sh            # 一键安装入口（curl|bash）
-├── Dockerfile            # 容器镜像定义
-├── docker-compose.yml    # Compose配置（备用，脚本默认用docker create）
-├── start-services.sh     # 容器内入口
-├── motd.sh               # 登录欢迎界面
-├── Caddyfile.template    # HTTPS反代配置（envsubst模板）
-├── web/                  # Web管理面板
-│   ├── server.js
-│   └── public/
-│       ├── index.html
-│       ├── login.html
-│       ├── login.js
-│       ├── style.css
-│       └── app.js
-├── install-windows.bat   # Windows安装入口（双击运行）
-├── install-windows.ps1   # Windows安装脚本（WSL2+Docker）
-├── update-windows.bat    # 兼容保留（建议优先使用安装脚本执行升级）
-├── update-windows.ps1    # 兼容保留（建议优先使用安装脚本执行升级）
-├── README.md
-└── home-data/            ← 持久化数据（自动创建，挂载为容器/root）
-    ├── .openclaw/
-    │   ├── openclaw.json     # OpenClaw配置
-    │   ├── docker-config.json # Docker部署配置
-    │   └── logs/             # 日志
-    └── ...                   # 你的工作文件
-```
-
-## 安全最佳实践
-
-1. **设置强root密码** — 首次运行必填
-2. **启用HTTPS** — 填写域名自动启用Caddy + Let's Encrypt
-3. **启用ufw + fail2ban** — 首次运行时推荐开启
-4. **容器安全加固**:
-   - `cap_drop ALL` + `no-new-privileges`
-   - 不挂载 Docker socket
-   - HTTPS 模式下 Gateway/Web 面板端口仅绑定 127.0.0.1（外部只走 Caddy 反代）
-5. **Web 面板账号** — 首次访问需要初始化设置管理密码（至少8位）
-6. **文件权限** — `docker-config.json/openclaw.json` 建议 600，`home-data/` 建议 700
-
-> **注意：** Caddy basicauth 和 Web 面板登录是两层独立认证。如果不需要 Caddy 层的 basicauth，可以在 `Caddyfile.template` 中注释掉 `basicauth` 块，只保留 Web 面板自身的登录认证即可。
-
-## 交易系统
-
-### 安装
-
-通过Web面板 → 交易系统 → 填写GitHub Token和仓库地址 → 点击安装
-
-### 功能
-
-- 券商配置
-- 策略参数管理
-- 自动交易开关（默认关闭，红字风险提示）
-- 持仓看板（只读）
-- 一键更新（git pull）
-
-### 依赖
-
-容器预装 LightGBM, pandas, numpy, baostock 用于量化推理。
-
-## 故障排除
-
-### 容器无法启动
-
-```bash
-# 查看Docker日志
-docker logs openclaw-pro
-
-# 检查镜像是否构建成功
-docker images | grep openclaw-pro
-```
-
-### Gateway不在线
-
-```bash
-# 进入容器
-./openclaw-docker.sh shell
-
-# 手动启动
-openclaw gateway start
-
-# 查看日志
-cat /root/.openclaw/logs/gateway-start.log
-```
-
-### Web面板无法访问
-
-```bash
-# 进入容器检查
-./openclaw-docker.sh shell
-curl http://localhost:3000/api/status
-```
-
-### HTTPS证书问题
-
-```bash
-# 进入容器查看Caddy日志
-./openclaw-docker.sh shell
-cat /root/.openclaw/logs/caddy.log
-```
-
-### 重置所有配置
-
-```bash
 ./openclaw-docker.sh stop
-docker rm openclaw-pro
-# 删除配置（保留数据）
-rm home-data/.openclaw/docker-config.json
-./openclaw-docker.sh run
+./openclaw-docker.sh status
+./openclaw-docker.sh logs
+./openclaw-docker.sh shell
+./openclaw-docker.sh config
 ```
+
+---
+
+## 9. 故障排查
+
+### 镜像导入失败（`unpigz ... corrupted`）
+
+这是本地 tar 包损坏的典型表现，安装脚本已自动处理：
+
+- `gzip -t` 失败会自动删除并重下。
+- `docker load` 失败会尝试流式导入和 GHCR 回退。
+
+可手动查看日志：
+
+```bash
+cat openclaw-pro/install.log
+```
+
+### 容器未启动
+
+```bash
+docker ps -a | grep openclaw-pro
+docker logs openclaw-pro
+```
+
+### SSH 无法登录
+
+- 确认使用密钥登录（默认禁用密码登录）。
+- 检查宿主机公钥是否注入到容器 `/root/.ssh/authorized_keys`。
+
+---
+
+## 10. 说明
+
+- 目前文档以 **当前代码行为** 为准。若脚本更新，请同步更新本 README。
+- 若你希望“纯源码模式”为默认行为，可将 `install.sh` 的默认选项改回源码安装。
