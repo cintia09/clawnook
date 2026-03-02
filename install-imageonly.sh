@@ -278,9 +278,13 @@ download_tarball(){
     [ -z "$u" ] && continue
     info "尝试下载：$u"
     if [ -f "$part" ]; then
-      info "检测到未完成下载缓存，继续断点续传：$part"
+      cached_bytes="$(wc -c < "$part" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+      cached_mib="$(awk -v n="$cached_bytes" 'BEGIN{printf "%.2f", n/1024/1024}')"
+      info "检测到断点缓存：$part（已缓存 ${cached_mib} MiB）"
+      info "说明：下面 curl 百分比显示的是本次新增下载进度，不是总进度。"
     fi
-    if curl -C - -fL --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 3 -o "$part" "$u"; then
+    if curl -C - --progress-bar -fL --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 3 -o "$part" "$u"; then
+      echo ""
       if gzip -t "$part" >/dev/null 2>&1; then
         mv -f "$part" "$target"
         success "镜像下载并校验成功"
@@ -289,6 +293,7 @@ download_tarball(){
       warn "下载完成但校验失败，删除损坏分片并切换下一个源"
       rm -f "$part" || true
     else
+      echo ""
       warn "该下载源失败：$u（保留当前分片供下次继续）"
     fi
   done < <(build_download_urls "$primary_url")
