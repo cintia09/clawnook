@@ -475,6 +475,49 @@ show_upgrade_detection(){
   fi
 }
 
+
+get_installed_release_tag(){
+  local installed_tag container_version
+  installed_tag="$(safe_json_value release_tag)"
+  container_version="$(docker exec "$CONTAINER_NAME" sh -lc 'cat /etc/openclaw-version 2>/dev/null || true' 2>/dev/null | head -1 | tr -d '\r' || true)"
+  [ -z "$installed_tag" ] && [ -n "$container_version" ] && installed_tag="$container_version"
+  printf '%s' "$installed_tag"
+}
+
+can_hotpatch_current_container(){
+  docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 | grep -q "^${CONTAINER_NAME}$" || return 1
+  docker exec "$CONTAINER_NAME" sh -lc "command -v curl >/dev/null 2>&1" >/dev/null 2>&1 || return 1
+  docker exec "$CONTAINER_NAME" sh -lc "curl -sS -f --connect-timeout 3 --max-time 8 http://127.0.0.1:3000/api/update/hotpatch/status >/dev/null" >/dev/null 2>&1
+}
+
+prompt_hotpatch_first_if_applicable(){
+  local installed_tag continue_install
+  installed_tag="$(get_installed_release_tag)"
+  [ -z "$installed_tag" ] && return 0
+  [ -z "$TAG" ] && return 0
+  [ "$installed_tag" = "$TAG" ] && return 0
+
+  if can_hotpatch_current_container; then
+    printf "\n💡 检测到新 Release 且可热更新（目标版本: %s，无需完整重装）\n" "$TAG" > "$TTY_IN"
+    printf "   当前版本: %s\n" "$installed_tag" > "$TTY_IN"
+    printf "   建议先在 Web 面板 → 系统更新 执行热更新。\n\n" > "$TTY_IN"
+    printf "推荐操作：\n" > "$TTY_IN"
+    printf "  [默认 N] 先执行 Web 热更新（推荐）\n" > "$TTY_IN"
+    printf "  [输入 y] 继续完整重装流程\n\n" > "$TTY_IN"
+    printf "⚠️  完整重装风险提示：\n" > "$TTY_IN"
+    printf "  - 将删除并重建容器（容器文件系统会重置）\n" > "$TTY_IN"
+    printf "  - 容器内手工安装的软件/临时文件可能丢失\n" > "$TTY_IN"
+    printf "  - 挂载的 home-data 与配置会保留\n\n" > "$TTY_IN"
+    continue_install="$(prompt "是否继续执行安装重装流程？[y/N]: ")"
+    continue_install="$(echo "$continue_install" | tr '[:upper:]' '[:lower:]')"
+    if [ "$continue_install" != "y" ] && [ "$continue_install" != "yes" ]; then
+      warn "已取消本次安装流程，请在 Web 面板执行热更新。"
+      info "热更新后可再次运行安装脚本（如有需要）。"
+      exit 0
+    fi
+  fi
+}
+
 # ─── existing container handling ──────────────────────────────
 
 handle_existing_installation(){
@@ -485,6 +528,10 @@ handle_existing_installation(){
 
   warn "检测到已有安装（容器或配置已存在）。"
   show_upgrade_detection
+
+  if has_tty; then
+    prompt_hotpatch_first_if_applicable
+  fi
 
   if has_tty; then
     printf "处理方式：\n" > "$TTY_IN"
