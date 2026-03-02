@@ -39,12 +39,12 @@ if [ -t 0 ]; then
     # 尝试优先使用本地脚本，否则从 GitHub 拉取并执行
     if [ -f "$(pwd)/install-imageonly.sh" ]; then
       chmod +x "$(pwd)/install-imageonly.sh" || true
-      exec bash "$(pwd)/install-imageonly.sh"
+      exec env TARGET_DIR="$(pwd)" bash "$(pwd)/install-imageonly.sh"
     else
       TMP_SCRIPT=$(mktemp /tmp/openclaw-imageonly.XXXXXX.sh)
       if curl -fsSL "https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-imageonly.sh" -o "$TMP_SCRIPT"; then
         chmod +x "$TMP_SCRIPT"
-        exec bash "$TMP_SCRIPT"
+        exec env TARGET_DIR="$(pwd)" bash "$TMP_SCRIPT"
       else
         echo "无法下载 ImageOnly 安装脚本，请检查网络或使用源码安装。" >&2
         exit 1
