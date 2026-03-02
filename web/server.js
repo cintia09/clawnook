@@ -1612,6 +1612,14 @@ app.post('/api/restart', (req, res) => {
 // ============================================================
 const installLogs = {};
 const repairLogs = {};
+let activeInstallTaskId = '';
+let activeRepairTaskId = '';
+
+function isTaskRunning(taskMap, taskId) {
+  if (!taskId) return false;
+  const task = taskMap[taskId];
+  return !!(task && task.status === 'running');
+}
 
 function appendInstallLog(task, chunk) {
   const text = String(chunk || '');
@@ -1651,6 +1659,7 @@ function runOpenClawRepairTask() {
   };
 
   const task = repairLogs[taskId];
+  activeRepairTaskId = taskId;
 
   (async () => {
     appendRepairLog(task, '[repair] 正在执行 openclaw doctor --fix ...\n');
@@ -1699,6 +1708,7 @@ function runOpenClawRepairTask() {
     task.status = 'failed';
     task.error = detail;
   }).finally(() => {
+    if (activeRepairTaskId === taskId) activeRepairTaskId = '';
     const keys = Object.keys(repairLogs).sort();
     while (keys.length > 8) delete repairLogs[keys.shift()];
   });
@@ -1717,6 +1727,7 @@ function runOpenClawTask(command, title) {
   };
 
   const task = installLogs[taskId];
+  activeInstallTaskId = taskId;
   appendInstallLog(task, `[openclaw] ${title}\n`);
   appendInstallLog(task, `[openclaw] command: ${command}\n\n`);
 
@@ -1735,6 +1746,7 @@ function runOpenClawTask(command, title) {
   child.on('close', code => {
     task.status = code === 0 ? 'success' : 'failed';
     task.exitCode = code;
+    if (activeInstallTaskId === taskId) activeInstallTaskId = '';
     const keys = Object.keys(installLogs).sort();
     while (keys.length > 5) delete installLogs[keys.shift()];
   });
@@ -1778,6 +1790,9 @@ app.get('/api/openclaw', async (req, res) => {
 
 app.post('/api/openclaw/config/repair', (req, res) => {
   try {
+    if (isTaskRunning(repairLogs, activeRepairTaskId)) {
+      return res.json({ success: true, taskId: activeRepairTaskId, reused: true });
+    }
     const taskId = runOpenClawRepairTask();
     if (!taskId) return res.status(500).json({ success: false, error: '修复任务创建失败：未生成 taskId' });
     res.json({ success: true, taskId });
@@ -1802,6 +1817,9 @@ app.get('/api/openclaw/config/repair/:taskId', (req, res) => {
 
 app.post('/api/openclaw/install', (req, res) => {
   try {
+    if (isTaskRunning(installLogs, activeInstallTaskId)) {
+      return res.json({ success: true, taskId: activeInstallTaskId, reused: true });
+    }
     const command = buildOpenClawNpmInstallCommand();
     const taskId = runOpenClawTask(command, '按 NodeSource + npm 镜像安装 OpenClaw');
     if (!taskId) {
@@ -1850,6 +1868,9 @@ function buildOpenClawNpmInstallCommand() {
 
 app.post('/api/openclaw/update', (req, res) => {
   try {
+    if (isTaskRunning(installLogs, activeInstallTaskId)) {
+      return res.json({ success: true, taskId: activeInstallTaskId, reused: true });
+    }
     const command = buildOpenClawNpmInstallCommand();
     const taskId = runOpenClawTask(command, '按 NodeSource + npm 镜像更新 OpenClaw');
     if (!taskId) {
