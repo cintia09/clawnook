@@ -397,58 +397,62 @@ prompt_deploy_config(){
   if has_tty; then
     local t
 
-    # ── 1. HTTPS / 域名 / 证书模式 ──
+    GW_PORT="$(prompt_port_or_default "Gateway 端口" "$GW_PORT")"
+
     HTTPS_ENABLED="true"
-    printf "HTTPS 域名（留空使用本机 IP 自签名 HTTPS）: " > "$TTY_IN"
+    printf "HTTPS 域名 (可选，留空使用本机IP自签名HTTPS): " > "$TTY_IN"
     IFS= read -r DOMAIN < "$TTY_IN" || true
     DOMAIN="${DOMAIN:-}"
 
     if [ -z "$DOMAIN" ]; then
       DOMAIN="$(detect_local_ip)"
-      CERT_MODE="internal"; HTTP_PORT=0
+      CERT_MODE="internal"
+      HTTP_PORT=0
       info "域名留空，自动启用 IP 自签名 HTTPS：$DOMAIN"
     elif echo "$DOMAIN" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-      CERT_MODE="internal"; HTTP_PORT=0
+      CERT_MODE="internal"
+      HTTP_PORT=0
     else
       if echo "$DOMAIN" | grep -Eq '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$'; then
         t="$(prompt "证书模式 [1=Let's Encrypt, 2=自签名]（默认1）: ")"
         if [ "$t" = "2" ]; then
-          CERT_MODE="internal"; HTTP_PORT=0
+          CERT_MODE="internal"
+          HTTP_PORT=0
         else
-          CERT_MODE="letsencrypt"; HTTP_PORT="${HTTP_PORT:-80}"
-          [ "$HTTP_PORT" -eq 0 ] && HTTP_PORT=80
+          CERT_MODE="letsencrypt"
+          HTTP_PORT="${HTTP_PORT:-80}"
         fi
       else
-        warn "域名格式无效，回退到 IP 自签名 HTTPS"
-        DOMAIN="$(detect_local_ip)"; CERT_MODE="internal"; HTTP_PORT=0
+        warn "域名格式无效，自动回退到 IP 自签名 HTTPS"
+        DOMAIN="$(detect_local_ip)"
+        CERT_MODE="internal"
+        HTTP_PORT=0
       fi
     fi
-
-    HTTPS_PORT="${HTTPS_PORT:-443}"
-    [ "$HTTPS_PORT" -eq 0 ] && HTTPS_PORT=443
-
-    # ── 2. 端口配置（根据 HTTPS 模式显示对应端口） ──
-    if [ "$CERT_MODE" = "letsencrypt" ]; then
-      HTTP_PORT="$(prompt_port_or_default "HTTP 端口" "$HTTP_PORT")"
-      HTTPS_PORT="$(prompt_port_or_default "HTTPS 端口" "$HTTPS_PORT")"
-      info "HTTPS(Let's Encrypt) 模式：Gateway/Web 面板仅绑定 127.0.0.1，不对外暴露"
-    else
-      HTTPS_PORT="$(prompt_port_or_default "HTTPS 端口" "$HTTPS_PORT")"
-      info "HTTPS(自签名) 模式：Gateway/Web 面板仅绑定 127.0.0.1，不对外暴露"
-    fi
-    SSH_PORT="$(prompt_port_or_default "SSH 端口" "$SSH_PORT")"
-    GW_PORT="$(prompt_port_or_default "Gateway 内部端口（仅 127.0.0.1）" "$GW_PORT")"
-    WEB_PORT="$(prompt_port_or_default "Web 面板内部端口（仅 127.0.0.1）" "$WEB_PORT")"
   else
-    # non-interactive: auto IP self-signed
     if [ -z "$DOMAIN" ]; then
       DOMAIN="$(detect_local_ip)"
       CERT_MODE="internal"
     fi
     HTTPS_ENABLED="true"
-    [ "$CERT_MODE" = "letsencrypt" ] && { [ "$HTTP_PORT" -eq 0 ] && HTTP_PORT=80; } || HTTP_PORT=0
-    HTTPS_PORT="${HTTPS_PORT:-443}"; [ "$HTTPS_PORT" -eq 0 ] && HTTPS_PORT=443
+    [ "$CERT_MODE" = "letsencrypt" ] && HTTP_PORT="${HTTP_PORT:-80}" || HTTP_PORT=0
   fi
+
+  if [ "$CERT_MODE" = "letsencrypt" ]; then
+    [ "$HTTP_PORT" -eq 0 ] && HTTP_PORT=80
+    HTTP_PORT="$(find_available_port "$HTTP_PORT" 8080 8099)"
+  else
+    HTTP_PORT=0
+  fi
+
+  HTTPS_PORT="${HTTPS_PORT:-443}"
+  [ "$HTTPS_PORT" -eq 0 ] && HTTPS_PORT=443
+  HTTPS_PORT="$(find_available_port "$HTTPS_PORT" 8443 8499)"
+
+  SSH_PORT="${SSH_PORT:-2222}"
+  [ "$SSH_PORT" -eq 0 ] && SSH_PORT=2222
+  SSH_PORT="$(find_available_port "$SSH_PORT" 2223 2299)"
+
   apply_port_conflicts
 }
 
