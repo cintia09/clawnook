@@ -16,7 +16,6 @@ CONTAINER_NAME="openclaw-pro"
 IMAGE_NAME="openclaw-pro:latest"
 GITHUB_REPO="cintia09/openclaw-pro"
 IMAGE_TARBALL_LITE="openclaw-pro-image-lite.tar.gz"
-IMAGE_TARBALL_FULL="openclaw-pro-image.tar.gz"
 
 TARGET_DIR="${TARGET_DIR:-$(pwd)}"
 BASE_DIR="${TARGET_DIR}/openclaw-pro"
@@ -38,7 +37,6 @@ TTY_IN="/dev/tty"
 has_tty(){ [ -r "$TTY_IN" ] && [ -w "$TTY_IN" ]; }
 
 TAG=""
-EDITION="${EDITION:-lite}"
 IMAGE_TARBALL="$IMAGE_TARBALL_LITE"
 
 GW_PORT="${GW_PORT:-18789}"
@@ -169,8 +167,7 @@ write_config(){
   "cert_mode": "${CERT_MODE}",
   "timezone": "${TZ_VALUE}",
   "https_enabled": ${HTTPS_ENABLED},
-  "release_tag": "${TAG:-unknown}",
-  "edition": "${EDITION}"
+  "release_tag": "${TAG:-unknown}"
 }
 EOF
 }
@@ -226,7 +223,8 @@ check_local_tarball(){
 }
 
 download_tarball(){
-  local target="$TMP_DIR/$IMAGE_TARBALL" part="$target.part"
+  local target="$TMP_DIR/$IMAGE_TARBALL"
+  local part="$target.part"
   if [ -z "$TAG" ]; then
     warn "缺少有效 release tag，跳过 release 资产下载"
     return 1
@@ -350,19 +348,6 @@ detect_local_ip(){
   fi
   [ -z "$ip" ] && ip="127.0.0.1"
   printf '%s' "$ip"
-}
-
-# ─── edition selection ────────────────────────────────────────
-
-prompt_edition(){
-  if has_tty; then
-    local c
-    printf "选择镜像版本：\n  [1] 精简版 Lite（默认）\n  [2] 完整版 Full\n" > "$TTY_IN"
-    c="$(prompt "输入 1/2（默认1）: ")"
-    [ "$c" = "2" ] && EDITION="full" || EDITION="lite"
-  fi
-  [ "$EDITION" = "full" ] && IMAGE_TARBALL="$IMAGE_TARBALL_FULL" || IMAGE_TARBALL="$IMAGE_TARBALL_LITE"
-  info "镜像版本：${EDITION}（${IMAGE_TARBALL}）"
 }
 
 # ─── HTTPS / domain / cert config ────────────────────────────
@@ -633,7 +618,6 @@ main(){
   init_dirs
   ensure_docker
   ensure_latest_tag
-  prompt_edition
 
   info "Image-only 安装（仅下载 release 镜像，不克隆源码）"
   info "工作目录：$BASE_DIR"
