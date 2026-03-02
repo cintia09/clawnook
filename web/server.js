@@ -1123,9 +1123,17 @@ app.get('/api/update/check', async (req, res) => {
     }
     const currentNorm = normalizeVersionTag(currentVersion);
     const latestNorm = normalizeVersionTag(latestVersion);
-    // Only consider a release version difference as the primary "hasUpdate" trigger
-    const hasUpdate = currentNorm !== 'unknown' && currentNorm !== 'dev'
-      && !!latestNorm && latestNorm !== currentNorm;
+    // Only consider a release version increase as the primary "hasUpdate" trigger
+    let hasUpdate = false;
+    if (currentNorm !== 'unknown' && currentNorm !== 'dev' && !!latestNorm) {
+      const currentSem = normalizeSemver(currentNorm);
+      const latestSem = normalizeSemver(latestNorm);
+      if (currentSem && latestSem) {
+        hasUpdate = compareSemver(latestNorm, currentNorm) > 0;
+      } else {
+        hasUpdate = latestNorm !== currentNorm && latestNorm !== 'dev';
+      }
+    }
 
     const result = {
       currentVersion,

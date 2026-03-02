@@ -255,12 +255,6 @@ start_gateway() {
 }
 
 start_gateway_watchdog() {
-    refresh_openclaw_availability
-    if [ "$HAS_OPENCLAW" != "true" ]; then
-        echo "[start-services] openclaw CLI not installed, skipping Gateway watchdog"
-        return 0
-    fi
-
     if [ ! -x "$GATEWAY_WATCHDOG_SCRIPT" ]; then
         echo "[start-services] watchdog script missing ($GATEWAY_WATCHDOG_SCRIPT), fallback to direct gateway start"
         start_gateway
@@ -279,11 +273,6 @@ start_gateway_watchdog() {
 }
 
 ensure_gateway_watchdog_running() {
-    refresh_openclaw_availability
-    if [ "$HAS_OPENCLAW" != "true" ]; then
-        return 0
-    fi
-
     if pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
         return 0
     fi
@@ -486,10 +475,14 @@ while true; do
 
     refresh_openclaw_availability
 
-    # 检查 Gateway watchdog（仅在 openclaw 已安装时）
-    if [ "$HAS_OPENCLAW" = "true" ] && ! pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
+    # 检查 Gateway watchdog（始终保持 watchdog 进程在线）
+    if ! pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
         echo "[health] WARNING: Gateway watchdog not found, restarting watchdog..."
         ensure_gateway_watchdog_running || true
+    fi
+
+    if [ "$HAS_OPENCLAW" != "true" ]; then
+        echo "[health] INFO: openclaw CLI not found yet; watchdog is running and will retry"
     fi
 
     # 检查 Web 面板
