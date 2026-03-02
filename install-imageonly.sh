@@ -135,14 +135,39 @@ prompt_port_or_default(){
 
 apply_port_conflicts(){
   local ng nw ns nh np
-  ng="$(find_available_port "$GW_PORT"  18790 18999)"; [ "$ng" != "$GW_PORT"  ] && warn "Gateway 端口 ${GW_PORT} 已占用 → ${ng}"  && GW_PORT="$ng"
-  nw="$(find_available_port "$WEB_PORT"  3001  3099)"; [ "$nw" != "$WEB_PORT" ] && warn "Web 端口 ${WEB_PORT} 已占用 → ${nw}"      && WEB_PORT="$nw"
-  ns="$(find_available_port "$SSH_PORT"  2223  2299)"; [ "$ns" != "$SSH_PORT" ] && warn "SSH 端口 ${SSH_PORT} 已占用 → ${ns}"      && SSH_PORT="$ns"
-  if [ "$HTTPS_ENABLED" = "true" ] && [ "$CERT_MODE" = "letsencrypt" ] && [ "$HTTP_PORT" -gt 0 ] 2>/dev/null; then
-    nh="$(find_available_port "$HTTP_PORT" 8080 8099)"; [ "$nh" != "$HTTP_PORT" ] && warn "HTTP 端口 ${HTTP_PORT} 已占用 → ${nh}" && HTTP_PORT="$nh"
+
+  ng="$(find_available_port "$GW_PORT" 18790 18999)"
+  if [ "$ng" != "$GW_PORT" ]; then
+    warn "Gateway 端口 ${GW_PORT} 已占用，自动调整为 ${ng}"
+    GW_PORT="$ng"
   fi
+
+  nw="$(find_available_port "$WEB_PORT" 3001 3099)"
+  if [ "$nw" != "$WEB_PORT" ]; then
+    warn "Web 端口 ${WEB_PORT} 已占用，自动调整为 ${nw}"
+    WEB_PORT="$nw"
+  fi
+
+  ns="$(find_available_port "$SSH_PORT" 2223 2299)"
+  if [ "$ns" != "$SSH_PORT" ]; then
+    warn "SSH 端口 ${SSH_PORT} 已占用，自动调整为 ${ns}"
+    SSH_PORT="$ns"
+  fi
+
+  if [ "$HTTPS_ENABLED" = "true" ] && [ "$CERT_MODE" = "letsencrypt" ] && [ "$HTTP_PORT" -gt 0 ] 2>/dev/null; then
+    nh="$(find_available_port "$HTTP_PORT" 8080 8099)"
+    if [ "$nh" != "$HTTP_PORT" ]; then
+      warn "HTTP 端口 ${HTTP_PORT} 已占用，自动调整为 ${nh}"
+      HTTP_PORT="$nh"
+    fi
+  fi
+
   if [ "$HTTPS_ENABLED" = "true" ] && [ "$HTTPS_PORT" -gt 0 ] 2>/dev/null; then
-    np="$(find_available_port "$HTTPS_PORT" 8443 8499)"; [ "$np" != "$HTTPS_PORT" ] && warn "HTTPS 端口 ${HTTPS_PORT} 已占用 → ${np}" && HTTPS_PORT="$np"
+    np="$(find_available_port "$HTTPS_PORT" 8443 8499)"
+    if [ "$np" != "$HTTPS_PORT" ]; then
+      warn "HTTPS 端口 ${HTTPS_PORT} 已占用，自动调整为 ${np}"
+      HTTPS_PORT="$np"
+    fi
   fi
 }
 
