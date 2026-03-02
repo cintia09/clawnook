@@ -511,7 +511,9 @@ handle_existing_installation(){
        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
        UPGRADE_MODE="true" ;;
   esac
-  [ -n "$running" ] && info "已停止并替换运行中的容器：$CONTAINER_NAME"
+  if [ -n "$running" ]; then
+    info "已停止并替换运行中的容器：$CONTAINER_NAME"
+  fi
 }
 
 # ─── firewall & fail2ban ─────────────────────────────────────
