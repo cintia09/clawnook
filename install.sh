@@ -3,10 +3,18 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install.sh | bash
 set -euo pipefail
 
+INSTALLER_COMMIT="${INSTALLER_COMMIT:-2a87981}"
+
 fetch_imageonly_script(){
   local out_file="$1"
   local api_url="https://api.github.com/repos/cintia09/openclaw-pro/commits/main"
   local sha=""
+
+  if [ -n "$INSTALLER_COMMIT" ]; then
+    if curl -fsSL "https://raw.githubusercontent.com/cintia09/openclaw-pro/${INSTALLER_COMMIT}/install-imageonly.sh" -o "$out_file"; then
+      return 0
+    fi
+  fi
   sha="$(curl -fsSL --connect-timeout 8 --max-time 15 "$api_url" 2>/dev/null | awk -F'"' '/"sha"/ {print $4; exit}' || true)"
 
   if [ -n "$sha" ]; then
