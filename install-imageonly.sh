@@ -117,6 +117,22 @@ find_available_port(){
   echo "$preferred"
 }
 
+prompt_port_or_default(){
+  local label="$1" default_port="$2" answer trimmed
+  answer="$(prompt "${label} (默认 ${default_port}): ")"
+  trimmed="$(printf '%s' "$answer" | tr -d '[:space:]')"
+  if [ -z "$trimmed" ]; then
+    printf '%s' "$default_port"
+    return 0
+  fi
+  if [[ "$trimmed" =~ ^[0-9]+$ ]] && [ "$trimmed" -ge 1 ] && [ "$trimmed" -le 65535 ]; then
+    printf '%s' "$trimmed"
+    return 0
+  fi
+  warn "${label} 输入无效（${answer}），使用默认值 ${default_port}"
+  printf '%s' "$default_port"
+}
+
 apply_port_conflicts(){
   local ng nw ns nh np
   ng="$(find_available_port "$GW_PORT"  18790 18999)"; [ "$ng" != "$GW_PORT"  ] && warn "Gateway 端口 ${GW_PORT} 已占用 → ${ng}"  && GW_PORT="$ng"
@@ -388,16 +404,16 @@ prompt_deploy_config(){
 
     # ── 2. 端口配置（根据 HTTPS 模式显示对应端口） ──
     if [ "$CERT_MODE" = "letsencrypt" ]; then
-      t="$(prompt "HTTP 端口 (默认 ${HTTP_PORT}): ")";    HTTP_PORT="${t:-$HTTP_PORT}"
-      t="$(prompt "HTTPS 端口 (默认 ${HTTPS_PORT}): ")";  HTTPS_PORT="${t:-$HTTPS_PORT}"
+      HTTP_PORT="$(prompt_port_or_default "HTTP 端口" "$HTTP_PORT")"
+      HTTPS_PORT="$(prompt_port_or_default "HTTPS 端口" "$HTTPS_PORT")"
       info "HTTPS(Let's Encrypt) 模式：Gateway/Web 面板仅绑定 127.0.0.1，不对外暴露"
     else
-      t="$(prompt "HTTPS 端口 (默认 ${HTTPS_PORT}): ")";  HTTPS_PORT="${t:-$HTTPS_PORT}"
+      HTTPS_PORT="$(prompt_port_or_default "HTTPS 端口" "$HTTPS_PORT")"
       info "HTTPS(自签名) 模式：Gateway/Web 面板仅绑定 127.0.0.1，不对外暴露"
     fi
-    t="$(prompt "SSH 端口 (默认 ${SSH_PORT}): ")";         SSH_PORT="${t:-$SSH_PORT}"
-    t="$(prompt "Gateway 内部端口 (默认 ${GW_PORT}，仅 127.0.0.1): ")";  GW_PORT="${t:-$GW_PORT}"
-    t="$(prompt "Web 面板内部端口 (默认 ${WEB_PORT}，仅 127.0.0.1): ")";  WEB_PORT="${t:-$WEB_PORT}"
+    SSH_PORT="$(prompt_port_or_default "SSH 端口" "$SSH_PORT")"
+    GW_PORT="$(prompt_port_or_default "Gateway 内部端口（仅 127.0.0.1）" "$GW_PORT")"
+    WEB_PORT="$(prompt_port_or_default "Web 面板内部端口（仅 127.0.0.1）" "$WEB_PORT")"
   else
     # non-interactive: auto IP self-signed
     if [ -z "$DOMAIN" ]; then
