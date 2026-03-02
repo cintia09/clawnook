@@ -11,6 +11,7 @@ BASE_DIR="${TARGET_DIR}/openclaw-pro"
 TMP_DIR="$BASE_DIR"
 HOME_DIR="$BASE_DIR/home-data"
 LOG_FILE="$BASE_DIR/install.log"
+ROOT_PASSWORD_FILE="$BASE_DIR/root-initial-password.txt"
 
 PROXY_PREFIXES=(
   "https://ghfast.top/"
@@ -188,27 +189,33 @@ pull_from_ghcr(){
   return 1
 }
 
-prompt_password(){
+generate_strong_password(){
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 24 | tr -d '
+' | cut -c1-20
+  else
+    tr -dc 'A-Za-z0-9!@#%^*_-+=' < /dev/urandom | head -c 20
+  fi
+}
+
+ensure_root_password(){
   if [ -n "${ROOT_PASS:-}" ]; then
+    info "检测到 ROOT_PASS 环境变量，使用外部提供密码"
     return 0
   fi
-  if ! has_tty; then
-    warn "非交互模式下请通过 ROOT_PASS 环境变量提供密码"
-    return 1
-  fi
 
-  while true; do
-    printf "设置容器 root 密码: " > "$TTY_IN"
-    IFS= read -r -s ROOT_PASS < "$TTY_IN" || true
-    printf "\n" > "$TTY_IN"
-    printf "确认密码: " > "$TTY_IN"
-    IFS= read -r -s ROOT_PASS2 < "$TTY_IN" || true
-    printf "\n" > "$TTY_IN"
-    if [ "$ROOT_PASS" = "$ROOT_PASS2" ] && [ -n "$ROOT_PASS" ]; then
+  if [ -f "$ROOT_PASSWORD_FILE" ]; then
+    ROOT_PASS="$(cat "$ROOT_PASSWORD_FILE" 2>/dev/null || true)"
+    if [ -n "$ROOT_PASS" ]; then
+      info "检测到已存在 root 初始密码文件，沿用现有值：$ROOT_PASSWORD_FILE"
       return 0
     fi
-    warn "两次输入不一致或为空，请重试"
-  done
+  fi
+
+  ROOT_PASS="$(generate_strong_password)"
+  printf '%s\n' "$ROOT_PASS" > "$ROOT_PASSWORD_FILE"
+  chmod 600 "$ROOT_PASSWORD_FILE" 2>/dev/null || true
+  info "已自动生成并保存 root 初始密码：$ROOT_PASSWORD_FILE"
 }
 
 prompt_ports(){
@@ -268,10 +275,10 @@ main(){
   info "Image-only 安装（流程与 Windows 对齐，默认 Lite）"
   info "工作目录：$BASE_DIR"
 
+  ensure_root_password
   if has_tty || [ "${FORCE_TTY_INTERACTIVE:-0}" = "1" ]; then
-    info "进入交互向导：先配置密码与端口，然后执行镜像检查/下载/导入"
+    info "进入交互向导：先配置端口，然后执行镜像检查/下载/导入"
   fi
-  prompt_password
   prompt_ports
 
   if ! load_image; then
