@@ -467,9 +467,23 @@ if ($('btn-hotpatch')) {
   $('btn-hotpatch').addEventListener('click', () => doHotPatch());
 }
 
-async function doHotPatch() {
+let hotpatchRestartPending = false;
+
+function setHotpatchButtons(disabled, text) {
   const btns = qa('[id^="btn-hotpatch"]');
-  btns.forEach(b => { b.disabled = true; b.textContent = '⏳ 更新中...'; });
+  btns.forEach((b) => {
+    b.disabled = !!disabled;
+    if (typeof text === 'string') b.textContent = text;
+  });
+}
+
+async function doHotPatch() {
+  if (hotpatchRestartPending) {
+    toast('请稍候', '后端重启中，恢复后可再次热更新');
+    return;
+  }
+
+  setHotpatchButtons(true, '⏳ 更新中...');
 
   const logBox = $('hotpatch-log');
   const logPre = logBox ? logBox.querySelector('pre') : null;
@@ -480,7 +494,7 @@ async function doHotPatch() {
     const r = await api('/api/update/hotpatch', { method: 'POST', body: { branch: 'main' } });
     if (r.error) {
       toast('热更新失败', r.error);
-      btns.forEach(b => { b.disabled = false; b.textContent = '⚡ 热更新'; });
+      setHotpatchButtons(false, '⚡ 热更新（不重启容器）');
       return;
     }
 
@@ -520,6 +534,11 @@ async function doHotPatch() {
                   : '\n前端文件已更新，将自动重查更新状态；如需立即加载新前端可手动刷新页面。';
               }
 
+              if (hasWebServer) {
+                hotpatchRestartPending = true;
+                setHotpatchButtons(true, '⏳ 后端重启中...');
+              }
+
               const waitMs = hasWebServer ? 30000 : 10000;
               const intervalMs = 2000;
               const deadline = Date.now() + waitMs;
@@ -534,6 +553,8 @@ async function doHotPatch() {
                       await checkForUpdate(true);
                       if (hasWebServer) {
                         toast('热更新完成', 'Web 面板已恢复，已自动刷新更新状态');
+                        hotpatchRestartPending = false;
+                        setHotpatchButtons(false, '⚡ 热更新（不重启容器）');
                       }
                       return;
                     }
@@ -544,6 +565,8 @@ async function doHotPatch() {
                 await checkForUpdate(true);
                 if (hasWebServer) {
                   toast('提示', 'Web 面板重启中，如状态未更新请稍后手动刷新页面');
+                  hotpatchRestartPending = false;
+                  setHotpatchButtons(false, '⚡ 热更新（不重启容器）');
                 }
               };
 
@@ -569,7 +592,9 @@ async function doHotPatch() {
   } catch (e) {
     toast('热更新失败', e.message);
   } finally {
-    btns.forEach(b => { b.disabled = false; b.textContent = '⚡ 热更新（不重启容器）'; });
+    if (!hotpatchRestartPending) {
+      setHotpatchButtons(false, '⚡ 热更新（不重启容器）');
+    }
   }
 }
 
