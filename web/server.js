@@ -1347,7 +1347,8 @@ app.post('/api/update/hotpatch', async (req, res) => {
     const summary = `热更新完成: ${hotpatchState.updated.length} 个文件已更新, ${hotpatchState.failed.length} 个失败`;
     log(summary);
     if (needContainerRestart) {
-      log('检测到 start-services.sh 已更新：请重启容器以使入口脚本变更生效（仅热更新不会立即生效）');
+      log('检测到 start-services.sh 已更新：请在宿主机执行 `docker restart openclaw-pro` 以使入口脚本变更生效（仅热更新不会立即生效）');
+      log('若容器名不确定：先执行 `docker ps --format "{{.Names}}"` 确认名称，再执行 `docker restart <容器名>`');
     }
     hotpatchState.status = 'done';
 
