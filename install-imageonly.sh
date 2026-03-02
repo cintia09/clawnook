@@ -229,7 +229,7 @@ get_latest_tag(){
   if [ -n "$t" ]; then printf '%s' "$t"; return 0; fi
   # 3rd: git ls-remote
   t="$(git ls-remote --tags --sort=-v:refname "https://github.com/${GITHUB_REPO}.git" 2>/dev/null \
-    | head -1 | sed -E 's|.*refs/tags/||; s/\^{}$//' || true)"
+    | head -1 | sed 's|.*refs/tags/||; s|\^{}$||' || true)"
   [ -n "$t" ] && printf '%s' "$t"
 }
 
