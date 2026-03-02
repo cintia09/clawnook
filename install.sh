@@ -7,7 +7,7 @@ fetch_imageonly_script(){
   local out_file="$1"
   local api_url="https://api.github.com/repos/cintia09/openclaw-pro/commits/main"
   local sha=""
-  sha="$(curl -fsSL --connect-timeout 8 --max-time 15 "$api_url" 2>/dev/null | grep -m1 '"sha"' | sed -E 's/.*"sha"[[:space:]]*:[[:space:]]*"([0-9a-f]+)".*//' || true)"
+  sha="$(curl -fsSL --connect-timeout 8 --max-time 15 "$api_url" 2>/dev/null | awk -F'"' '/"sha"/ {print $4; exit}' || true)"
 
   if [ -n "$sha" ]; then
     if curl -fsSL "https://raw.githubusercontent.com/cintia09/openclaw-pro/${sha}/install-imageonly.sh" -o "$out_file"; then
