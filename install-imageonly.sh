@@ -277,25 +277,25 @@ download_tarball(){
   while IFS= read -r u; do
     [ -z "$u" ] && continue
     info "尝试下载：$u"
-    rm -f "$part" || true
+    if [ -f "$part" ]; then
+      info "检测到未完成下载缓存，继续断点续传：$part"
+    fi
     if curl -C - -fL --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 3 -o "$part" "$u"; then
       if gzip -t "$part" >/dev/null 2>&1; then
         mv -f "$part" "$target"
         success "镜像下载并校验成功"
         return 0
       fi
-      warn "下载完成但校验失败，切换下一个源"
+      warn "下载完成但校验失败，删除损坏分片并切换下一个源"
       rm -f "$part" || true
     else
-      warn "该下载源失败：$u"
-      rm -f "$part" || true
+      warn "该下载源失败：$u（保留当前分片供下次继续）"
     fi
   done < <(build_download_urls "$primary_url")
 
   if command -v aria2c >/dev/null 2>&1; then
     info "curl 源均失败，尝试 aria2c 多线程下载"
-    rm -f "$part" || true
-    aria2c -x 8 -s 8 -d "$TMP_DIR" -o "${IMAGE_TARBALL}.part" "$primary_url" || true
+    aria2c -c -x 8 -s 8 -d "$TMP_DIR" -o "${IMAGE_TARBALL}.part" "$primary_url" || true
     if [ -f "$part" ] && gzip -t "$part" >/dev/null 2>&1; then
       mv -f "$part" "$target"
       success "aria2c 下载并校验成功"
