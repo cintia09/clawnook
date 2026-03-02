@@ -147,7 +147,8 @@ function toast(title, detail=''){
 // ------------------------
 const ROUTES = [
   { id: 'dashboard', title: '仪表盘' },
-  { id: 'openclaw', title: 'OpenClaw' },
+  { id: 'openclaw-engine', title: 'OpenClaw 引擎' },
+  { id: 'openclaw-ai', title: 'AI 模型配置' },
   { id: 'messaging', title: '消息平台' },
   { id: 'trading', title: '交易系统' },
   { id: 'plugins', title: '插件市场' },
@@ -159,7 +160,8 @@ const ROUTES = [
 
 function getRouteFromHash(){
   const h = (location.hash || '').replace('#','').trim();
-  if (h === 'ai') return 'openclaw';
+  if (h === 'ai') return 'openclaw-ai';
+  if (h === 'openclaw') return 'openclaw-engine';
   const found = ROUTES.find(r => r.id === h);
   return found ? found.id : 'dashboard';
 }
@@ -178,7 +180,8 @@ function setActiveRoute(route){
 
   // hooks
   if (route === 'dashboard') refreshStatus();
-  if (route === 'openclaw') { refreshOpenClaw(); loadAIConfig(); }
+  if (route === 'openclaw-engine') { refreshOpenClaw(); }
+  if (route === 'openclaw-ai') { loadAIConfig(); }
   if (route === 'messaging') loadMessagingConfig();
   if (route === 'trading') refreshTrading();
   if (route === 'plugins') refreshPlugins();
@@ -648,7 +651,7 @@ async function refreshOpenClaw(opts = {}){
     } else if (d.version) {
       $('oc-version').textContent = `版本：${d.version}`;
     } else {
-      $('oc-version').textContent = '版本：检测失败';
+      $('oc-version').textContent = '版本：未解析（已安装）';
     }
   } else {
     $('oc-version').textContent = '—';
@@ -663,7 +666,7 @@ async function refreshOpenClaw(opts = {}){
   }
 
   if ($('oc-current-ver')) $('oc-current-ver').textContent = d.version || '—';
-  if ($('oc-latest-ver')) $('oc-latest-ver').textContent = d.latestVersion || (d.installed ? '未知' : '—');
+  if ($('oc-latest-ver')) $('oc-latest-ver').textContent = d.latestVersion || (d.installed ? '检测中' : '—');
   if ($('oc-update-status')) {
     const invalidKeys = Array.isArray(d.invalidConfigKeys) ? d.invalidConfigKeys : [];
     if (invalidKeys.length > 0) {
@@ -677,7 +680,7 @@ async function refreshOpenClaw(opts = {}){
     } else if (d.latestVersion) {
       $('oc-update-status').textContent = '更新状态：已是最新版本';
     } else {
-      $('oc-update-status').textContent = '更新状态：待检查';
+      $('oc-update-status').textContent = '更新状态：自动检查中';
     }
   }
 

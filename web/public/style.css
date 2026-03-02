@@ -6,22 +6,22 @@
 
 :root{
   /* Core palette */
-  --bg0:#0b1020;
-  --bg1:#0f172a; /* deep blue */
-  --bg2:#1e293b; /* indigo */
+  --bg0:#f3f6fb;
+  --bg1:#eef3f9;
+  --bg2:#dde7f3;
 
-  --accent1:#6366f1;
-  --accent2:#8b5cf6;
+  --accent1:#2563eb;
+  --accent2:#14b8a6;
   --accentGrad:linear-gradient(135deg,var(--accent1),var(--accent2));
 
-  --cardTop:rgba(30,41,59,.72);
-  --cardBot:rgba(15,23,42,.72);
+  --cardTop:#ffffff;
+  --cardBot:#f7faff;
 
-  --stroke:rgba(148,163,184,.16);
-  --stroke2:rgba(148,163,184,.10);
+  --stroke:rgba(148,163,184,.22);
+  --stroke2:rgba(148,163,184,.14);
 
-  --text:#e5e7eb;
-  --muted:#94a3b8;
+  --text:#0f172a;
+  --muted:#475569;
   --dim:#64748b;
 
   --good:#22c55e;
@@ -29,8 +29,8 @@
   --bad:#ef4444;
 
   --radius:16px;
-  --shadowLg:0 22px 60px rgba(0,0,0,.55);
-  --shadowMd:0 12px 30px rgba(0,0,0,.35);
+  --shadowLg:0 16px 40px rgba(15,23,42,.12);
+  --shadowMd:0 8px 24px rgba(15,23,42,.10);
 
   --sidebarW:276px;
   --topbarH:60px;
@@ -46,8 +46,8 @@ body{
   font-family:var(--ui);
   color:var(--text);
   background:
-    radial-gradient(1200px 820px at 18% 8%, rgba(99,102,241,.18), transparent 60%),
-    radial-gradient(980px 700px at 90% 18%, rgba(139,92,246,.14), transparent 55%),
+    radial-gradient(1200px 820px at 18% 8%, rgba(37,99,235,.10), transparent 60%),
+    radial-gradient(980px 700px at 90% 18%, rgba(20,184,166,.10), transparent 55%),
     linear-gradient(180deg, var(--bg1), var(--bg0));
 }
 
@@ -157,7 +157,7 @@ button, input, select, textarea{font-family:inherit}
   width:var(--sidebarW);
   position:fixed;
   inset:0 auto 0 0;
-  background:linear-gradient(180deg, rgba(15,23,42,.92), rgba(10,16,32,.92));
+  background:linear-gradient(180deg, rgba(255,255,255,.95), rgba(245,249,255,.95));
   border-right:1px solid var(--stroke);
   backdrop-filter: blur(12px);
   z-index:30;
@@ -201,15 +201,15 @@ button, input, select, textarea{font-family:inherit}
   gap:12px;
   padding:10px 12px;
   border-radius:14px;
-  color:rgba(226,232,240,.78);
+  color:rgba(15,23,42,.82);
   position:relative;
   transition: background .12s, color .12s;
 }
 .nav-group-label + a{margin-top:2px}
-.nav a:hover{background:rgba(148,163,184,.08); color:rgba(226,232,240,.95)}
+.nav a:hover{background:rgba(148,163,184,.12); color:#0f172a}
 .nav a.active{
-  background:linear-gradient(180deg, rgba(99,102,241,.20), rgba(139,92,246,.16));
-  color:#fff;
+  background:linear-gradient(180deg, rgba(37,99,235,.16), rgba(20,184,166,.14));
+  color:#0f172a;
 }
 .nav a.active::before{
   content:"";
@@ -249,7 +249,7 @@ button, input, select, textarea{font-family:inherit}
   align-items:center;
   justify-content:space-between;
   padding:0 18px;
-  background:linear-gradient(180deg, rgba(15,23,42,.72), rgba(15,23,42,.42));
+  background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(247,250,255,.86));
   border-bottom:1px solid var(--stroke2);
   backdrop-filter: blur(12px);
   z-index:20;
@@ -304,12 +304,12 @@ button, input, select, textarea{font-family:inherit}
   border-radius:var(--radius);
   border:1px solid var(--stroke);
   background:linear-gradient(180deg, var(--cardTop), var(--cardBot));
-  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+  box-shadow: 0 8px 24px rgba(15,23,42,.08);
   padding:18px;
   backdrop-filter: blur(10px);
-  transition: box-shadow .12s ease, transform .12s ease;
+  transition: box-shadow .12s ease;
 }
-.card:hover{box-shadow:var(--shadowMd); transform:translateY(-1px)}
+.card:hover{box-shadow:var(--shadowMd)}
 .card h2{margin:0 0 12px; font-size:14px; color:rgba(226,232,240,.95)}
 
 .kpi{display:flex; align-items:center; justify-content:space-between; gap:12px}

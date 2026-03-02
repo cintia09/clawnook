@@ -435,11 +435,34 @@ function parseOpenClawVersion(text) {
   return lines[0] || '';
 }
 
+function readVersionFromPackageJson(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return '';
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw || '{}');
+    return parseOpenClawVersion(parsed?.version || '');
+  } catch {
+    return '';
+  }
+}
+
 function getInstalledOpenClawVersion() {
-  if (!isOpenClawInstalledByPath()) return '';
+  const packagePaths = [
+    '/opt/openclaw-runtime/node_modules/openclaw/package.json',
+    '/root/.npm-global/lib/node_modules/openclaw/package.json',
+    '/usr/local/lib/node_modules/openclaw/package.json',
+    '/usr/lib/node_modules/openclaw/package.json'
+  ];
+
+  for (const packagePath of packagePaths) {
+    const version = readVersionFromPackageJson(packagePath);
+    if (version) return version;
+  }
 
   const candidates = [
     runCommandText('openclaw --version 2>&1 || true', 1800),
+    runCommandText('bash --noprofile --norc -lc "openclaw --version 2>&1 || true"', 2000),
+    runCommandText('node -e "try{const p=require(\"/opt/openclaw-runtime/node_modules/openclaw/package.json\"); console.log(p.version||\"\")}catch(e){}"', 1800),
     runCommandText('npm list -g openclaw --depth=0 2>/dev/null | sed -n "s/.*openclaw@\\([^[:space:]]*\\).*/\\1/p" | head -1', 2200),
     runCommandText('npm root -g 2>/dev/null | xargs -I{} sh -c "test -f \"{}/openclaw/package.json\" && sed -n \"s/.*\\\"version\\\": *\\\"\\([^\\\"]*\\\)\\\".*/\\1/p\" \"{}/openclaw/package.json\" | head -1"', 2200)
   ];
@@ -455,7 +478,7 @@ function getInstalledOpenClawVersion() {
 function isOpenClawInstalledByPath() {
   return runCommandOk('command -v openclaw >/dev/null 2>&1', 1500)
     || runCommandOk('bash --noprofile --norc -lc "command -v openclaw >/dev/null 2>&1"', 1800)
-    || runCommandOk('test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw', 1200);
+    || runCommandOk('test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw || test -f /opt/openclaw-runtime/node_modules/openclaw/openclaw.mjs', 1200);
 }
 
 function isOpenClawInstalledByNpmPackage() {

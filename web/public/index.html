@@ -23,7 +23,8 @@
         <a href="#dashboard" data-route="dashboard" class="active"><span class="ico">📊</span><span>仪表盘</span></a>
 
         <div class="nav-group-label">OpenClaw</div>
-        <a href="#openclaw" data-route="openclaw"><span class="ico">🐾</span><span>OpenClaw</span></a>
+        <a href="#openclaw-engine" data-route="openclaw-engine"><span class="ico">🐾</span><span>OpenClaw 引擎</span></a>
+        <a href="#openclaw-ai" data-route="openclaw-ai"><span class="ico">🤖</span><span>AI 模型配置</span></a>
         <a href="#messaging" data-route="messaging"><span class="ico">💬</span><span>消息平台</span></a>
         <a href="#plugins" data-route="plugins"><span class="ico">🧩</span><span>插件市场</span></a>
 
@@ -138,8 +139,8 @@
         </div>
       </section>
 
-      <!-- OpenClaw -->
-      <section class="page" id="page-openclaw" data-title="OpenClaw">
+      <!-- OpenClaw Engine -->
+      <section class="page" id="page-openclaw-engine" data-title="OpenClaw 引擎">
         <div class="grid">
           <div class="card" style="grid-column: span 12;">
             <div class="row" style="justify-content:space-between">
@@ -171,13 +172,12 @@
                 <h2>操作</h2>
                 <div class="row">
                   <button class="btn btn-primary" id="btn-oc-install">安装</button>
-                  <button class="btn" id="btn-oc-check-update">检查更新</button>
                   <button class="btn" id="btn-oc-repair-config">配置恢复</button>
                   <button class="btn" id="btn-oc-start">重启 Gateway</button>
                 </div>
-                <div class="muted small" id="oc-update-status" style="margin-top:10px">更新状态：待检查</div>
+                <div class="muted small" id="oc-update-status" style="margin-top:10px">更新状态：自动检查中</div>
                 <div class="muted small" style="margin-top:4px">当前：<span id="oc-current-ver">—</span> · 最新：<span id="oc-latest-ver">—</span></div>
-                <div class="muted small" style="margin-top:10px">安装/更新/Gateway启动过程会有日志输出</div>
+                <div class="muted small" style="margin-top:10px">安装按钮会自动判断是否需要更新，日志会实时输出</div>
               </div>
             </div>
             <div class="sep"></div>
@@ -185,8 +185,14 @@
               <h2>安装/更新/Gateway启动日志</h2>
               <pre class="terminal" id="oc-log" style="height:260px"></pre>
             </div>
+          </div>
+        </div>
+      </section>
 
-            <div class="card" style="grid-column: span 12;">
+      <!-- OpenClaw AI -->
+      <section class="page" id="page-openclaw-ai" data-title="AI 模型配置">
+        <div class="grid">
+          <div class="card" style="grid-column: span 12;">
               <div class="row" style="justify-content:space-between">
                 <div>
                   <div style="font-weight:900;font-size:18px">AI 模型配置</div>
@@ -237,7 +243,6 @@
                   <pre class="terminal" id="ai-auth-log" style="height:180px"></pre>
                 </div>
               </div>
-            </div>
           </div>
         </div>
       </section>
