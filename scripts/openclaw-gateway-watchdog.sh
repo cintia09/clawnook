@@ -8,7 +8,7 @@ GATEWAY_LOG="$LOG_DIR/gateway.log"
 
 CHECK_INTERVAL=30
 POLL_INTERVAL=5
-STARTUP_TIMEOUT=900
+STARTUP_TIMEOUT=180
 MAX_RETRIES=3
 BACKOFF_WAIT=300
 PORT=18789
@@ -32,21 +32,33 @@ if [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
 fi
 
 OPENCLAW_BIN=""
+OPENCLAW_CMD_BASE=""
+OPENCLAW_RUNTIME_JS="/opt/openclaw-runtime/node_modules/openclaw/openclaw.mjs"
 
 resolve_openclaw_bin() {
+  if command -v node >/dev/null 2>&1 && [[ -f "$OPENCLAW_RUNTIME_JS" ]]; then
+    OPENCLAW_BIN="$OPENCLAW_RUNTIME_JS"
+    OPENCLAW_CMD_BASE="node $OPENCLAW_RUNTIME_JS"
+    return 0
+  fi
+
   if command -v openclaw >/dev/null 2>&1; then
     OPENCLAW_BIN="$(command -v openclaw)"
+    OPENCLAW_CMD_BASE="$OPENCLAW_BIN"
     return 0
   fi
   if [[ -x "/root/.npm-global/bin/openclaw" ]]; then
     OPENCLAW_BIN="/root/.npm-global/bin/openclaw"
+    OPENCLAW_CMD_BASE="$OPENCLAW_BIN"
     return 0
   fi
   if [[ -x "/usr/local/bin/openclaw" ]]; then
     OPENCLAW_BIN="/usr/local/bin/openclaw"
+    OPENCLAW_CMD_BASE="$OPENCLAW_BIN"
     return 0
   fi
   OPENCLAW_BIN=""
+  OPENCLAW_CMD_BASE=""
   return 1
 }
 
@@ -57,7 +69,10 @@ log() {
 }
 
 get_gateway_pids() {
-  pgrep -f "[o]penclaw gateway run" 2>/dev/null || true
+  {
+    pgrep -f "[o]penclaw-gateway$" 2>/dev/null || true
+    pgrep -f "[o]penclaw gateway run" 2>/dev/null || true
+  } | sort -u
 }
 
 get_gateway_pid() {
@@ -80,6 +95,14 @@ is_gateway_process_alive() {
     return 0
   fi
   [[ -n "$(get_gateway_pid)" ]]
+}
+
+is_gateway_pid_blocked_d_state() {
+  local pid state
+  pid=$(get_gateway_pid)
+  [[ -z "$pid" ]] && return 1
+  state=$(ps -o stat= -p "$pid" 2>/dev/null | tr -d ' ')
+  [[ "$state" == D* ]]
 }
 
 is_port_listening() {
@@ -106,7 +129,6 @@ is_port_listening() {
 
   if command -v curl >/dev/null 2>&1; then
     curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 && return 0
-    curl -kfsS --connect-timeout 2 --max-time 3 "https://127.0.0.1/gateway/health" >/dev/null 2>&1 && return 0
   fi
 
   return 1
@@ -148,6 +170,7 @@ kill_gateway() {
   pkill -9 -x "openclaw-gatewa" 2>/dev/null || true
   pkill -9 -x "openclaw" 2>/dev/null || true
   pkill -9 -f "[o]penclaw gateway run" 2>/dev/null || true
+  pkill -9 -f "[o]penclaw-gateway$" 2>/dev/null || true
   if [[ -n "$LAST_PID" ]]; then
     kill -9 "$LAST_PID" 2>/dev/null || true
   fi
@@ -170,6 +193,11 @@ wait_for_ready() {
       return 1
     fi
 
+    if is_gateway_pid_blocked_d_state; then
+      log "Gateway process entered D-state during startup (after ${elapsed}s)"
+      return 1
+    fi
+
     sleep "$POLL_INTERVAL"
     elapsed=$((elapsed + POLL_INTERVAL))
 
@@ -187,7 +215,7 @@ start_gateway() {
     log "Cannot start gateway: openclaw CLI not found"
     return 1
   fi
-  GATEWAY_CMD="$OPENCLAW_BIN gateway run --allow-unconfigured"
+  GATEWAY_CMD="$OPENCLAW_CMD_BASE gateway run --allow-unconfigured --force"
 
   if is_gateway_process_alive; then
     kill_gateway
@@ -300,7 +328,10 @@ while true; do
       uptime=${uptime:-0}
     fi
 
-    if [[ "$uptime" -ge "$STARTUP_TIMEOUT" ]]; then
+    if is_gateway_pid_blocked_d_state; then
+      log "Gateway stuck in D-state (uptime ${uptime}s), force restarting..."
+      handle_restart
+    elif [[ "$uptime" -ge "$STARTUP_TIMEOUT" ]]; then
       log "Gateway stuck — alive for ${uptime}s but port $PORT not listening. Force restarting..."
       handle_restart
     else

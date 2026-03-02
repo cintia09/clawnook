@@ -227,9 +227,10 @@ NOVNC_PID=""
 CHROME_PID=""
 CADDY_PID=""
 GATEWAY_WATCHDOG_SCRIPT="/usr/local/bin/openclaw-gateway-watchdog.sh"
+OPENCLAW_RUNTIME_JS="/opt/openclaw-runtime/node_modules/openclaw/openclaw.mjs"
 
 has_openclaw_cli() {
-    command -v openclaw >/dev/null 2>&1 || [ -x "/root/.npm-global/bin/openclaw" ] || [ -x "/usr/local/bin/openclaw" ]
+    command -v openclaw >/dev/null 2>&1 || [ -x "/root/.npm-global/bin/openclaw" ] || [ -x "/usr/local/bin/openclaw" ] || { command -v node >/dev/null 2>&1 && [ -f "$OPENCLAW_RUNTIME_JS" ]; }
 }
 
 refresh_openclaw_availability() {
@@ -250,7 +251,11 @@ start_gateway() {
         return 0
     fi
     echo "[start-services] Starting OpenClaw Gateway (foreground mode)..."
-    nohup openclaw gateway run --allow-unconfigured >> "$LOG_DIR/gateway.log" 2>&1 &
+    if command -v node >/dev/null 2>&1 && [ -f "$OPENCLAW_RUNTIME_JS" ]; then
+        nohup env HOME=/opt/openclaw-home node "$OPENCLAW_RUNTIME_JS" gateway run --allow-unconfigured --force >> "$LOG_DIR/gateway.log" 2>&1 &
+    else
+        nohup openclaw gateway run --allow-unconfigured --force >> "$LOG_DIR/gateway.log" 2>&1 &
+    fi
     GATEWAY_PID=$!
 }
 
