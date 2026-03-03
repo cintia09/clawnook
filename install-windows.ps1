@@ -4201,7 +4201,7 @@ function Main {
                             & docker exec $containerName bash -lc "mkdir -p '/home/$hostUser/.ssh' && chmod 700 '/home/$hostUser/.ssh'" 2>$null | Out-Null
                             & docker cp $keyFile "${containerName}:/tmp/host_user_key.pub" 2>$null | Out-Null
                             if ($LASTEXITCODE -eq 0) {
-                                & docker exec $containerName bash -lc "cat /tmp/host_user_key.pub >> '/home/$hostUser/.ssh/authorized_keys' && sort -u -o '/home/$hostUser/.ssh/authorized_keys' '/home/$hostUser/.ssh/authorized_keys' && chmod 600 '/home/$hostUser/.ssh/authorized_keys' && chown -R '$hostUser:$hostUser' '/home/$hostUser/.ssh' && rm -f /tmp/host_user_key.pub" 2>$null | Out-Null
+                                & docker exec $containerName bash -lc "cat /tmp/host_user_key.pub >> '/home/$hostUser/.ssh/authorized_keys' && sort -u -o '/home/$hostUser/.ssh/authorized_keys' '/home/$hostUser/.ssh/authorized_keys' && chmod 600 '/home/$hostUser/.ssh/authorized_keys' && chown -R '${hostUser}:${hostUser}' '/home/$hostUser/.ssh' && rm -f /tmp/host_user_key.pub" 2>$null | Out-Null
                                 if ($LASTEXITCODE -eq 0) {
                                     $script:sshInjectedKeyPath = $keyFile
                                     $injected = $true
