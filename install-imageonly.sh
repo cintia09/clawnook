@@ -266,20 +266,61 @@ check_local_tarball(){
 download_tarball(){
   local target="$TMP_DIR/$IMAGE_TARBALL"
   local part="$target.part"
+  local target_meta="$target.meta"
+  local part_meta="$part.meta"
   local total_bytes=""
   local cached_bytes="0"
   local cached_mib="0"
   local total_mib="0"
   local total_pct="0"
+  local expected_sig=""
+  local meta_sig=""
+  local meta_size=""
   if [ -z "$TAG" ]; then
     warn "缺少有效 release tag，跳过 release 资产下载"
     return 1
   fi
   local primary_url="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${IMAGE_TARBALL}"
+  expected_sig="${TAG}|${IMAGE_TARBALL}"
   total_bytes="$(curl -fsSLI --connect-timeout 8 --max-time 20 "$primary_url" 2>/dev/null | awk -F': ' 'tolower($1)=="content-length"{print $2}' | tr -d '\r' | tail -1 || true)"
   if ! [[ "$total_bytes" =~ ^[0-9]+$ ]] || [ "$total_bytes" -le 0 ]; then
     total_bytes=""
   fi
+
+  if [ -f "$target" ]; then
+    if [ -f "$target_meta" ]; then
+      meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$target_meta" 2>/dev/null || true)"
+      meta_size="$(awk -F= '/^size=/{print $2; exit}' "$target_meta" 2>/dev/null || true)"
+      if [ "$meta_sig" != "$expected_sig" ]; then
+        warn "检测到旧版本完整缓存（${meta_sig:-unknown}），已清理并重新下载 ${TAG}"
+        rm -f "$target" "$target_meta" || true
+      elif [[ "$total_bytes" =~ ^[0-9]+$ ]] && [[ "$meta_size" =~ ^[0-9]+$ ]] && [ "$meta_size" -gt 0 ] && [ "$meta_size" -ne "$total_bytes" ]; then
+        warn "检测到完整缓存大小与远端不一致，已清理并重新下载"
+        rm -f "$target" "$target_meta" || true
+      fi
+    else
+      warn "检测到无版本标记的旧完整缓存，已清理避免跨版本复用"
+      rm -f "$target" || true
+    fi
+  fi
+
+  if [ -f "$part" ]; then
+    if [ -f "$part_meta" ]; then
+      meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$part_meta" 2>/dev/null || true)"
+      meta_size="$(awk -F= '/^size=/{print $2; exit}' "$part_meta" 2>/dev/null || true)"
+      if [ "$meta_sig" != "$expected_sig" ]; then
+        warn "检测到旧版本断点缓存（${meta_sig:-unknown}），已清理并重新下载 ${TAG}"
+        rm -f "$part" "$part_meta" || true
+      elif [[ "$total_bytes" =~ ^[0-9]+$ ]] && [[ "$meta_size" =~ ^[0-9]+$ ]] && [ "$meta_size" -gt 0 ] && [ "$meta_size" -ne "$total_bytes" ]; then
+        warn "检测到断点缓存大小与远端不一致，已清理并重新下载"
+        rm -f "$part" "$part_meta" || true
+      fi
+    else
+      warn "检测到无版本标记的旧断点缓存，已清理避免跨版本续传"
+      rm -f "$part" || true
+    fi
+  fi
+
   if check_local_tarball; then return 0; fi
 
   while IFS= read -r u; do
@@ -297,15 +338,18 @@ download_tarball(){
       fi
       info "说明：下面 curl 百分比显示的是本次新增下载进度，不是总体百分比。"
     fi
+    printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$part_meta" 2>/dev/null || true
     if curl -C - --progress-bar -fL --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 3 -o "$part" "$u"; then
       echo ""
       if gzip -t "$part" >/dev/null 2>&1; then
         mv -f "$part" "$target"
+        printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$target_meta" 2>/dev/null || true
+        rm -f "$part_meta" || true
         success "镜像下载并校验成功"
         return 0
       fi
       warn "下载完成但校验失败，删除损坏分片并切换下一个源"
-      rm -f "$part" || true
+      rm -f "$part" "$part_meta" || true
     else
       echo ""
       warn "该下载源失败：$u（保留当前分片供下次继续）"
@@ -314,25 +358,20 @@ download_tarball(){
 
   if command -v aria2c >/dev/null 2>&1; then
     info "curl 源均失败，尝试 aria2c 多线程下载"
+    printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$part_meta" 2>/dev/null || true
     aria2c -c -x 8 -s 8 -d "$TMP_DIR" -o "${IMAGE_TARBALL}.part" "$primary_url" || true
     if [ -f "$part" ] && gzip -t "$part" >/dev/null 2>&1; then
       mv -f "$part" "$target"
+      printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$target_meta" 2>/dev/null || true
+      rm -f "$part_meta" || true
       success "aria2c 下载并校验成功"
       return 0
     fi
-    rm -f "$part" || true
+    rm -f "$part" "$part_meta" || true
   fi
 
   return 1
 }
-
-tag_loaded_image_if_needed(){
-  if docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then return 0; fi
-  local loaded_ref
-  loaded_ref=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -i openclaw | head -1 || true)
-  if [ -n "$loaded_ref" ]; then docker tag "$loaded_ref" "$IMAGE_NAME" || true; fi
-}
-
 load_image(){
   local f="$TMP_DIR/$IMAGE_TARBALL"
   local load_log="$TMP_DIR/.docker-load.log"
