@@ -3440,10 +3440,11 @@ function Main {
                             if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
                             $downloadOK = $false
                         } else {
-                            # 文件大小匹配但缺少 tag 元数据：默认复用并补写元数据，避免不必要的重复下载
-                            Write-Warn "检测到已下载镜像缺少版本元数据，默认复用并补写元数据"
-                            try { "$tagText|$script:imageEdition" | Set-Content -Path $tagFile -Force -ErrorAction SilentlyContinue } catch { }
-                            $downloadOK = $true
+                            # 文件大小匹配但缺少 tag 元数据：无法确认版本，必须重新下载
+                            Write-Warn "检测到已下载镜像缺少版本元数据，无法确认版本，重新下载"
+                            Remove-Item $imageTar -Force -ErrorAction SilentlyContinue
+                            if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
+                            $downloadOK = $false
                         }
                     } elseif ($expectedSize -le 0 -and $existingSize -gt 500MB) {
                         # 无法获取远端大小时，若本地文件 > 500MB 也认为可能是完整的
@@ -3451,10 +3452,14 @@ function Main {
                             Write-Warn "本地镜像文件版本 ($diskTag) 与远端 ($tagText|$script:imageEdition) 不一致，重新下载"
                             Remove-Item $imageTar -Force -ErrorAction SilentlyContinue
                             if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
-                        } else {
-                            Write-Warn "无法确认远端版本但本地镜像完整，默认复用并补写元数据"
-                            if ($tagText) { try { "$tagText|$script:imageEdition" | Set-Content -Path $tagFile -Force -ErrorAction SilentlyContinue } catch { } }
+                        } elseif ($diskTag -and $tagText -and $diskTag -eq "$tagText|$script:imageEdition") {
+                            Write-OK "检测到已下载的镜像文件，版本匹配，跳过下载"
                             $downloadOK = $true
+                        } else {
+                            # 缺少版本元数据：无法确认版本，必须重新下载
+                            Write-Warn "检测到已下载镜像缺少版本元数据，无法确认版本，重新下载"
+                            Remove-Item $imageTar -Force -ErrorAction SilentlyContinue
+                            if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
                         }
                     }
                 }
