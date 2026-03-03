@@ -5040,6 +5040,10 @@ function Main {
         } else {
             Write-Host "     docker exec -it $enterContainerName bash" -ForegroundColor Yellow
         }
+        $sshHintUser = if ($script:hostUserForSSH) { $script:hostUserForSSH } else { "root" }
+        Write-Host "" 
+        Write-Host "  🔐 SSH 登录（推荐）" -ForegroundColor Cyan
+        Write-Host "     ssh -p $sPort ${sshHintUser}@<host>" -ForegroundColor Yellow
         Write-Host "  ==================================================" -ForegroundColor DarkCyan
         Write-Host ""
         try {
