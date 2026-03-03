@@ -679,14 +679,22 @@ let ocRepairPollTimer = null;
 let ocRepairRunning = false;
 let ocInstallRunning = false;
 let ocStartRunning = false;
+let ocInstalled = false;
+let ocInstallTaskRunningRemote = false;
+let ocRepairTaskRunningRemote = false;
+let ocGatewayRestartRunningRemote = false;
 
 function syncOpenClawButtons(){
   const installBtn = $('btn-oc-install');
   const repairBtn = $('btn-oc-repair-config');
   const startBtn = $('btn-oc-start');
-  if (installBtn) installBtn.disabled = !!ocInstallRunning;
-  if (repairBtn) repairBtn.disabled = !!ocInstallRunning || !!ocRepairRunning;
-  if (startBtn) startBtn.disabled = !!ocInstallRunning || !!ocStartRunning;
+  const installBusy = !!ocInstallRunning || !!ocInstallTaskRunningRemote;
+  const repairBusy = !!ocRepairRunning || !!ocRepairTaskRunningRemote;
+  const restartBusy = !!ocStartRunning || !!ocGatewayRestartRunningRemote;
+  const anyBusy = installBusy || repairBusy || restartBusy;
+  if (installBtn) installBtn.disabled = anyBusy;
+  if (repairBtn) repairBtn.disabled = anyBusy;
+  if (startBtn) startBtn.disabled = anyBusy || !ocInstalled;
 }
 
 function shouldAutoScroll(el, threshold = 24){
@@ -741,6 +749,11 @@ async function refreshOpenClaw(opts = {}){
     ? `<span class="pulse online"></span>运行中`
     : `<span class="pulse offline"></span>未启动`;
 
+  ocInstalled = !!d.installed;
+  ocInstallTaskRunningRemote = !!d.installTaskRunning;
+  ocRepairTaskRunningRemote = !!d.repairTaskRunning;
+  ocGatewayRestartRunningRemote = !!d.gatewayRestartRunning;
+
   const actionBtn = $('btn-oc-install');
   if (actionBtn) {
     actionBtn.textContent = d.installed ? '更新' : '安装';
@@ -764,6 +777,8 @@ async function refreshOpenClaw(opts = {}){
       $('oc-update-status').textContent = '更新状态：自动检查中';
     }
   }
+
+  syncOpenClawButtons();
 
   return d;
 }
@@ -920,36 +935,65 @@ $('btn-oc-refresh').addEventListener('click', async ()=>{
 });
 
 $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
-  if (ocInstallRunning) {
-    toast('任务进行中', '安装/更新执行中，暂不可配置恢复');
+  if (ocInstallRunning || ocInstallTaskRunningRemote || ocStartRunning || ocGatewayRestartRunningRemote) {
+    toast('任务进行中', '安装/更新或网关重启执行中，暂不可配置恢复');
     return;
   }
   if (ocRepairRunning) {
-    appendOcLogLine('[repair] 任务进行中，请勿重复触发。');
+    appendOcLogLine('[restore] 配置恢复任务进行中，请勿重复触发。');
     return;
   }
-  appendOcLogLine('[repair] 正在检测并修复 OpenClaw 配置中的无效 key...');
-  appendOcLogLine('[repair] 已提交修复任务，后台执行中（约 30~120 秒）...');
-  const r = await api('/api/openclaw/config/repair', { method:'POST', timeoutMs: 15000 });
-  if (r.success && r.taskId) {
-    if (r.reused) {
-      appendOcLogLine(`[repair] 已复用进行中的任务: ${r.taskId || '后台任务'}`);
-    } else {
-      appendOcLogLine(`[repair] 任务已启动: ${r.taskId}`);
+  ocRepairRunning = true;
+  syncOpenClawButtons();
+  appendOcLogLine('[restore] 正在读取配置备份列表...');
+  try {
+    const list = await api('/api/openclaw/config/backups', { timeoutMs: 15000 });
+    if (!list || list.error || !Array.isArray(list.backups)) {
+      throw new Error(list?.error || '备份列表读取失败');
     }
-    pollRepairTask(r.taskId);
-  } else {
-    const isEmptyResponse = r && typeof r === 'object' && Object.keys(r).length === 0;
-    const err = r.error || (isEmptyResponse
-      ? '接口返回空响应（可能会话失效或页面缓存未更新，请刷新后重试）'
-      : '未知错误');
-    appendOcLogLine(`[repair] 失败: ${err}`);
-    if (/请求超时/.test(err)) {
-      appendOcLogLine('[repair] 提示: 后端可能仍在执行，请稍后刷新状态并查看日志。');
-    } else if (/空响应|缓存未更新|会话失效/.test(err)) {
-      appendOcLogLine('[repair] 提示: 请强制刷新页面后重试（macOS: Command+Shift+R）。');
+    if (list.backups.length === 0) {
+      appendOcLogLine('[restore] 未找到可用备份文件。');
+      toast('配置恢复', '未找到备份文件');
+      return;
     }
+
+    const shown = list.backups.slice(0, 12);
+    const hint = shown.map((item, idx) => `${idx + 1}. ${item.name}`).join('\n');
+    const input = window.prompt(`请选择要恢复的备份（输入序号或文件名）：\n${hint}`, shown[0].name);
+    if (input === null) {
+      appendOcLogLine('[restore] 已取消。');
+      return;
+    }
+
+    const raw = String(input || '').trim();
+    if (!raw) {
+      appendOcLogLine('[restore] 未输入备份项，已取消。');
+      return;
+    }
+
+    let selectedName = raw;
+    if (/^\d+$/.test(raw)) {
+      const idx = Number(raw) - 1;
+      if (idx >= 0 && idx < shown.length) selectedName = shown[idx].name;
+    }
+
+    appendOcLogLine(`[restore] 正在恢复备份: ${selectedName}`);
+    const r = await api('/api/openclaw/config/restore', { method:'POST', body: { name: selectedName }, timeoutMs: 15000 });
+    if (!r || r.error || !r.success) {
+      throw new Error(r?.error || '恢复失败');
+    }
+
+    appendOcLogLine(`[restore] 配置恢复完成: ${r.restored || selectedName}`);
+    appendOcLogLine('[restore] 请点击“重启 Gateway”使配置生效。');
+    toast('配置恢复完成', r.restored || selectedName);
+  } catch (e) {
+    const err = e?.message || String(e || '配置恢复失败');
+    appendOcLogLine(`[restore] 失败: ${err}`);
     toast('配置恢复失败', err);
+  } finally {
+    ocRepairRunning = false;
+    syncOpenClawButtons();
+    setTimeout(refreshOpenClaw, 500);
   }
 });
 
