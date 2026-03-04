@@ -300,9 +300,41 @@ sync_root_authorized_keys_to_ssh_user() {
     chown -R "$username:$username" "$user_ssh" 2>/dev/null || true
 }
 
+normalize_ssh_user_keys_and_permissions() {
+    local username="$1"
+    [ -n "$username" ] || return 0
+    id -u "$username" >/dev/null 2>&1 || return 0
+
+    local user_home user_ssh user_keys
+    user_home=$(getent passwd "$username" | cut -d: -f6)
+    [ -n "$user_home" ] || user_home="/home/$username"
+    user_ssh="$user_home/.ssh"
+    user_keys="$user_ssh/authorized_keys"
+
+    mkdir -p "$user_ssh" 2>/dev/null || return 0
+    touch "$user_keys" 2>/dev/null || return 0
+
+    # 统一去除 Windows CRLF/BOM，避免 sshd 解析公钥失败
+    sed -i 's/\r$//' "$user_keys" 2>/dev/null || true
+    sed -i '1s/^\xEF\xBB\xBF//' "$user_keys" 2>/dev/null || true
+    awk 'NF{print}' "$user_keys" 2>/dev/null | sort -u > "${user_keys}.tmp" 2>/dev/null || true
+    if [ -s "${user_keys}.tmp" ]; then
+        mv -f "${user_keys}.tmp" "$user_keys" 2>/dev/null || true
+    else
+        rm -f "${user_keys}.tmp" 2>/dev/null || true
+    fi
+
+    chown "$username:$username" "$user_home" 2>/dev/null || true
+    chmod 755 "$user_home" 2>/dev/null || true
+    chown -R "$username:$username" "$user_ssh" 2>/dev/null || true
+    chmod 700 "$user_ssh" 2>/dev/null || true
+    chmod 600 "$user_keys" 2>/dev/null || true
+}
+
 # 兼容安装器先向 root 注入公钥、再由普通用户登录的场景
 if [ -n "$SSH_USER" ]; then
     sync_root_authorized_keys_to_ssh_user "$SSH_USER"
+    normalize_ssh_user_keys_and_permissions "$SSH_USER"
 fi
 
 # ── SSH 持久化：host keys 和 sshd_config 保存到 /root/.openclaw/ssh/ ──
@@ -687,6 +719,7 @@ while true; do
 
     refresh_openclaw_availability
     sync_root_authorized_keys_to_ssh_user "$SSH_USER"
+    normalize_ssh_user_keys_and_permissions "$SSH_USER"
 
     # 检查 Gateway watchdog（始终保持 watchdog 进程在线）
     dedupe_gateway_watchdogs
