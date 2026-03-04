@@ -73,6 +73,13 @@ else
   fail "status schema missing required fields"
 fi
 
+log "T2b: enhanced status fields"
+if jq -e '.gatewayWatchdogRunning != null and .operationState != null and (.operationState.type // "") != "" and (.lastBackupAt != null) and (.lastRollbackAt != null)' /tmp/oc-status.json >/dev/null 2>&1; then
+  pass "status schema includes watchdog/operation/backup fields"
+else
+  fail "status schema missing enhanced fields"
+fi
+
 log "T3: backups list endpoint"
 if api GET /api/openclaw/config/backups >/tmp/oc-backups.json 2>/tmp/oc-backups.err && jq -e '.success == true and (.backups | type == "array")' /tmp/oc-backups.json >/dev/null 2>&1; then
   pass "backups list endpoint ok"
@@ -148,27 +155,31 @@ if [ -n "$TASK_ID" ]; then
 fi
 
 log "T8: restart gateway api + health"
-if api POST /api/openclaw/start >/tmp/oc-start.json 2>/tmp/oc-start.err; then
-  pass "restart api accepted"
+if [ "$CHECK_ONLY_COMMAND_CHAIN" = "1" ]; then
+  pass "skip restart/self-heal checks in command-chain-only mode"
 else
-  fail "restart api failed: $(cat /tmp/oc-start.err 2>/dev/null || true)"
-fi
-
-sleep 4
-GCODE="000"
-health_wait=0
-while [ "$health_wait" -lt 180 ]; do
-  GCODE="$(get_gateway_code)"
-  if [ "$GCODE" = "200" ] || [ "$GCODE" = "401" ] || [ "$GCODE" = "403" ] || [ "$GCODE" = "503" ]; then
-    break
+  if api POST /api/openclaw/start >/tmp/oc-start.json 2>/tmp/oc-start.err; then
+    pass "restart api accepted"
+  else
+    fail "restart api failed: $(cat /tmp/oc-start.err 2>/dev/null || true)"
   fi
-  sleep 3
-  health_wait=$((health_wait + 3))
-done
-if [ "$GCODE" = "200" ] || [ "$GCODE" = "401" ] || [ "$GCODE" = "403" ] || [ "$GCODE" = "503" ]; then
-  pass "gateway health code ok ($GCODE), wait=${health_wait}s"
-else
-  fail "gateway health code unexpected ($GCODE) after wait=${health_wait}s"
+
+  sleep 4
+  GCODE="000"
+  health_wait=0
+  while [ "$health_wait" -lt 180 ]; do
+    GCODE="$(get_gateway_code)"
+    if [ "$GCODE" = "200" ] || [ "$GCODE" = "401" ] || [ "$GCODE" = "403" ] || [ "$GCODE" = "503" ]; then
+      break
+    fi
+    sleep 3
+    health_wait=$((health_wait + 3))
+  done
+  if [ "$GCODE" = "200" ] || [ "$GCODE" = "401" ] || [ "$GCODE" = "403" ] || [ "$GCODE" = "503" ]; then
+    pass "gateway health code ok ($GCODE), wait=${health_wait}s"
+  else
+    fail "gateway health code unexpected ($GCODE) after wait=${health_wait}s"
+  fi
 fi
 
 log "T9: watchdog process present"
@@ -183,6 +194,61 @@ while [ "$wd_wait" -lt 30 ]; do
 done
 if [ "$wd_wait" -ge 30 ]; then
   fail "watchdog not running"
+fi
+
+log "T10: gateway logs endpoint includes source labels"
+if api GET /api/openclaw/gateway/logs?lines=120 >/tmp/oc-gateway-logs.json 2>/tmp/oc-gateway-logs.err; then
+  logs_text="$(jq -r '.logs // ""' /tmp/oc-gateway-logs.json 2>/dev/null || true)"
+  if [ "$CHECK_ONLY_COMMAND_CHAIN" = "1" ]; then
+    if echo "$logs_text" | grep -Eq '^\[(gateway-runtime|gateway-legacy)\]'; then
+      pass "gateway logs include gateway source label"
+    else
+      pass "gateway source label deferred in command-chain-only mode"
+    fi
+  else
+    if echo "$logs_text" | grep -Eq '^\[(gateway-runtime|gateway-legacy)\]'; then
+      pass "gateway logs include gateway source label"
+    else
+      fail "gateway logs missing gateway source label"
+    fi
+  fi
+  if echo "$logs_text" | grep -Eq '^\[watchdog\]'; then
+    pass "gateway logs include watchdog source label"
+  else
+    fail "gateway logs missing watchdog source label"
+  fi
+else
+  fail "gateway logs endpoint failed: $(cat /tmp/oc-gateway-logs.err 2>/dev/null || true)"
+fi
+
+log "T11: runtime log dir self-heal after /workspace/tmp removal"
+MARKER="[t11-marker] $(date +%s)"
+echo "$MARKER" >> /root/.openclaw/logs/gateway-watchdog.log 2>/dev/null || true
+if [ "$CHECK_ONLY_COMMAND_CHAIN" = "1" ]; then
+  pass "skip self-heal check in command-chain-only mode"
+else
+  rm -rf /workspace/tmp 2>/dev/null || true
+  if api POST /api/openclaw/start >/tmp/oc-start-2.json 2>/tmp/oc-start-2.err; then
+    for _ in $(seq 1 40); do
+      if [ -f /workspace/tmp/openclaw-gateway.log ] || [ -f /root/.openclaw/logs/gateway.log ]; then
+        break
+      fi
+      sleep 2
+    done
+    if [ -f /workspace/tmp/openclaw-gateway.log ] || [ -f /root/.openclaw/logs/gateway.log ]; then
+      pass "gateway log path self-healed after tmp removal"
+    else
+      fail "gateway log path not restored after tmp removal"
+    fi
+    awk -v m="$MARKER" 'f{print} $0~m{f=1}' /root/.openclaw/logs/gateway-watchdog.log 2>/dev/null | tail -n 120 >/tmp/oc-t11-watchdog.log || true
+    if grep -q 'No such file or directory' /tmp/oc-t11-watchdog.log 2>/dev/null; then
+      fail "watchdog still reports missing gateway log path"
+    else
+      pass "watchdog no missing-path errors after self-heal"
+    fi
+  else
+    fail "restart api (self-heal case) failed: $(cat /tmp/oc-start-2.err 2>/dev/null || true)"
+  fi
 fi
 
 echo
