@@ -56,6 +56,43 @@ UPGRADE_MODE="false"
 
 # ─── helpers ──────────────────────────────────────────────────
 
+normalize_base_dir(){
+  local target_leaf
+  target_leaf="$(basename "$TARGET_DIR")"
+  if [ "$target_leaf" = "openclaw-pro" ]; then
+    BASE_DIR="$TARGET_DIR"
+  elif [ -f "$TARGET_DIR/openclaw-docker.sh" ] && [ -f "$TARGET_DIR/install.sh" ]; then
+    BASE_DIR="$TARGET_DIR"
+  elif [ -f "$TARGET_DIR/openclaw-pro/openclaw-docker.sh" ]; then
+    BASE_DIR="$TARGET_DIR/openclaw-pro"
+  else
+    BASE_DIR="${TARGET_DIR}/openclaw-pro"
+  fi
+
+  TMP_DIR="$BASE_DIR"
+  HOME_DIR="$BASE_DIR/home-data"
+  ROOT_HOME_DIR="$HOME_DIR/root"
+  CONFIG_FILE="$ROOT_HOME_DIR/.openclaw/docker-config.json"
+  CONFIG_FILE_LEGACY="$HOME_DIR/.openclaw/docker-config.json"
+  LOG_FILE="$BASE_DIR/install.log"
+  ROOT_PASSWORD_FILE="$BASE_DIR/root-initial-password.txt"
+}
+
+normalize_release_tag(){
+  local raw="${1:-}"
+  raw="$(printf '%s' "$raw" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  if [[ "$raw" =~ ^v[0-9]+(\.[0-9]+){1,3}([.-][A-Za-z0-9._-]+)?$ ]]; then
+    printf '%s' "$raw"
+  fi
+}
+
+get_container_release_tag(){
+  docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 | grep -q "^${CONTAINER_NAME}$" || return 0
+  local v
+  v="$(docker exec "$CONTAINER_NAME" sh -lc 'cat /etc/openclaw-version 2>/dev/null || true' 2>/dev/null | head -1 || true)"
+  normalize_release_tag "$v"
+}
+
 init_dirs(){
   mkdir -p "$TMP_DIR" "$HOME_DIR" "$ROOT_HOME_DIR" "$ROOT_HOME_DIR/.openclaw"
   if [ ! -f "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE_LEGACY" ]; then
@@ -683,8 +720,8 @@ prompt_deploy_config(){
 
 show_upgrade_detection(){
   local installed_tag container_version
-  installed_tag="$(safe_json_value release_tag)"
-  container_version="$(docker exec "$CONTAINER_NAME" sh -lc 'cat /etc/openclaw-version 2>/dev/null || true' 2>/dev/null | head -1 | tr -d '\r' || true)"
+  installed_tag="$(normalize_release_tag "$(safe_json_value release_tag)")"
+  container_version="$(get_container_release_tag)"
   [ -z "$installed_tag" ] && [ -n "$container_version" ] && installed_tag="$container_version"
 
   if [ -z "$installed_tag" ]; then
@@ -701,8 +738,8 @@ show_upgrade_detection(){
 
 get_installed_release_tag(){
   local installed_tag container_version
-  installed_tag="$(safe_json_value release_tag)"
-  container_version="$(docker exec "$CONTAINER_NAME" sh -lc 'cat /etc/openclaw-version 2>/dev/null || true' 2>/dev/null | head -1 | tr -d '\r' || true)"
+  installed_tag="$(normalize_release_tag "$(safe_json_value release_tag)")"
+  container_version="$(get_container_release_tag)"
   [ -z "$installed_tag" ] && [ -n "$container_version" ] && installed_tag="$container_version"
   printf '%s' "$installed_tag"
 }
@@ -1113,6 +1150,7 @@ create_and_start(){
 # ─── main ─────────────────────────────────────────────────────
 
 main(){
+  normalize_base_dir
   init_dirs
   ensure_docker
   ensure_latest_tag
