@@ -135,6 +135,17 @@ CONFIG_FILE="/root/.openclaw/docker-config.json"
 LOG_DIR="/root/.openclaw/logs"
 mkdir -p "$LOG_DIR" /root/.openclaw
 
+# ── 恢复 OpenClaw 源码安装目录（持久化在 /root 下）──
+PERSIST_OPENCLAW_SRC="/root/.openclaw/openclaw-source"
+WORK_OPENCLAW_SRC="/workspace/project/openclaw"
+if [ -f "$PERSIST_OPENCLAW_SRC/openclaw.mjs" ]; then
+    mkdir -p /workspace/project
+    if [ -L "$WORK_OPENCLAW_SRC" ] || [ ! -e "$WORK_OPENCLAW_SRC" ]; then
+        ln -sfn "$PERSIST_OPENCLAW_SRC" "$WORK_OPENCLAW_SRC"
+        echo "[start-services] Restored OpenClaw source symlink: $WORK_OPENCLAW_SRC -> $PERSIST_OPENCLAW_SRC"
+    fi
+fi
+
 # ── 首次启动：补全被卷挂载覆盖的默认 shell 配置 ──
 for f in .bashrc .profile .bash_logout; do
     if [ ! -f "/root/$f" ] && [ -f "/etc/skel/$f" ]; then
@@ -454,6 +465,28 @@ ensure_gateway_watchdog_running() {
     return 1
 }
 
+dedupe_gateway_watchdogs() {
+    local pids count keep
+    pids=$(pgrep -f "[o]penclaw-gateway-watchdog.sh" 2>/dev/null || true)
+    [ -z "$pids" ] && return 0
+    count=$(echo "$pids" | wc -w | tr -d ' ')
+    if [ "$count" -le 1 ]; then
+        return 0
+    fi
+
+    keep=$(echo "$pids" | awk '{print $1}')
+    echo "[start-services] WARNING: detected ${count} watchdog processes, keeping pid=${keep}"
+    for pid in $pids; do
+        [ "$pid" = "$keep" ] && continue
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    for pid in $pids; do
+        [ "$pid" = "$keep" ] && continue
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+}
+
 start_web_panel() {
     echo "[start-services] Starting Web management panel on port 3000..."
     cd /opt/openclaw-web || {
@@ -505,6 +538,7 @@ echo "[start-services] Starting OpenClaw services..."
 
 # --- 1. 启动 Gateway Watchdog（由 watchdog 管理 Gateway 生命周期） ---
 start_gateway_watchdog
+dedupe_gateway_watchdogs
 ensure_gateway_watchdog_running || echo "[start-services] WARNING: watchdog hard fallback failed; health loop will retry"
 # 等待 gateway 实际就绪
 for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -625,6 +659,7 @@ while true; do
     refresh_openclaw_availability
 
     # 检查 Gateway watchdog（始终保持 watchdog 进程在线）
+    dedupe_gateway_watchdogs
     if ! pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
         echo "[health] WARNING: Gateway watchdog not found, restarting watchdog..."
         ensure_gateway_watchdog_running || true

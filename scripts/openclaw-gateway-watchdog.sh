@@ -27,6 +27,7 @@ GATEWAY_LOG="/workspace/tmp/openclaw-gateway.log"
 
 LOCK_DIR="/tmp/openclaw-gateway-watchdog.lock"
 LOCK_PID_FILE="$LOCK_DIR/pid"
+LOCK_FILE="/tmp/openclaw-gateway-watchdog.lockfile"
 
 CONFIG_FILE="/root/.openclaw/openclaw.json"
 BACKUP_DIR="/root/.openclaw/config-backups"
@@ -288,9 +289,29 @@ trim_log() {
 }
 
 acquire_lock() {
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+      log "Another watchdog instance detected via flock, exiting"
+      return 1
+    fi
+  fi
+
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo $$ > "$LOCK_PID_FILE"
     return 0
+  fi
+
+  # 若锁目录刚创建但 pid 文件尚未写入，避免误判为 stale 导致并发实例
+  if [[ ! -f "$LOCK_PID_FILE" ]]; then
+    local lock_mtime now age
+    lock_mtime=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || date +%s)
+    now=$(date +%s)
+    age=$((now - lock_mtime))
+    if [[ $age -lt 15 ]]; then
+      log "Lock exists without pid (age=${age}s), assume another instance is starting"
+      return 1
+    fi
   fi
 
   local old_pid=""
@@ -338,7 +359,7 @@ while true; do
     log "Gateway is DOWN — restarting"
     handle_restart
   elif ! is_port_listening; then
-    local uptime
+    uptime=0
     uptime=$(ps -o etimes= -p "$(get_gateway_pid)" 2>/dev/null | tr -d ' ')
     uptime=${uptime:-0}
     if [[ $uptime -ge $STARTUP_TIMEOUT ]]; then

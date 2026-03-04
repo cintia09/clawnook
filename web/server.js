@@ -384,7 +384,7 @@ function runOpenClawCli(command, timeoutMs = 30000) {
     const escaped = String(command).replace(/'/g, `"'"'`);
     const defaultPath = '/root/.npm-global/bin:/usr/local/bin:/usr/bin:/bin';
     const mergedPath = process.env.PATH ? `${process.env.PATH}:${defaultPath}` : defaultPath;
-    exec(`bash --noprofile --norc -lc '${escaped}'`, { timeout: timeoutMs, env: { ...process.env, TERM: 'dumb', PATH: mergedPath } }, (err, stdout, stderr) => {
+      exec(`bash --noprofile --norc -lc '${escaped}'`, { timeout: timeoutMs, env: { ...process.env, TERM: 'dumb', PATH: mergedPath } }, (err, stdout, stderr) => {
       const out = String(stdout || '');
       const errText = String(stderr || '');
       const output = `${out}${errText}`;
@@ -438,7 +438,7 @@ function parseOpenClawVersion(text) {
     if (m && m[1]) return `v${m[1]}`;
   }
 
-  return lines[0] || '';
+  return '';
 }
 
 function readVersionFromPackageJson(filePath) {
@@ -1980,6 +1980,7 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     `OPENCLAW_TARBALL_URL="${safeTarball.replace(/"/g, '')}"`,
     'WORK_BASE="/workspace/project"',
     'SRC_DIR="$WORK_BASE/openclaw"',
+    'PERSIST_SRC_DIR="/root/.openclaw/openclaw-source"',
     'TMP_BASE="/workspace/tmp/openclaw-build"',
     'CACHE_BASE="/opt/openclaw-web/cache/openclaw"',
     'SRC_TMP="$TMP_BASE/src"',
@@ -2099,10 +2100,16 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     'if ! command -v pnpm >/dev/null 2>&1; then',
     '  install_pnpm https://registry.npmjs.org || install_pnpm https://registry.npmmirror.com',
     'fi',
+    'PNPM_BIN_DIR="$(npm prefix -g 2>/dev/null)/bin"',
+    'export PATH="$PNPM_BIN_DIR:/root/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"',
+    'if [ -x "$PNPM_BIN_DIR/pnpm" ]; then ln -sf "$PNPM_BIN_DIR/pnpm" /usr/local/bin/pnpm 2>/dev/null || true; fi',
+    'if ! command -v pnpm >/dev/null 2>&1; then echo "[openclaw] pnpm 不可用，安装失败"; exit 5; fi',
     'if npm run | grep -qE "(^| )build( |$)"; then npm run build; elif npm run | grep -qE "(^| )compile( |$)"; then npm run compile; else echo "[openclaw] 未找到 build/compile 脚本"; exit 3; fi',
+    'rm -rf "$PERSIST_SRC_DIR"',
+    'mkdir -p /root/.openclaw "$WORK_BASE"',
+    'cp -a "$EXTRACT_DIR" "$PERSIST_SRC_DIR"',
     'rm -rf "$SRC_DIR"',
-    'mkdir -p "$WORK_BASE"',
-    'cp -a "$EXTRACT_DIR" "$SRC_DIR"',
+    'ln -sfn "$PERSIST_SRC_DIR" "$SRC_DIR"',
     'if [ ! -f "$SRC_DIR/openclaw.mjs" ] && [ -f "$SRC_DIR/dist/openclaw.mjs" ]; then ln -sf "$SRC_DIR/dist/openclaw.mjs" "$SRC_DIR/openclaw.mjs"; fi',
     'if [ ! -f "$SRC_DIR/openclaw.mjs" ]; then echo "[openclaw] 编译产物缺失: $SRC_DIR/openclaw.mjs"; exit 4; fi',
     'mkdir -p /root/.openclaw',
@@ -2136,7 +2143,7 @@ app.get('/api/openclaw', async (req, res) => {
     const invalidConfigKeys = detectInvalidConfigKeysFromText(readGatewayLogTail(300));
 
     const gatewayRunning = runCommandOk('curl -sS --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health >/dev/null 2>&1', 2500)
-      || runCommandOk('pgrep -f "[o]penclaw.*gateway" >/dev/null 2>&1', 1200);
+      || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
 
     const installTaskRunning = isTaskRunning(installLogs, activeInstallTaskId);
     const repairTaskRunning = isTaskRunning(repairLogs, activeRepairTaskId) || isRepairLockActive();
