@@ -250,10 +250,18 @@ fi
 # 如果用户创建失败或未提供，尝试从持久化状态恢复
 if [ -z "$SSH_USER" ] && [ -f "$USERS_PERSIST_DIR/ssh_user" ]; then
     saved_user=$(cat "$USERS_PERSIST_DIR/ssh_user" 2>/dev/null | head -1)
-    if [ -n "$saved_user" ] && id -u "$saved_user" >/dev/null 2>&1; then
-        ensure_user_account_active "$saved_user"
-        SSH_USER="$saved_user"
-        echo "[start-services] Restored SSH user from persistent state: $SSH_USER"
+    if [ -n "$saved_user" ]; then
+        if id -u "$saved_user" >/dev/null 2>&1; then
+            ensure_user_account_active "$saved_user"
+            SSH_USER="$saved_user"
+            echo "[start-services] Restored SSH user from persistent state: $SSH_USER"
+        else
+            echo "[start-services] Recreating persisted SSH user: $saved_user"
+            if create_host_user "$saved_user" "" ""; then
+                SSH_USER="$saved_user"
+                echo "[start-services] Recreated SSH user from persistent state: $SSH_USER"
+            fi
+        fi
     fi
 fi
 

@@ -2908,10 +2908,21 @@ function Main {
             $choice = $null
             $preferredUpgradeContainer = ""
             $targetReleaseNorm = Normalize-ReleaseVersion $latestReleaseTag
+            $allSameAsTarget = $false
             if ($targetReleaseNorm) {
                 $outdated = @($runningContainerMeta | Where-Object {
                     $_.VersionNorm -and ($_.VersionNorm -ne $targetReleaseNorm)
                 })
+                $unknownVersion = @($runningContainerMeta | Where-Object { -not $_.VersionNorm })
+                $sameVersion = @($runningContainerMeta | Where-Object {
+                    $_.VersionNorm -and ($_.VersionNorm -eq $targetReleaseNorm)
+                })
+                if ($runningContainerMeta.Count -gt 0 -and $unknownVersion.Count -eq 0 -and $sameVersion.Count -eq $runningContainerMeta.Count) {
+                    $allSameAsTarget = $true
+                    Write-Host "  ✅ 检测到运行中容器版本已与远端一致（目标版本: $latestReleaseTag）" -ForegroundColor Green
+                    Write-Host "     如无异常，通常无需重装；如需修复运行环境，可继续选择 [2]/[3]。" -ForegroundColor DarkGray
+                    Write-Host ""
+                }
                 if ($outdated.Count -gt 0) {
                     $hotUpdateEligible = @()
                     $hotUpdateReinstallConfirmed = $false
@@ -3048,6 +3059,18 @@ function Main {
 
             if ($choice -eq '2' -or $choice -eq '3') {
                 Write-Host ""
+                if ($allSameAsTarget) {
+                    Write-Host "  ⚠️  当前容器版本已与目标版本一致（$latestReleaseTag）" -ForegroundColor Yellow
+                    Write-Host "  继续重装仅用于修复环境，不会带来版本升级。" -ForegroundColor Yellow
+                    Write-Host "  是否仍继续重装？[y/N]: " -NoNewline -ForegroundColor White
+                    $sameVersionReinstall = (Read-Host).Trim().ToLower()
+                    if ($sameVersionReinstall -ne 'y' -and $sameVersionReinstall -ne 'yes') {
+                        Write-Host ""
+                        Write-Host "  已取消本次重装（当前版本已是最新）。" -ForegroundColor Yellow
+                        return
+                    }
+                    Write-Host ""
+                }
                 if ($choice -eq '3') {
                     Write-Host "  ⚠️  高风险操作：将删除旧容器 + 配置 + home-data 的 root/用户名数据（不可恢复）" -ForegroundColor Yellow
                 } else {
@@ -3125,15 +3148,22 @@ function Main {
                 if ($containerName -match '^openclaw-pro-(\d+)$') {
                     $upgradeHomeDataName = "home-data-$($Matches[1])"
                 }
-                $upgradeConfigFile = Join-Path $homeBaseDir "$upgradeHomeDataName\.openclaw\docker-config.json"
+                $upgradeConfigCandidates = @(
+                    (Join-Path $homeBaseDir "$upgradeHomeDataName\root\.openclaw\docker-config.json"),
+                    (Join-Path $homeBaseDir "$upgradeHomeDataName\.openclaw\docker-config.json")
+                )
+                $upgradeConfigFile = ($upgradeConfigCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
                 $upgradeConfig = $null
                 if (Test-Path $upgradeConfigFile) {
                     try {
                         $upgradeConfig = Get-Content $upgradeConfigFile -Raw | ConvertFrom-Json
-                        Write-OK "读取到旧容器配置"
+                        Write-OK "读取到旧容器配置: $upgradeConfigFile"
                     } catch {
                         Write-Warn "读取旧配置失败，将重新配置"
                     }
+                } else {
+                    Write-Warn "未找到可复用的旧配置文件，将进入部署配置交互"
+                    Write-Log "Upgrade config not found. checked: $($upgradeConfigCandidates -join '; ')"
                 }
 
                 if ($upgradeConfig) {
