@@ -22,7 +22,7 @@ export HOME
 export DISPLAY=:99
 
 SOURCE_ROOT="/workspace/project/openclaw"
-GATEWAY_CMD="node --experimental-sqlite /workspace/project/openclaw/openclaw.mjs gateway run --force"
+GATEWAY_CMD="node --experimental-sqlite /workspace/project/openclaw/openclaw.mjs gateway run --force --allow-unconfigured"
 GATEWAY_LOG="/workspace/tmp/openclaw-gateway.log"
 
 LOCK_DIR="/tmp/openclaw-gateway-watchdog.lock"
@@ -144,7 +144,19 @@ is_gateway_process_alive() {
 }
 
 is_port_listening() {
-  ss -tlnp 2>/dev/null | grep -q ":${PORT} "
+  if command -v ss >/dev/null 2>&1; then
+    ss -tlnp 2>/dev/null | grep -q ":${PORT} "
+    return $?
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | grep -q "[.:]${PORT}[[:space:]]"
+    return $?
+  fi
+  return 1
 }
 
 kill_gateway() {

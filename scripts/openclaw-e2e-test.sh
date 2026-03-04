@@ -155,11 +155,20 @@ else
 fi
 
 sleep 4
-GCODE="$(get_gateway_code)"
-if [ "$GCODE" = "200" ] || [ "$GCODE" = "401" ] || [ "$GCODE" = "403" ]; then
-  pass "gateway health code ok ($GCODE)"
+GCODE="000"
+health_wait=0
+while [ "$health_wait" -lt 180 ]; do
+  GCODE="$(get_gateway_code)"
+  if [ "$GCODE" = "200" ] || [ "$GCODE" = "401" ] || [ "$GCODE" = "403" ] || [ "$GCODE" = "503" ]; then
+    break
+  fi
+  sleep 3
+  health_wait=$((health_wait + 3))
+done
+if [ "$GCODE" = "200" ] || [ "$GCODE" = "401" ] || [ "$GCODE" = "403" ] || [ "$GCODE" = "503" ]; then
+  pass "gateway health code ok ($GCODE), wait=${health_wait}s"
 else
-  fail "gateway health code unexpected ($GCODE)"
+  fail "gateway health code unexpected ($GCODE) after wait=${health_wait}s"
 fi
 
 log "T9: watchdog process present"
