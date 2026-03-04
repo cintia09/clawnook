@@ -188,6 +188,7 @@ function getRouteFromHash(){
 
 function setActiveRoute(route){
   const isOpenClawRoute = route === 'openclaw-engine' || route === 'openclaw-ai';
+  if (route !== 'openclaw-engine') stopGatewayStartupLogPulls();
 
   // nav active
   qa('#nav a').forEach(a => {
@@ -684,6 +685,8 @@ let ocInstallTaskRunningRemote = false;
 let ocRepairTaskRunningRemote = false;
 let ocGatewayRestartRunningRemote = false;
 let ocLastGatewaySnapshot = '';
+let ocGatewayLogPollTimer = null;
+let ocGatewayLogPollRunning = false;
 
 function syncOpenClawButtons(){
   const installBtn = $('btn-oc-install');
@@ -723,8 +726,16 @@ async function loadGatewayStartupLogs(lines = 160){
     const r = await api(`/api/openclaw/gateway/logs?lines=${Math.max(20, Math.min(lines, 1200))}`, { timeoutMs: 12000 });
     const snapshot = String(r?.logs || '').trim();
     if (r?.success && snapshot && snapshot !== ocLastGatewaySnapshot) {
-      appendOcLogLine('[gateway] 最近启动日志快照：');
-      appendOcLogBlock(snapshot);
+      let delta = snapshot;
+      let label = '[gateway] 最近启动日志快照：';
+      if (ocLastGatewaySnapshot && snapshot.startsWith(ocLastGatewaySnapshot)) {
+        delta = snapshot.slice(ocLastGatewaySnapshot.length).replace(/^\n+/, '');
+        label = '[gateway] 启动日志增量：';
+      }
+      if (delta.trim()) {
+        appendOcLogLine(label);
+        appendOcLogBlock(delta);
+      }
       ocLastGatewaySnapshot = snapshot;
     }
   } catch (e) {
@@ -732,10 +743,32 @@ async function loadGatewayStartupLogs(lines = 160){
   }
 }
 
+function stopGatewayStartupLogPulls(){
+  if (ocGatewayLogPollTimer) clearInterval(ocGatewayLogPollTimer);
+  ocGatewayLogPollTimer = null;
+  ocGatewayLogPollRunning = false;
+}
+
 function scheduleGatewayStartupLogPulls(lines = 200){
-  [1800, 4200, 8000].forEach((delay) => {
-    setTimeout(() => loadGatewayStartupLogs(lines), delay);
-  });
+  stopGatewayStartupLogPulls();
+  let tries = 0;
+  const maxTries = 48;
+  const tick = async () => {
+    if (ocGatewayLogPollRunning) return;
+    ocGatewayLogPollRunning = true;
+    try {
+      await loadGatewayStartupLogs(lines);
+      const st = await refreshOpenClaw({ retries: 0 });
+      tries += 1;
+      if ((st && !st.error && st.gatewayRunning) || tries >= maxTries) {
+        stopGatewayStartupLogPulls();
+      }
+    } finally {
+      ocGatewayLogPollRunning = false;
+    }
+  };
+  setTimeout(() => { void tick(); }, 1200);
+  ocGatewayLogPollTimer = setInterval(() => { void tick(); }, 5000);
 }
 
 async function refreshOpenClaw(opts = {}){
