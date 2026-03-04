@@ -42,6 +42,17 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
+log_event() {
+  local event="$1"
+  shift
+  local msg="$*"
+  if [ -n "$msg" ]; then
+    log "[wd][$event] $msg"
+  else
+    log "[wd][$event]"
+  fi
+}
+
 config_hash() {
   local file="$1"
   [ -f "$file" ] || return 1
@@ -84,6 +95,7 @@ backup_config_if_changed() {
     echo "$cur_hash" > "$BACKUP_INDEX_FILE"
     echo "$backup_file" > "$LAST_GOOD_BACKUP_FILE"
     log "Config changed after successful start, backup created: $backup_file"
+    log_event "backup-created" "$backup_file"
     trim_backups
   fi
 }
@@ -119,10 +131,12 @@ restore_previous_backup() {
     hash=$(config_hash "$CONFIG_FILE" || true)
     [ -n "$hash" ] && echo "$hash" > "$BACKUP_INDEX_FILE"
     log "Config rollback applied from backup: $backup_file"
+    log_event "rollback-success" "$backup_file"
     return 0
   fi
 
   log "Failed to restore config backup: $backup_file"
+  log_event "rollback-failed" "$backup_file"
   return 1
 }
 
@@ -236,6 +250,7 @@ start_once() {
     local actual_pid
     actual_pid=$(get_gateway_pid)
     log "Gateway started successfully (port $PORT listening, PID ${actual_pid:-$LAST_PID})"
+    log_event "healthy" "pid=${actual_pid:-$LAST_PID}"
     return 0
   fi
 
@@ -262,15 +277,18 @@ start_gateway() {
 
   if is_invalid_config_failure; then
     log "Detected invalid config signature from startup failure, trying automatic rollback..."
+    log_event "rollback-attempt" "detected invalid config signature"
     if restore_previous_backup; then
       kill_gateway
       if start_once; then
         log "Gateway recovered after automatic config rollback"
+        log_event "rollback-success" "gateway recovered after rollback"
         CONSECUTIVE_FAILURES=0
         backup_config_if_changed
         return 0
       fi
       log "Gateway still failed after rollback attempt"
+      log_event "rollback-failed" "gateway still failed after rollback attempt"
     fi
   fi
 
@@ -301,13 +319,7 @@ trim_log() {
 }
 
 acquire_lock() {
-  if command -v flock >/dev/null 2>&1; then
-    exec 9>"$LOCK_FILE"
-    if ! flock -n 9; then
-      log "Another watchdog instance detected via flock, exiting"
-      return 1
-    fi
-  fi
+  # 使用 lock_dir 作为主锁，避免 flock FD 被子进程继承后造成“假占锁”
 
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo $$ > "$LOCK_PID_FILE"
@@ -359,6 +371,7 @@ trap 'rm -rf "$LOCK_DIR" >/dev/null 2>&1 || true' EXIT
 mkdir -p "$BACKUP_DIR"
 
 log "Watchdog v2 started (poll=${POLL_INTERVAL}s, timeout=${STARTUP_TIMEOUT}s, port=$PORT)"
+log_event "start" "poll=${POLL_INTERVAL}s timeout=${STARTUP_TIMEOUT}s port=$PORT"
 
 while true; do
   if [ ! -f "$SOURCE_ROOT/openclaw.mjs" ]; then

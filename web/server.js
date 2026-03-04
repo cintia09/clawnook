@@ -1771,7 +1771,13 @@ app.get('/api/ai/auth/task/:taskId', (req, res) => {
 // ============================================================
 app.post('/api/restart', (req, res) => {
   try {
+    const opState = getOpenClawOperationState();
+    if (opState.type !== 'idle' && opState.type !== 'restarting_gateway') {
+      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+    }
+    setOpenClawOperationState('restarting_gateway');
     restartGatewayForeground((err, stdout, stderr) => {
+      clearOpenClawOperationState('restarting_gateway');
       if (!err) {
         return res.json({ success: true, message: 'Gateway 进程已终止，watchdog 将自动拉起' });
       }
@@ -1862,6 +1868,10 @@ function releaseRepairLock() {
 
 function runOpenClawRepairTask() {
   if (!acquireRepairLock()) return null;
+  if (isOpenClawOperationBusy()) {
+    releaseRepairLock();
+    return null;
+  }
   const taskId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   repairLogs[taskId] = {
     status: 'running',
@@ -1876,6 +1886,7 @@ function runOpenClawRepairTask() {
 
   const task = repairLogs[taskId];
   activeRepairTaskId = taskId;
+  setOpenClawOperationState('repairing_config', taskId);
 
   (async () => {
     const cleanedProviders = repairOpenClawConfigProviders();
@@ -1930,6 +1941,7 @@ function runOpenClawRepairTask() {
   }).finally(() => {
     if (activeRepairTaskId === taskId) activeRepairTaskId = '';
     releaseRepairLock();
+    clearOpenClawOperationState('repairing_config');
     const keys = Object.keys(repairLogs).sort();
     while (keys.length > 8) delete repairLogs[keys.shift()];
   });
@@ -1937,7 +1949,8 @@ function runOpenClawRepairTask() {
   return taskId;
 }
 
-function runOpenClawTask(command, title) {
+function runOpenClawTask(command, title, operationType = 'installing') {
+  if (isOpenClawOperationBusy()) return null;
   const taskId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   installLogs[taskId] = {
     status: 'running',
@@ -1949,6 +1962,7 @@ function runOpenClawTask(command, title) {
 
   const task = installLogs[taskId];
   activeInstallTaskId = taskId;
+  setOpenClawOperationState(operationType, taskId);
   appendInstallLog(task, `[openclaw] ${title}\n`);
   appendInstallLog(task, `[openclaw] command: ${command}\n\n`);
 
@@ -1961,6 +1975,7 @@ function runOpenClawTask(command, title) {
     appendInstallLog(task, `[openclaw] 任务启动失败: ${err.message}\n`);
     task.status = 'failed';
     task.exitCode = -1;
+    clearOpenClawOperationState(operationType);
   });
   child.stdout.on('data', d => appendInstallLog(task, d));
   child.stderr.on('data', d => appendInstallLog(task, d));
@@ -1971,6 +1986,7 @@ function runOpenClawTask(command, title) {
     task.status = code === 0 ? 'success' : 'failed';
     task.exitCode = code;
     if (activeInstallTaskId === taskId) activeInstallTaskId = '';
+    clearOpenClawOperationState(operationType);
     const keys = Object.keys(installLogs).sort();
     while (keys.length > 5) delete installLogs[keys.shift()];
   });
@@ -2008,7 +2024,120 @@ function sanitizeBackupFileName(input) {
   return value;
 }
 
+function extractWatchdogTimestamp(line) {
+  const m = String(line || '').match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/);
+  return m ? m[1] : '';
+}
+
+function getLastRollbackAtFromWatchdog() {
+  const text = tailFile(GATEWAY_WATCHDOG_LOG, 3000, 3000);
+  if (!text) return '';
+  const lines = text.split('\n').filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (/rollback|回滚|restor(e|ed)|last_good/i.test(line)) {
+      const ts = extractWatchdogTimestamp(line);
+      if (ts) return ts;
+    }
+  }
+  return '';
+}
+
+function getLastBackupAt() {
+  const backups = listOpenClawConfigBackups();
+  if (!backups.length) return '';
+  const mtime = backups[0]?.mtime;
+  if (!mtime) return '';
+  try {
+    return new Date(mtime).toISOString();
+  } catch {
+    return '';
+  }
+}
+
 let gatewayRestartRunning = false;
+const OPENCLAW_OPERATION_LOCK_FILE = '/tmp/openclaw-operation.lock';
+let openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
+
+function readOperationLockFromFile() {
+  try {
+    if (!fs.existsSync(OPENCLAW_OPERATION_LOCK_FILE)) return null;
+    const raw = fs.readFileSync(OPENCLAW_OPERATION_LOCK_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const pid = Number(parsed?.pid || 0);
+    if (pid > 1 && pid !== process.pid) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        try { fs.unlinkSync(OPENCLAW_OPERATION_LOCK_FILE); } catch {}
+        return null;
+      }
+    }
+    if (!parsed?.type || parsed.type === 'idle') return null;
+    return {
+      type: String(parsed.type),
+      taskId: String(parsed.taskId || ''),
+      startedAt: Number(parsed.startedAt || 0),
+      pid: Number(parsed.pid || process.pid)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeOperationLock(state) {
+  try {
+    if (!state || !state.type || state.type === 'idle') {
+      if (fs.existsSync(OPENCLAW_OPERATION_LOCK_FILE)) fs.unlinkSync(OPENCLAW_OPERATION_LOCK_FILE);
+      return;
+    }
+    fs.writeFileSync(OPENCLAW_OPERATION_LOCK_FILE, JSON.stringify(state), { mode: 0o600 });
+  } catch {}
+}
+
+function getOpenClawOperationState() {
+  if (openClawOperationState.type && openClawOperationState.type !== 'idle') {
+    if (Number(openClawOperationState.pid || process.pid) === process.pid) {
+      return { ...openClawOperationState };
+    }
+    const fromFile = readOperationLockFromFile();
+    if (fromFile) {
+      openClawOperationState = { ...fromFile };
+      return { ...openClawOperationState };
+    }
+    openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
+    return { ...openClawOperationState };
+  }
+  const lockState = readOperationLockFromFile();
+  if (lockState) {
+    openClawOperationState = { ...lockState };
+    return { ...openClawOperationState };
+  }
+  return { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
+}
+
+function setOpenClawOperationState(type, taskId = '') {
+  openClawOperationState = {
+    type: String(type || 'idle') || 'idle',
+    taskId: String(taskId || ''),
+    startedAt: Date.now(),
+    pid: process.pid
+  };
+  writeOperationLock(openClawOperationState);
+  return { ...openClawOperationState };
+}
+
+function clearOpenClawOperationState(expectedType = '') {
+  const current = getOpenClawOperationState();
+  if (expectedType && current.type !== expectedType) return;
+  openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
+  writeOperationLock(null);
+}
+
+function isOpenClawOperationBusy() {
+  const op = getOpenClawOperationState();
+  return !!(op.type && op.type !== 'idle');
+}
 
 function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
   const safeRepo = parseGitHubRepo(repo) || OPENCLAW_SOURCE_REPO_DEFAULT;
@@ -2187,9 +2316,13 @@ app.get('/api/openclaw', async (req, res) => {
 
     const gatewayRunning = runCommandOk('curl -sS --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health >/dev/null 2>&1', 2500)
       || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
+    const gatewayWatchdogRunning = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200);
 
     const installTaskRunning = isTaskRunning(installLogs, activeInstallTaskId);
     const repairTaskRunning = isTaskRunning(repairLogs, activeRepairTaskId) || isRepairLockActive();
+    const operationState = getOpenClawOperationState();
+    const lastBackupAt = getLastBackupAt();
+    const lastRollbackAt = getLastRollbackAtFromWatchdog();
 
     res.json({
       installed,
@@ -2198,11 +2331,15 @@ app.get('/api/openclaw', async (req, res) => {
       hasUpdate,
       updateCheckError,
       gatewayRunning,
+      gatewayWatchdogRunning,
       invalidConfigKeys,
       installSource: detected.source,
       installTaskRunning,
       repairTaskRunning,
-      gatewayRestartRunning
+      gatewayRestartRunning,
+      operationState,
+      lastBackupAt,
+      lastRollbackAt
     });
   } catch (e) {
     const detail = e?.message || String(e || '状态读取失败');
@@ -2251,6 +2388,13 @@ app.get('/api/openclaw/gateway-link', (req, res) => {
 
 app.post('/api/openclaw/config/repair', (req, res) => {
   try {
+    const opState = getOpenClawOperationState();
+    if (opState.type !== 'idle' && opState.type !== 'repairing_config') {
+      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+    }
+    if (opState.type === 'repairing_config' && opState.taskId) {
+      return res.json({ success: true, taskId: opState.taskId, reused: true, message: '修复任务进行中，请勿重复触发' });
+    }
     if (isRepairLockActive()) {
       const runningTaskId = isTaskRunning(repairLogs, activeRepairTaskId) ? activeRepairTaskId : '';
       return res.json({ success: true, taskId: runningTaskId, reused: true, message: '修复任务进行中，请勿重复触发' });
@@ -2259,7 +2403,7 @@ app.post('/api/openclaw/config/repair', (req, res) => {
       return res.json({ success: true, taskId: activeRepairTaskId, reused: true });
     }
     const taskId = runOpenClawRepairTask();
-    if (!taskId) return res.status(500).json({ success: false, error: '修复任务创建失败：已有任务占用或未生成 taskId' });
+    if (!taskId) return res.status(409).json({ success: false, error: '修复任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     res.json({ success: true, taskId });
   } catch (e) {
     res.status(500).json({ success: false, error: e?.message || '修复任务创建失败' });
@@ -2319,13 +2463,20 @@ app.post('/api/openclaw/install', async (req, res) => {
     if (isTaskRunning(installLogs, activeInstallTaskId)) {
       return res.json({ success: true, taskId: activeInstallTaskId, reused: true });
     }
+    const opState = getOpenClawOperationState();
+    if (opState.type !== 'idle') {
+      if ((opState.type === 'installing' || opState.type === 'updating') && isTaskRunning(installLogs, activeInstallTaskId)) {
+        return res.json({ success: true, taskId: activeInstallTaskId, reused: true, operationState: opState });
+      }
+      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+    }
 
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawSourceInstallCommand(release);
-    const taskId = runOpenClawTask(command, `从 GitHub Release 安装 OpenClaw (${release.tag})`);
+    const taskId = runOpenClawTask(command, `从 GitHub Release 安装 OpenClaw (${release.tag})`, 'installing');
     if (!taskId) {
-      return res.status(500).json({ success: false, error: '任务创建失败：未生成 taskId' });
+      return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
     res.json({ success: true, taskId, release: { repo: release.repo, tag: release.tag } });
   } catch (e) {
@@ -2416,13 +2567,20 @@ app.post('/api/openclaw/update', async (req, res) => {
     if (isTaskRunning(installLogs, activeInstallTaskId)) {
       return res.json({ success: true, taskId: activeInstallTaskId, reused: true });
     }
+    const opState = getOpenClawOperationState();
+    if (opState.type !== 'idle') {
+      if ((opState.type === 'installing' || opState.type === 'updating') && isTaskRunning(installLogs, activeInstallTaskId)) {
+        return res.json({ success: true, taskId: activeInstallTaskId, reused: true, operationState: opState });
+      }
+      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+    }
 
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawSourceInstallCommand(release);
-    const taskId = runOpenClawTask(command, `从 GitHub Release 更新 OpenClaw (${release.tag})`);
+    const taskId = runOpenClawTask(command, `从 GitHub Release 更新 OpenClaw (${release.tag})`, 'updating');
     if (!taskId) {
-      return res.status(500).json({ success: false, error: '任务创建失败：未生成 taskId' });
+      return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
     res.json({ success: true, taskId, release: { repo: release.repo, tag: release.tag } });
   } catch (e) {
@@ -2438,9 +2596,15 @@ app.post('/api/openclaw/start', (req, res) => {
       logs: readOpenClawGatewayLogs(120, { includeWatchdog: true })
     });
   }
+  const opState = getOpenClawOperationState();
+  if (opState.type !== 'idle' && opState.type !== 'restarting_gateway') {
+    return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+  }
   gatewayRestartRunning = true;
+  setOpenClawOperationState('restarting_gateway');
   restartGatewayForeground((err, stdout, stderr) => {
     gatewayRestartRunning = false;
+    clearOpenClawOperationState('restarting_gateway');
     const startupLogs = readOpenClawGatewayLogs(160, { includeWatchdog: true });
     if (!err) {
       return res.json({ success: true, message: 'Gateway 进程已终止，watchdog 将自动拉起', logs: startupLogs });

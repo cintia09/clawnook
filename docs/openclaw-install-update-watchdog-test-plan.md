@@ -131,6 +131,7 @@ docker exec openclaw-pro bash -lc 'rm -f /root/.openclaw/config-backups/openclaw
 | F-12 | 任务日志完整性 | 触发安装/更新任务 | 轮询 task API | 可增量读取日志，状态终态正确 |
 | F-13 | 安装/更新/Gateway 启动日志正确显示 | 已启用 OpenClaw 引擎页 | 执行安装/更新并触发重启，检查 `oc-log` 与 `/api/openclaw/gateway/logs` | UI 显示包含任务日志 + Gateway/Watchdog 启动日志快照，日志源正确 |
 | F-14 | Gateway 运行日志路径自愈 | 删除 `/workspace/tmp` 后触发重启 | 检查 watchdog 与 gateway 日志 | 不出现 `No such file or directory`；运行日志可写入 runtime 或 legacy 兜底路径 |
+| F-15 | 状态聚合字段完整性 | 服务运行中 | 调用 `/api/openclaw` | 返回 `gatewayWatchdogRunning`、`operationState`、`lastBackupAt`、`lastRollbackAt` 字段且语义正确 |
 
 ## 6.2 安全测试集（S）
 
@@ -148,6 +149,7 @@ docker exec openclaw-pro bash -lc 'rm -f /root/.openclaw/config-backups/openclaw
 | S-10 | API 输入校验 | 传入非法 repo/tag 参数 | 后端拒绝并返回明确错误 |
 | S-11 | SSH 公钥登录一致性 | `HOST_USER` 模式下检查 `AllowUsers` 与用户 `authorized_keys` | 非 root 用户可密钥登录，避免 `Permission denied (publickey)` |
 | S-12 | 日志源优先级与标记 | 同时存在 runtime/legacy 日志 | 调用 `/api/openclaw/gateway/logs` | 仅返回一个 Gateway 主日志源（runtime 优先），并带 `[gateway-runtime]/[gateway-legacy]/[watchdog]` 标记 |
+| S-13 | 统一操作锁 | 并发触发 install/update/start/repair | 同类任务复用，跨类型返回冲突（409），`operationState` 与实际执行一致 |
 
 ## 6.3 端到端测试集（E2E）
 
@@ -178,7 +180,7 @@ docker exec openclaw-pro bash -lc 'rm -f /root/.openclaw/config-backups/openclaw
    - `gatewayRunning=true`
    - `pgrep -af 'openclaw|watchdog'` 均存在
 5. 验证 Gateway：
-   - `curl http://127.0.0.1:18789/health` 返回 `200/401/403` 之一。
+   - `curl http://127.0.0.1:18789/health` 返回 `200/401/403` 之一；若返回 `503`，需同时满足端口监听与 `/api/openclaw.gatewayRunning=true` 才判定健康。
 
 ## 7.2 E2E-02：版本更新到可用
 
