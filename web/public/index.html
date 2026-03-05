@@ -184,6 +184,7 @@
                 <h2>操作</h2>
                 <div class="row">
                   <button class="btn btn-primary" id="btn-oc-install">安装</button>
+                  <button class="btn" id="btn-oc-uninstall" title="会进行二次确认，并在日志中记录状态变更">卸载</button>
                   <button class="btn" id="btn-oc-repair-config">配置恢复</button>
                   <button class="btn" id="btn-oc-start" title="重启前会二次确认，按住 Shift 点击可跳过">重启 Gateway</button>
                 </div>
@@ -545,6 +546,13 @@
             </div>
             <div class="row">
               <button class="btn" id="btn-logs-refresh">刷新</button>
+              <label class="chip" style="display:flex;align-items:center;gap:8px;cursor:default">
+                <span>视图</span>
+                <select class="input" id="logs-view-mode" style="height:30px;min-width:122px;padding:2px 8px">
+                  <option value="timeline">时间线</option>
+                  <option value="grouped">按来源</option>
+                </select>
+              </label>
               <label class="chip" style="cursor:pointer">
                 <input type="checkbox" id="logs-auto" />
                 <span>自动刷新</span>

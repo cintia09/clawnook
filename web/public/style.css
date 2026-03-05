@@ -458,6 +458,17 @@ button, input, select, textarea{font-family:inherit}
 .term-error{color:#ff8a80; font-weight:700}
 .term-info{color:#86efac; font-weight:700}
 .term-cmd{color:#93c5fd; font-weight:700}
+.term-section-line{font-weight:800; color:var(--accent1)}
+.term-tag{font-weight:800; letter-spacing:.1px}
+.term-tag-section{color:var(--accent1)}
+.term-tag-install{color:var(--warn)}
+.term-tag-status{color:var(--good)}
+.term-tag-neutral{color:var(--muted)}
+.term-tag-state{color:#c4b5fd}
+.term-state-begin{color:#93c5fd; font-weight:800}
+.term-state-running{color:#fcd34d; font-weight:800}
+.term-state-success{color:#86efac; font-weight:800}
+.term-state-failed{color:#fda4af; font-weight:800}
 
 /* Toast */
 .toast{

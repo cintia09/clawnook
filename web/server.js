@@ -27,7 +27,22 @@ const baseConsole = {
 };
 
 function logTimestamp() {
-  return new Date().toISOString();
+  const d = new Date();
+  const fmt = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: process.env.OPENCLAW_LOG_TIMEZONE || 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+  const parts = fmt.formatToParts(d).reduce((acc, p) => {
+    acc[p.type] = p.value;
+    return acc;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
 function wrapConsole(method) {
@@ -317,6 +332,149 @@ function tailFile(filePath, lines = 200, timeoutMs = 2500) {
   }
 }
 
+function keepLastLines(text, maxLines = 200) {
+  const list = String(text || '').split('\n');
+  const safe = Math.max(20, Math.min(Number(maxLines || 200), 5000));
+  return list.slice(-safe).join('\n');
+}
+
+function extractLogTimestampMs(line) {
+  const text = String(line || '');
+  const localMatch = text.match(/\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/);
+  if (localMatch?.[1]) {
+    const ts = Date.parse(localMatch[1].replace(' ', 'T'));
+    if (Number.isFinite(ts)) return ts;
+  }
+  const isoMatch = text.match(/\[(\d{4}-\d{2}-\d{2}T[0-9:.+-]+Z?)\]/i);
+  if (isoMatch?.[1]) {
+    const ts = Date.parse(isoMatch[1]);
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+}
+
+function formatLogTime(ts) {
+  if (!Number.isFinite(ts) || ts <= 0) return '未知时间';
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function watchdogFoldSignature(line) {
+  const text = String(line || '').trim();
+  if (!/^\[watchdog\]\s+/i.test(text)) return '';
+  const body = text
+    .replace(/^\[watchdog\]\s+/i, '')
+    .replace(/^\[[^\]]+\]\s*/, '')
+    .trim();
+  if (!body) return '';
+  if (/OpenClaw install\/update in progress, watchdog standby/i.test(body)) return 'standby';
+  if (/OpenClaw source entry missing .*watchdog idle/i.test(body)) return `idle:${body}`;
+  return '';
+}
+
+function collapseWatchdogLogLines(lines) {
+  const source = Array.isArray(lines) ? lines : [];
+  const out = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const line = String(source[i] || '').trim();
+    if (!line) continue;
+    const signature = watchdogFoldSignature(line);
+    if (!signature) {
+      out.push(line);
+      continue;
+    }
+    let j = i + 1;
+    while (j < source.length && watchdogFoldSignature(source[j]) === signature) {
+      j += 1;
+    }
+    const count = j - i;
+    out.push(line);
+    if (count > 1) {
+      const lastTs = extractLogTimestampMs(source[j - 1]);
+      const foldType = signature === 'standby' ? 'watchdog standby' : 'watchdog idle';
+      out.push(`[watchdog] [${formatLogTime(lastTs)}] [fold] ${foldType} 连续 ${count} 条已折叠`);
+    }
+    i = j - 1;
+  }
+  return out;
+}
+
+function collapseWatchdogLogText(text) {
+  const lines = String(text || '')
+    .split('\n')
+    .map((line) => String(line || '').trim())
+    .filter(Boolean);
+  if (!lines.length) return '';
+  const prefixed = lines.map((line) => (/^\[watchdog\]\s+/i.test(line) ? line : `[watchdog] ${line}`));
+  return collapseWatchdogLogLines(prefixed)
+    .map((line) => line.replace(/^\[watchdog\]\s+/i, ''))
+    .join('\n');
+}
+
+function mergeLogBlocksByTimeline(blocksText, { foldWatchdog = true, maxLines = 200 } = {}) {
+  const text = String(blocksText || '');
+  if (!text.trim()) return '';
+  const entries = [];
+  let source = 'logs';
+  let seq = 0;
+  for (const rawLine of text.split('\n')) {
+    const line = String(rawLine || '').trim();
+    if (!line) continue;
+    const labelMatch = line.match(/^\[([a-z0-9-]+)\]$/i);
+    if (labelMatch?.[1]) {
+      source = labelMatch[1].toLowerCase();
+      continue;
+    }
+    const normalized = /^\[(?:watchdog|web-panel|gateway|gateway-runtime|gateway-legacy|openclaw-install|openclaw-repair|install|logs)\]\s+/i.test(line)
+      ? line
+      : `[${source}] ${line}`;
+    entries.push({
+      seq: seq += 1,
+      ts: extractLogTimestampMs(normalized),
+      line: normalized
+    });
+  }
+  entries.sort((a, b) => {
+    if (a.ts && b.ts) return a.ts - b.ts || a.seq - b.seq;
+    if (a.ts && !b.ts) return -1;
+    if (!a.ts && b.ts) return 1;
+    return a.seq - b.seq;
+  });
+  const sortedLines = entries.map((entry) => entry.line);
+  const foldedLines = foldWatchdog ? collapseWatchdogLogLines(sortedLines) : sortedLines;
+  return keepLastLines(foldedLines.join('\n'), maxLines);
+}
+
+function readLatestInstallTaskLogSection(lines = 200) {
+  const raw = tailFile(OPENCLAW_INSTALL_LOG_FILE, Math.max(400, Number(lines || 200) * 5), 5000);
+  if (!raw.trim()) return '';
+  const marker = /===== \[[^\]]+\] task [^\s]+ \([^\)]*\) begin =====/g;
+  let match;
+  let lastIndex = -1;
+  while ((match = marker.exec(raw)) !== null) {
+    lastIndex = match.index;
+  }
+  const section = lastIndex >= 0 ? raw.slice(lastIndex) : raw;
+  const cleaned = section
+    .split('\n')
+    .filter((line) => {
+      const s = String(line || '');
+      const t = s.trim();
+      if (!t) return false;
+      if (/^=====\s*\[[^\]]+\]\s*task\s+/i.test(t)) return true;
+      if (/^\[openclaw\]|^\[gateway\]|^\[progress\]|^\[watchdog\]/i.test(t)) return true;
+      if (/^(npm ERR!|npm WARN|pnpm |curl:|tar:|unzip:|node:|Error:|fatal:)/i.test(t)) return true;
+      if (/\b(exit=\d+|signal=|timeout|超时|failed|失败|not found|EADDRINUSE|ECONN|ETIMEDOUT|EAI_AGAIN)\b/i.test(t)) return true;
+      if (/^echo\s+"\[openclaw\]/.test(t)) return false;
+      if (/^(set\s+-e|[A-Z_][A-Z0-9_]*=|if\s|elif\s|else$|fi$|then$|do$|done$|while\s|for\s|case\s|esac$|\{\s*$|\}\s*$|local\s|return\s+\d+)/.test(t)) return false;
+      if (/^(mkdir|rm|cp|ln|cd|export|sleep|mv|cat|awk|sed|grep)\b/.test(t)) return false;
+      return true;
+    })
+    .join('\n');
+  return keepLastLines(cleaned || section, lines);
+}
+
 function resolveGatewayLogFileForStreaming() {
   try {
     if (fs.existsSync(GATEWAY_RUNTIME_LOG_FILE) && fs.statSync(GATEWAY_RUNTIME_LOG_FILE).size > 0) {
@@ -327,7 +485,7 @@ function resolveGatewayLogFileForStreaming() {
   return GATEWAY_LEGACY_LOG_FILE;
 }
 
-function readOpenClawGatewayLogs(lines = 200, { includeWatchdog = false } = {}) {
+function readOpenClawGatewayLogs(lines = 200, { includeWatchdog = false, includeInstall = false } = {}) {
   const chunks = [];
   const sanitizeBlock = (text) => String(text || '')
     .split('\n')
@@ -340,17 +498,32 @@ function readOpenClawGatewayLogs(lines = 200, { includeWatchdog = false } = {}) 
     chunks.push(`[${label}]`);
     chunks.push(body);
   };
-  const runtimeLog = tailFile(GATEWAY_RUNTIME_LOG_FILE, lines, 2500);
+  const runtimeLog = tailFile(GATEWAY_RUNTIME_LOG_FILE, Math.min(lines, 180), 2500);
   if (runtimeLog.trim()) {
     pushLabeledChunk('gateway-runtime', runtimeLog);
   } else {
-    const legacyLog = tailFile(GATEWAY_LEGACY_LOG_FILE, lines, 2500);
+    const legacyLog = tailFile(GATEWAY_LEGACY_LOG_FILE, Math.min(lines, 180), 2500);
     if (legacyLog.trim()) pushLabeledChunk('gateway-legacy', legacyLog);
   }
 
+  if (includeInstall) {
+    const installTail = readLatestInstallTaskLogSection(Math.min(Math.max(lines, 160), 420));
+    if (installTail.trim()) pushLabeledChunk('install', installTail);
+  }
+
   if (includeWatchdog) {
-    const watchdogLog = tailFile(GATEWAY_WATCHDOG_LOG, lines, 2500);
-    if (watchdogLog.trim()) pushLabeledChunk('watchdog', watchdogLog);
+    const watchdogLog = tailFile(GATEWAY_WATCHDOG_LOG, Math.min(lines, 120), 2500);
+    const reducedWatchdog = String(watchdogLog || '')
+      .split('\n')
+      .filter((line) => {
+        const t = String(line || '').trim();
+        if (!t) return false;
+        if (/\[install\]\s+\[openclaw\]\[progress\]/i.test(t)) return false;
+        return true;
+      })
+      .join('\n');
+    const foldedWatchdog = collapseWatchdogLogText(reducedWatchdog);
+    if (foldedWatchdog.trim()) pushLabeledChunk('watchdog', foldedWatchdog);
   }
 
   return chunks.join('\n');
@@ -891,6 +1064,8 @@ async function getLatestOpenClawVersion(timeoutMs = 2500) {
 const latestOpenClawVersionCache = {
   version: '',
   error: '',
+  hasLinuxBinaryAsset: null,
+  assetsSummary: '',
   checking: false,
   updatedAt: 0,
   lastAttemptAt: 0
@@ -907,7 +1082,13 @@ async function refreshLatestOpenClawVersionCache({ force = false } = {}) {
   latestOpenClawVersionCache.checking = true;
   latestOpenClawVersionCache.lastAttemptAt = now;
   try {
-    const version = await getLatestOpenClawVersion(2500);
+    const repo = resolveOpenClawSourceRepo();
+    const rel = await getLatestOpenClawRelease(repo);
+    const version = parseOpenClawVersion(rel?.tag || '');
+    latestOpenClawVersionCache.hasLinuxBinaryAsset = !!rel?.binaryAsset;
+    latestOpenClawVersionCache.assetsSummary = Array.isArray(rel?.assets)
+      ? rel.assets.slice(0, 10).map((item) => String(item?.name || '').trim()).filter(Boolean).join(', ')
+      : '';
     if (version) {
       latestOpenClawVersionCache.version = version;
       latestOpenClawVersionCache.error = '';
@@ -918,6 +1099,8 @@ async function refreshLatestOpenClawVersionCache({ force = false } = {}) {
     }
   } catch (e) {
     latestOpenClawVersionCache.error = e?.message || String(e || '版本检查失败');
+    latestOpenClawVersionCache.hasLinuxBinaryAsset = null;
+    latestOpenClawVersionCache.assetsSummary = '';
     if (!latestOpenClawVersionCache.updatedAt) latestOpenClawVersionCache.updatedAt = Date.now();
   } finally {
     latestOpenClawVersionCache.checking = false;
@@ -2111,6 +2294,66 @@ function appendInstallLog(task, chunk) {
       fs.appendFileSync(task.logFile, text);
     } catch {}
   }
+
+  const formatWatchdogTime = (date = new Date()) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  };
+  const mirrorInstallLine = (line) => {
+    const raw = String(line || '');
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const normalized = trimmed
+      .replace(/^=====\s*\[[^\]]+\]\s*task\s+/i, '===== task ')
+      .replace(/\s*=====\s*$/, ' =====');
+    const isBoundary = /^=====\s*(\[[^\]]+\]\s*)?task\s+/i.test(trimmed);
+    const isProgress = /^\[openclaw\]\[progress\]/i.test(normalized);
+    const isErrorLike = (
+      /^\[openclaw\]\[(error|fatal)\]/i.test(normalized)
+      || /^(npm ERR!|npm WARN|pnpm:|curl:|tar:|unzip:|fatal:|Error:)/i.test(normalized)
+      || /(timeout|超时|failed|失败|exit=\d+|not found|EAI_AGAIN|ETIMEDOUT|ECONN|EADDRINUSE)/i.test(normalized)
+    );
+    const isStage = /^\[openclaw\]|^\[gateway\]|^\[progress\]/i.test(normalized);
+    const important = isBoundary || isStage || isErrorLike;
+    if (!important) return;
+    task.mirrorState = task.mirrorState || {
+      watchdog: { lastLine: '', lastAt: 0 },
+      panel: { lastLine: '', lastAt: 0 },
+      panelLastProgressAt: 0
+    };
+    const now = Date.now();
+
+    const shouldMirror = (bucket, minGapMs = 8000) => {
+      const state = task.mirrorState[bucket] || { lastLine: '', lastAt: 0 };
+      if (state.lastLine === normalized && (now - Number(state.lastAt || 0)) < minGapMs) {
+        return false;
+      }
+      task.mirrorState[bucket] = { lastLine: normalized, lastAt: now };
+      return true;
+    };
+
+    const mirrorToWatchdog = isBoundary || /^\[openclaw\]\[(error|fatal)\]/i.test(normalized) || /^npm ERR!/i.test(normalized);
+    const mirrorToPanel = isBoundary || isErrorLike || (!isProgress && isStage);
+
+    if (mirrorToWatchdog && shouldMirror('watchdog', 12000)) {
+      try {
+        fs.appendFileSync(GATEWAY_WATCHDOG_LOG, `[${formatWatchdogTime()}] [install] ${normalized}\n`);
+      } catch {}
+    }
+
+    if (mirrorToPanel) {
+      if (!isProgress || (now - Number(task.mirrorState.panelLastProgressAt || 0)) >= 60000) {
+        if (isProgress) task.mirrorState.panelLastProgressAt = now;
+        if (shouldMirror('panel', 6000)) {
+          try {
+            console.log(`[install] ${normalized}`);
+          } catch {}
+        }
+      }
+    }
+  };
+  text.split('\n').forEach(mirrorInstallLine);
+
   task.log += text;
   task.seq = (task.seq || 0) + 1;
   task.chunks = task.chunks || [];
@@ -2262,7 +2505,9 @@ function runOpenClawTask(command, title, operationType = 'installing') {
   };
 
   const task = installLogs[taskId];
+  task.operationType = String(operationType || 'installing');
   appendInstallLog(task, `\n===== [${new Date().toISOString()}] task ${taskId} (${operationType}) begin =====\n`);
+  appendInstallLog(task, `[state] operation=${operationType} status=begin task=${taskId}\n`);
   activeInstallTaskId = taskId;
   setOpenClawOperationState(operationType, taskId);
   const depAudit = auditOpenClawImageDependencies();
@@ -2274,29 +2519,59 @@ function runOpenClawTask(command, title, operationType = 'installing') {
   }
   appendInstallLog(task, `[openclaw] log file: ${task.logFile || OPENCLAW_INSTALL_LOG_FILE}\n`);
   appendInstallLog(task, `[openclaw] ${title}\n`);
-  appendInstallLog(task, `[openclaw] command: ${command}\n\n`);
+  appendInstallLog(task, `[openclaw] command prepared (length=${String(command || '').length})\n`);
+  appendInstallLog(task, '[openclaw] 安装脚本开始执行，以下为实时输出...\n\n');
 
   const escaped = String(command).replace(/'/g, `'"'"'`);
   const child = exec(`bash --noprofile --norc -lc '${escaped}'`, {
     timeout: 2700000,
     env: { ...process.env, TERM: 'dumb' }
   });
+  const heartbeatTimer = setInterval(() => {
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
+    appendInstallLog(task, `[openclaw][progress] task=${taskId} op=${operationType} elapsed=${elapsedSec}s status=${task.status}\n`);
+    appendInstallLog(task, `[state] operation=${operationType} status=running elapsed=${elapsedSec}s task=${taskId}\n`);
+  }, 15000);
   child.on('error', (err) => {
+    clearInterval(heartbeatTimer);
     appendInstallLog(task, `[openclaw] 任务启动失败: ${err.message}\n`);
     task.status = 'failed';
     task.exitCode = -1;
+    task.error = `任务启动失败: ${err.message}`;
     clearOpenClawOperationState(operationType);
   });
   child.stdout.on('data', d => appendInstallLog(task, d));
   child.stderr.on('data', d => appendInstallLog(task, d));
   child.on('close', (code, signal) => {
+    clearInterval(heartbeatTimer);
     if (signal) {
       appendInstallLog(task, `[openclaw] 任务被中断（signal=${signal}），可能超时或被外部终止。\n`);
     }
     task.status = code === 0 ? 'success' : 'failed';
     task.exitCode = code;
+    if (task.status === 'failed') {
+      const lines = String(task.log || '')
+        .split(/\r?\n/)
+        .map((line) => String(line || '').trim())
+        .filter(Boolean);
+      let reason = '';
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const line = lines[i];
+        if (/\[openclaw\]\[(error|fatal)\]/i.test(line)) {
+          reason = line;
+          break;
+        }
+        if (/(exit\s*=\s*\d+|超时|failed|失败|not found|ENOENT|ECONN|EAI_AGAIN|ETIMEDOUT)/i.test(line)) {
+          reason = line;
+          break;
+        }
+      }
+      task.error = reason || `安装失败（exit=${code ?? 'unknown'}${signal ? `, signal=${signal}` : ''}）`;
+      appendInstallLog(task, `[openclaw][error] ${task.error}\n`);
+    }
     const durationSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
     appendInstallLog(task, `[openclaw] task duration: ${durationSec}s\n`);
+    appendInstallLog(task, `[state] operation=${operationType} status=${task.status} duration=${durationSec}s task=${taskId}\n`);
     appendInstallLog(task, `\n===== [${new Date().toISOString()}] task ${taskId} end status=${task.status} exitCode=${code ?? 'null'} signal=${signal || 'none'} =====\n`);
     if (activeInstallTaskId === taskId) activeInstallTaskId = '';
     clearOpenClawOperationState(operationType);
@@ -2305,6 +2580,22 @@ function runOpenClawTask(command, title, operationType = 'installing') {
   });
 
   return taskId;
+}
+
+function buildOpenClawUninstallCommand() {
+  return [
+    'set -euo pipefail',
+    'echo "[openclaw] 开始卸载 OpenClaw..."',
+    'NPM_PREFIX="$(npm config get prefix 2>/dev/null || echo /usr/local)"',
+    'OPENCLAW_STATE_ROOT="/root/.openclaw"',
+    'echo "[openclaw] npm prefix: ${NPM_PREFIX}"',
+    'npm uninstall -g openclaw >/dev/null 2>&1 || true',
+    'rm -f "${NPM_PREFIX}/bin/openclaw" >/dev/null 2>&1 || true',
+    'rm -rf "${NPM_PREFIX}/lib/node_modules/openclaw" >/dev/null 2>&1 || true',
+    'rm -rf "${OPENCLAW_STATE_ROOT}/openclaw" "${OPENCLAW_STATE_ROOT}/openclaw-source" >/dev/null 2>&1 || true',
+    'rm -f "${OPENCLAW_STATE_ROOT}/openclaw-source-install.json" >/dev/null 2>&1 || true',
+    'echo "[openclaw] 卸载完成（npm 全局包和本地源码目录已移除）"'
+  ].join('\n');
 }
 
 function listOpenClawConfigBackups() {
@@ -2374,6 +2665,7 @@ let openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: proc
 const OPENCLAW_OPERATION_MAX_SEC = {
   installing: 5400,
   updating: 5400,
+  uninstalling: 1200,
   restarting_gateway: 300,
   repairing_config: 900
 };
@@ -2485,6 +2777,7 @@ function isOpenClawOperationBusy() {
 const OPENCLAW_OPERATION_ESTIMATE_SEC = {
   installing: 1200,
   updating: 900,
+  uninstalling: 420,
   restarting_gateway: 120,
   repairing_config: 240
 };
@@ -2520,6 +2813,8 @@ function buildOpenClawOperationProgress(state) {
         ? '安装中'
         : type === 'updating'
           ? '更新中'
+          : type === 'uninstalling'
+            ? '卸载中'
           : type === 'restarting_gateway'
             ? 'Gateway 启动中'
             : type === 'repairing_config'
@@ -2754,54 +3049,79 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     'mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$TMP_BASE" "$EXTRACT_DIR"',
     'rm -rf "$EXTRACT_DIR"/*',
     'echo "[openclaw] 尝试 GitHub Release 编译包: $OPENCLAW_ASSET_NAME"',
+    'echo "[openclaw] 资产直链: $OPENCLAW_ASSET_URL"',
+    'ASSET_URL_1="$OPENCLAW_ASSET_URL"',
+    'ASSET_URL_2="https://mirror.ghproxy.com/$OPENCLAW_ASSET_URL"',
+    'ASSET_URL_3="https://ghproxy.net/$OPENCLAW_ASSET_URL"',
+    'pick_asset_url() {',
+    '  case "$1" in',
+    '    1) echo "$ASSET_URL_1" ;;',
+    '    2) echo "$ASSET_URL_2" ;;',
+    '    *) echo "$ASSET_URL_3" ;;',
+    '  esac',
+    '}',
     'download_asset() {',
     '  local i=1',
+    '  local max_retry=18',
     '  local tmp="$ARCHIVE_PATH.part"',
-    '  while [ "$i" -le 8 ]; do',
-    '    echo "[openclaw] 下载编译包尝试 $i/8: $OPENCLAW_ASSET_URL"',
+    '  while [ "$i" -le "$max_retry" ]; do',
+    '    local source_idx=$(( ((i - 1) % 3) + 1 ))',
+    '    local url="$(pick_asset_url "$source_idx")"',
+    '    echo "[openclaw] 下载编译包尝试 $i/$max_retry (source=$source_idx): $url"',
     '    rm -f "$tmp"',
-    '    if curl -fL --http1.1 --connect-timeout 10 --max-time 1800 -o "$tmp" "$OPENCLAW_ASSET_URL"; then',
+    '    http_code="$(curl -fL --http1.1 --connect-timeout 12 --max-time 1200 --retry 2 --retry-delay 2 --retry-all-errors -o "$tmp" -w "%{http_code}" "$url" 2>/dev/null || true)"',
+    '    if [ -s "$tmp" ] && { [ "$http_code" = "200" ] || [ "$http_code" = "206" ]; }; then',
+    '      echo "[openclaw] 下载成功(source=$source_idx, http=$http_code, bytes=$(wc -c < \"$tmp\" 2>/dev/null || echo 0))"',
     '      mv -f "$tmp" "$ARCHIVE_PATH"',
     '      return 0',
     '    fi',
-    '    sleep 2',
+    '    echo "[openclaw] 下载失败(source=$source_idx, http=${http_code:-000})，准备重试..."',
+    '    rm -f "$tmp"',
+    '    sleep $(( i < 5 ? 2 : 4 ))',
     '    i=$((i + 1))',
     '  done',
-    '  return 1',
+    '  echo "[openclaw][error] GitHub 编译包下载失败：多源重试耗尽（$max_retry 次）"',
+    '  return 21',
     '}',
     'download_asset',
+    'echo "[openclaw] 编译包下载完成: $ARCHIVE_PATH"',
     'case "$OPENCLAW_ASSET_NAME" in',
     '  *.tar.gz|*.tgz)',
+    '    echo "[openclaw] 解压 tar.gz 编译包..."',
     '    tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"',
     '    ;;',
     '  *.zip)',
     '    if ! command -v unzip >/dev/null 2>&1; then',
-    '      echo "[openclaw] 编译包为 zip，但镜像缺少 unzip"',
+    '      echo "[openclaw][error] 编译包为 zip，但镜像缺少 unzip"',
     '      exit 12',
     '    fi',
+    '    echo "[openclaw] 解压 zip 编译包..."',
     '    unzip -q "$ARCHIVE_PATH" -d "$EXTRACT_DIR"',
     '    ;;',
     '  *)',
-    '    echo "[openclaw] 不支持的编译包格式: $OPENCLAW_ASSET_NAME"',
+    '    echo "[openclaw][error] 不支持的编译包格式: $OPENCLAW_ASSET_NAME"',
     '    exit 12',
     '    ;;',
     'esac',
+    'echo "[openclaw] 查找 openclaw.mjs 入口..."',
     'ASSET_ROOT="$(find "$EXTRACT_DIR" -type f -name openclaw.mjs | head -1 | xargs -I{} dirname "{}")"',
     'if [ -z "$ASSET_ROOT" ] || [ ! -f "$ASSET_ROOT/openclaw.mjs" ]; then',
-    '  echo "[openclaw] 编译包缺少 openclaw.mjs"',
+    '  echo "[openclaw][error] 编译包缺少 openclaw.mjs"',
     '  exit 13',
     'fi',
+    'echo "[openclaw] 编译包根目录: $ASSET_ROOT"',
     'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ]; then',
     '  if [ -f "$ASSET_ROOT/dist/index.js" ]; then ln -sfn index.js "$ASSET_ROOT/dist/entry.js"; fi',
     '  if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ -f "$ASSET_ROOT/dist/index.mjs" ]; then ln -sfn index.mjs "$ASSET_ROOT/dist/entry.mjs"; fi',
     'fi',
     'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ]; then',
-    '  echo "[openclaw] 编译包缺少 dist/entry.(m)js"',
+    '  echo "[openclaw][error] 编译包缺少 dist/entry.(m)js"',
     '  exit 13',
     'fi',
     'if [ ! -f "$ASSET_ROOT/dist/control-ui/index.html" ]; then',
     '  echo "[openclaw] WARN: 编译包缺少 control-ui 产物"',
     'fi',
+    'echo "[openclaw] 安装编译包到持久目录: $PERSIST_SRC_DIR"',
     'rm -rf "$PERSIST_SRC_DIR"',
     'mkdir -p "$PERSIST_SRC_DIR"',
     'cp -a "$ASSET_ROOT"/. "$PERSIST_SRC_DIR"/',
@@ -2816,9 +3136,25 @@ function buildOpenClawPreferredInstallCommand(release) {
   const assetCmd = buildOpenClawReleaseAssetInstallCommand(release);
   const npmCmd = buildOpenClawNpmInstallCommand();
   const sourceCmd = buildOpenClawSourceInstallCommand(release);
+  const selectedAsset = String(release?.binaryAsset?.name || '').trim();
+  const selectedAssetSizeMb = Number(release?.binaryAsset?.size || 0) > 0
+    ? Math.ceil(Number(release.binaryAsset.size || 0) / (1024 * 1024))
+    : 0;
+  const selectedAssetInfo = selectedAsset
+    ? `${selectedAsset}${selectedAssetSizeMb > 0 ? ` (${selectedAssetSizeMb}MB)` : ''}`
+    : 'none';
+  const assetsBrief = Array.isArray(release?.assets)
+    ? release.assets.slice(0, 10).map((item) => {
+      const name = String(item?.name || '').trim();
+      const sizeMb = Number(item?.size || 0) > 0 ? Math.ceil(Number(item.size || 0) / (1024 * 1024)) : 0;
+      return name ? `${name}${sizeMb > 0 ? `(${sizeMb}MB)` : ''}` : '';
+    }).filter(Boolean).join(', ')
+    : '';
   const githubPreferBlock = assetCmd
     ? [
-      'echo "[openclaw] 优先尝试 GitHub Release 编译包安装..."',
+      'echo "[openclaw] 优先尝试 GitHub Release Linux 编译包安装..."',
+      `echo "[openclaw] Release 版本: ${String(release?.tag || '').replace(/"/g, '')}"`,
+      `echo "[openclaw] 选中编译包: ${selectedAssetInfo.replace(/"/g, '')}"`,
       'if (',
       assetCmd,
       '); then',
@@ -2828,12 +3164,17 @@ function buildOpenClawPreferredInstallCommand(release) {
       '  echo "[openclaw] GitHub 编译包安装失败(exit=${rc})，继续尝试 npm 预构建包..."',
       'fi'
     ].join('\n')
-    : 'echo "[openclaw] 未找到可用 GitHub 编译包资产，跳过该步骤。"';
+    : [
+      'echo "[openclaw] 未找到可用 GitHub Linux 编译包资产。"',
+      'echo "[openclaw] 当前 release 可能仅包含 macOS/Windows/调试资产，未检测到 Linux 运行资产。"',
+      'echo "[openclaw] 将转入官方 npm 安装路径（npm install -g openclaw），失败后再回退源码构建。"',
+      `echo "[openclaw] 可见资产列表: ${String(assetsBrief || 'none').replace(/"/g, '')}"`
+    ].join('\n');
   return [
     'set -euo pipefail',
     githubPreferBlock,
     'if [ ! -f /root/.openclaw/openclaw-source/openclaw.mjs ] || { [ ! -f /root/.openclaw/openclaw-source/dist/entry.js ] && [ ! -f /root/.openclaw/openclaw-source/dist/entry.mjs ]; }; then',
-    '  echo "[openclaw] 进入 npm 预构建安装流程（官方推荐路径）..."',
+    '  echo "[openclaw] 进入官方 npm 安装流程（npm install -g openclaw）..."',
     '  if (',
     npmCmd,
     '  ); then',
@@ -2878,6 +3219,8 @@ app.get('/api/openclaw', async (req, res) => {
     }
     latestVersion = latestOpenClawVersionCache.version || '';
     updateCheckError = latestVersion ? '' : (latestOpenClawVersionCache.error || '');
+    const hasLinuxBinaryAsset = latestOpenClawVersionCache.hasLinuxBinaryAsset;
+    const latestReleaseAssetsSummary = latestOpenClawVersionCache.assetsSummary || '';
 
     const hasUpdate = !!(installed && version && latestVersion && compareSemver(latestVersion, version) > 0);
 
@@ -2930,6 +3273,8 @@ app.get('/api/openclaw', async (req, res) => {
       latestVersion,
       hasUpdate,
       updateCheckError,
+      hasLinuxBinaryAsset,
+      latestReleaseAssetsSummary,
       gatewayRunning,
       gatewayProcessRunning,
       gatewayStarting,
@@ -3093,7 +3438,7 @@ app.post('/api/openclaw/install', async (req, res) => {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release);
-    const taskId = runOpenClawTask(command, `安装 OpenClaw（预构建优先，失败回退源码）(${release.tag})`, 'installing');
+    const taskId = runOpenClawTask(command, `安装 OpenClaw（GitHub Linux 包优先 → 官方 npm → 源码兜底）(${release.tag})`, 'installing');
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
@@ -3114,12 +3459,31 @@ app.get('/api/openclaw/install/:taskId', (req, res) => {
     const chunks = task.chunks || [];
     delta = chunks.slice(since).join('');
   }
-  res.json({ ...task, delta });
+  res.json({ ...task, operationType: task.operationType || 'installing', delta });
+});
+
+app.post('/api/openclaw/uninstall', (req, res) => {
+  try {
+    if (isTaskRunning(installLogs, activeInstallTaskId)) {
+      return res.json({ success: true, taskId: activeInstallTaskId, reused: true, logFile: installLogs[activeInstallTaskId]?.logFile || OPENCLAW_INSTALL_LOG_FILE });
+    }
+    const opState = getOpenClawOperationState();
+    if (opState.type !== 'idle') {
+      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+    }
+    const taskId = runOpenClawTask(buildOpenClawUninstallCommand(), '卸载 OpenClaw（移除 npm 全局包与本地源码目录）', 'uninstalling');
+    if (!taskId) {
+      return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
+    }
+    res.json({ success: true, taskId, logFile: installLogs[taskId]?.logFile || OPENCLAW_INSTALL_LOG_FILE });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || '卸载任务创建失败' });
+  }
 });
 
 function buildOpenClawNpmInstallCommand() {
   return [
-    'set -e',
+    'set -euo pipefail',
     'for bin in node npm; do',
     '  if ! command -v "$bin" >/dev/null 2>&1; then',
     '    echo "[openclaw] 缺少镜像内依赖: $bin（请重新构建镜像，不在运行时安装系统依赖）"',
@@ -3127,6 +3491,9 @@ function buildOpenClawNpmInstallCommand() {
     '  fi',
     'done',
     'npm config set registry https://registry.npmmirror.com',
+    'npm config set fetch-retries 6',
+    'npm config set fetch-retry-mintimeout 2000',
+    'npm config set fetch-retry-maxtimeout 20000',
     'NPM_PREFIX="$(npm config get prefix 2>/dev/null || echo /usr/local)"',
     'OPENCLAW_STATE_ROOT="/root/.openclaw"',
     'PERSIST_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source"',
@@ -3143,29 +3510,50 @@ function buildOpenClawNpmInstallCommand() {
     'npm uninstall -g openclaw >/dev/null 2>&1 || true',
     'rm -rf "${OPENCLAW_LIB_DIR}/openclaw" "${OPENCLAW_LIB_DIR}"/.openclaw-* >/dev/null 2>&1 || true',
     'npm cache verify >/dev/null 2>&1 || true',
+    'OPENCLAW_NPM_LAST_ERROR=""',
     'run_npm_global_install() {',
     '  local pkg="$1"',
     '  local label="$2"',
     '  local rc=0',
+    '  local tmp_log="$OPENCLAW_STATE_ROOT/logs/npm-install-${label}.log"',
+    '  rm -f "$tmp_log"',
+    '  set +e',
     '  if command -v timeout >/dev/null 2>&1; then',
-    '    echo "[openclaw] ${label}: timeout 900s npm install -g ${pkg}"',
-    '    timeout 900 npm install -g "$pkg" || rc=$?',
+    '    echo "[openclaw] ${label}: timeout 900s npm install -g ${pkg} --prefer-online --no-audit --no-fund"',
+    '    timeout 900 npm install -g "$pkg" --prefer-online --no-audit --no-fund 2>&1 | tee "$tmp_log"',
+    '    rc=${PIPESTATUS[0]}',
     '  else',
-    '    echo "[openclaw] ${label}: npm install -g ${pkg}"',
-    '    npm install -g "$pkg" || rc=$?',
+    '    echo "[openclaw] ${label}: npm install -g ${pkg} --prefer-online --no-audit --no-fund"',
+    '    npm install -g "$pkg" --prefer-online --no-audit --no-fund 2>&1 | tee "$tmp_log"',
+    '    rc=${PIPESTATUS[0]}',
     '  fi',
-    '  if [ "$rc" -eq 124 ]; then',
-    '    echo "[openclaw] npm install 超时(900s): ${pkg}"',
+    '  set -e',
+    '  if [ "$rc" -ne 0 ]; then',
+    '    if [ "$rc" -eq 124 ]; then',
+    '      OPENCLAW_NPM_LAST_ERROR="[openclaw][error] npm install 超时(900s): ${pkg}"',
+    '    else',
+    '      tail_msg="$(tail -n 1 "$tmp_log" 2>/dev/null || true)"',
+    '      [ -z "$tail_msg" ] && tail_msg="npm install exit=${rc}"',
+    '      OPENCLAW_NPM_LAST_ERROR="[openclaw][error] npm install 失败(exit=${rc}): ${tail_msg}"',
+    '    fi',
+    '    echo "$OPENCLAW_NPM_LAST_ERROR"',
+    '    echo "[openclaw] npm 失败日志: $tmp_log"',
+    '    tail -n 80 "$tmp_log" 2>/dev/null || true',
+    '    return "$rc"',
     '  fi',
+    '  echo "[openclaw] ${label}: 安装成功"',
     '  return "$rc"',
     '}',
-    'if ! run_npm_global_install openclaw@latest "首次安装"; then',
+    'if ! run_npm_global_install openclaw@latest "first_install"; then',
     '  echo "[openclaw] npm install 首次失败，尝试清理并重试..."',
     '  npm uninstall -g openclaw >/dev/null 2>&1 || true',
     '  rm -rf "${OPENCLAW_LIB_DIR}/openclaw" "${OPENCLAW_LIB_DIR}"/.openclaw-* >/dev/null 2>&1 || true',
     '  npm cache verify >/dev/null 2>&1 || true',
     '  npm config set registry https://registry.npmjs.org',
-    '  run_npm_global_install openclaw@latest "重试安装"',
+    '  if ! run_npm_global_install openclaw@latest "retry_install"; then',
+    '    [ -n "$OPENCLAW_NPM_LAST_ERROR" ] && echo "$OPENCLAW_NPM_LAST_ERROR"',
+    '    exit 31',
+    '  fi',
     'fi',
     'if [ ! -x "$OPENCLAW_BIN" ] && [ -f "${OPENCLAW_LIB_DIR}/openclaw/openclaw.mjs" ]; then',
     '  ln -sf "${OPENCLAW_LIB_DIR}/openclaw/openclaw.mjs" "$OPENCLAW_BIN" || true',
@@ -3251,7 +3639,7 @@ app.post('/api/openclaw/update', async (req, res) => {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release);
-    const taskId = runOpenClawTask(command, `更新 OpenClaw（预构建优先，失败回退源码）(${release.tag})`, 'updating');
+    const taskId = runOpenClawTask(command, `更新 OpenClaw（GitHub Linux 包优先 → 官方 npm → 源码兜底）(${release.tag})`, 'updating');
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
@@ -3291,7 +3679,7 @@ app.post('/api/openclaw/start', (req, res) => {
   restartGatewayForeground((err, stdout, stderr) => {
     gatewayRestartRunning = false;
     clearOpenClawOperationState('restarting_gateway');
-    const startupLogs = readOpenClawGatewayLogs(160, { includeWatchdog: true });
+    const startupLogs = readOpenClawGatewayLogs(160, { includeWatchdog: true, includeInstall: true });
     if (!err) {
       console.log('[openclaw][start] gateway restart request finished, watchdog should relaunch');
       return res.json({ success: true, message: 'Gateway 进程已终止，watchdog 将自动拉起', logs: startupLogs });
@@ -3311,7 +3699,7 @@ app.post('/api/openclaw/start', (req, res) => {
 app.get('/api/openclaw/gateway/logs', (req, res) => {
   try {
     const lines = Math.max(20, Math.min(parseInt(req.query.lines || '200', 10) || 200, 1200));
-    const logs = readOpenClawGatewayLogs(lines, { includeWatchdog: true });
+    const logs = readOpenClawGatewayLogs(lines, { includeWatchdog: true, includeInstall: true });
     res.json({ success: true, logs });
   } catch (e) {
     res.status(500).json({ success: false, error: e?.message || '读取 Gateway 日志失败' });
@@ -3366,6 +3754,8 @@ app.get('/api/logs', (req, res) => {
   const lines = parseInt(req.query.lines, 10) || 100;
   try {
     const safeLines = Math.max(20, Math.min(lines, 5000));
+    const foldWatchdog = String(req.query.fold || '1') !== '0';
+    const viewMode = String(req.query.view || 'timeline').trim().toLowerCase();
     const mergedBlocks = [];
 
     const logFile = resolveGatewayLogFileForStreaming();
@@ -3400,6 +3790,14 @@ app.get('/api/logs', (req, res) => {
     if (panelLog) {
       const sanitizedPanel = panelLog
         .split('\n')
+        .filter((line) => {
+          const t = String(line || '').trim();
+          if (!t) return false;
+          if (!/\[install\]/i.test(t)) return true;
+          if (/\[install\].*(npm ERR!|npm WARN|\[openclaw\]\[(error|fatal)\]|failed|失败|timeout|超时|end status=failed)/i.test(t)) return true;
+          if (/\[install\].*=====\s*task\s+/i.test(t)) return true;
+          return false;
+        })
         .map(sanitizeLogLine)
         .join('\n')
         .trim();
@@ -3419,7 +3817,12 @@ app.get('/api/logs', (req, res) => {
       return res.json({ logs: hints });
     }
 
-    res.json({ logs: mergedBlocks.join('\n\n') });
+    const mergedText = mergedBlocks.join('\n\n');
+    if (viewMode === 'grouped') {
+      return res.json({ logs: keepLastLines(mergedText, safeLines) });
+    }
+    const timelineLogs = mergeLogBlocksByTimeline(mergedText, { foldWatchdog, maxLines: safeLines });
+    res.json({ logs: timelineLogs || mergedText });
   } catch (e) {
     res.json({ logs: e.message });
   }
