@@ -2265,6 +2265,14 @@ function runOpenClawTask(command, title, operationType = 'installing') {
   appendInstallLog(task, `\n===== [${new Date().toISOString()}] task ${taskId} (${operationType}) begin =====\n`);
   activeInstallTaskId = taskId;
   setOpenClawOperationState(operationType, taskId);
+  const depAudit = auditOpenClawImageDependencies();
+  appendInstallLog(task, `[openclaw] preflight: dependencies=${depAudit.ok ? 'ok' : 'missing'}\n`);
+  if (!depAudit.ok) {
+    if (depAudit.missingCommands?.length) appendInstallLog(task, `[openclaw] preflight: missing commands => ${depAudit.missingCommands.join(', ')}\n`);
+    if (depAudit.missingFiles?.length) appendInstallLog(task, `[openclaw] preflight: missing files => ${depAudit.missingFiles.join(', ')}\n`);
+    if (depAudit.missingDirs?.length) appendInstallLog(task, `[openclaw] preflight: missing dirs => ${depAudit.missingDirs.join(', ')}\n`);
+  }
+  appendInstallLog(task, `[openclaw] log file: ${task.logFile || OPENCLAW_INSTALL_LOG_FILE}\n`);
   appendInstallLog(task, `[openclaw] ${title}\n`);
   appendInstallLog(task, `[openclaw] command: ${command}\n\n`);
 
@@ -2287,6 +2295,8 @@ function runOpenClawTask(command, title, operationType = 'installing') {
     }
     task.status = code === 0 ? 'success' : 'failed';
     task.exitCode = code;
+    const durationSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
+    appendInstallLog(task, `[openclaw] task duration: ${durationSec}s\n`);
     appendInstallLog(task, `\n===== [${new Date().toISOString()}] task ${taskId} end status=${task.status} exitCode=${code ?? 'null'} signal=${signal || 'none'} =====\n`);
     if (activeInstallTaskId === taskId) activeInstallTaskId = '';
     clearOpenClawOperationState(operationType);
@@ -2884,9 +2894,20 @@ app.get('/api/openclaw', async (req, res) => {
     const gatewayWatchdogRunning = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200);
     const gatewayProcessUptimeSec = Number.parseInt(String(runCommandText('pgrep -f "[o]penclaw.*gateway" | head -1 | xargs -I{} ps -o etimes= -p {} 2>/dev/null || true', 1200) || '').trim(), 10) || 0;
 
-    const installTaskRunning = isTaskRunning(installLogs, activeInstallTaskId);
-    const repairTaskRunning = isTaskRunning(repairLogs, activeRepairTaskId) || isRepairLockActive();
     const operationState = getOpenClawOperationState();
+    let installTaskRunning = isTaskRunning(installLogs, activeInstallTaskId);
+    const activeInstallTask = activeInstallTaskId ? installLogs[activeInstallTaskId] : null;
+    if (installTaskRunning && operationState.type === 'idle' && installed && version) {
+      const ageSec = Math.max(0, Math.floor((Date.now() - Number(activeInstallTask?.startedAt || Date.now())) / 1000));
+      if (ageSec > 90) {
+        appendInstallLog(activeInstallTask, `[openclaw] 检测到任务状态与操作锁不一致，已自动结束该任务（age=${ageSec}s）。\n`);
+        activeInstallTask.status = 'failed';
+        activeInstallTask.exitCode = Number.isFinite(activeInstallTask.exitCode) ? activeInstallTask.exitCode : -2;
+        installTaskRunning = false;
+        activeInstallTaskId = '';
+      }
+    }
+    const repairTaskRunning = isTaskRunning(repairLogs, activeRepairTaskId) || isRepairLockActive();
     const operationProgress = buildOpenClawOperationProgress(operationState);
     const gatewayWarmupByProcess = !!(
       installed
@@ -2919,6 +2940,8 @@ app.get('/api/openclaw', async (req, res) => {
       invalidConfigKeys,
       installSource: detected.source,
       installTaskRunning,
+      activeInstallTaskId,
+      activeInstallLogFile: activeInstallTask?.logFile || OPENCLAW_INSTALL_LOG_FILE,
       repairTaskRunning,
       gatewayRestartRunning,
       operationState,

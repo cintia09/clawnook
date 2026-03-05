@@ -866,10 +866,18 @@ function formatRemainingTime(totalSec){
   return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
 
+function animatedDots(){
+  const n = (Math.floor(Date.now() / 450) % 3) + 1;
+  return '.'.repeat(n);
+}
+
 function renderOpenClawStatusTicker(){
   const el = $('oc-update-status');
   if (!el) return;
   let text = ocStatusBaseText || '更新状态：自动检查中';
+  if (ocStatusProgress?.active) {
+    text += animatedDots();
+  }
   const p = ocStatusProgress;
   if (p && p.active && Number(p.totalSec || 0) > 0 && Number(p.startedAt || 0) > 0) {
     const elapsed = Math.max(0, Math.floor((Date.now() - Number(p.startedAt || 0)) / 1000));
@@ -894,8 +902,8 @@ function setOpenClawStatusLine(baseText, progress){
     ocStatusTicker = null;
   }
   renderOpenClawStatusTicker();
-  if (ocStatusProgress && ocStatusProgress.totalSec > 0) {
-    ocStatusTicker = setInterval(renderOpenClawStatusTicker, 1000);
+  if (ocStatusProgress && ocStatusProgress.active) {
+    ocStatusTicker = setInterval(renderOpenClawStatusTicker, 500);
   }
 }
 
@@ -929,7 +937,7 @@ function stopGatewayStartupLogPulls(){
 
 function applyGatewayRestartingUi(){
   if ($('oc-gateway')) {
-    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>启动中`;
+    $('oc-gateway').innerHTML = `<span class="pulse pending"></span>启动中`;
   }
   setOpenClawStatusLine('更新状态：Gateway 启动中', { active: true, startedAt: Date.now(), totalSec: 60 });
 }
@@ -1002,11 +1010,11 @@ async function refreshOpenClaw(opts = {}){
     startedAt: Number(opProgressRaw.startedAt || d?.operationState?.startedAt || Date.now()),
     totalSec: Number(opProgressRaw.totalSec || 0)
   } : null;
+  const installTaskLikelyStale = !!d.installTaskRunning && opType === 'idle' && !!d.installed && !!d.version;
   const installBusyRemoteNow = !!d.installTaskRunning && (
     opType === 'installing'
     || opType === 'updating'
-    || !d.installed
-    || !d.version
+    || (!installTaskLikelyStale && !d.installed)
   );
   const installBusyNow = !!ocInstallRunning || !!installBusyRemoteNow || opType === 'installing' || opType === 'updating';
   const installPhaseNow = resolveInstallPhase({
@@ -1021,9 +1029,9 @@ async function refreshOpenClaw(opts = {}){
   const postInstallWarmup = Date.now() < Number(ocPostInstallWarmupUntil || 0);
 
   if (installBusyNow && installPhaseNow === 'install') {
-    $('oc-installed').innerHTML = `<span class="pulse offline"></span>安装中`;
+    $('oc-installed').innerHTML = `<span class="pulse pending"></span>安装中`;
   } else if (installBusyNow && installPhaseNow === 'update') {
-    $('oc-installed').innerHTML = `<span class="pulse online"></span>更新中`;
+    $('oc-installed').innerHTML = `<span class="pulse pending"></span>更新中`;
   } else {
     $('oc-installed').innerHTML = d.installed
       ? `<span class="pulse online"></span>已安装`
@@ -1042,19 +1050,19 @@ async function refreshOpenClaw(opts = {}){
     $('oc-version').textContent = '—';
   }
   if (installBusyNow && installPhaseNow === 'install') {
-    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>安装中`;
+    $('oc-gateway').innerHTML = `<span class="pulse pending"></span>安装中`;
   } else if (!d.installed && !d.gatewayRunning && !restartBusyNow) {
     $('oc-gateway').innerHTML = `<span class="pulse offline"></span>未安装`;
   } else if (restartBusyNow) {
-    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>启动中`;
+    $('oc-gateway').innerHTML = `<span class="pulse pending"></span>启动中`;
   } else if (!d.gatewayRunning && d.gatewayStarting) {
-    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>启动中（初始化中）`;
+    $('oc-gateway').innerHTML = `<span class="pulse pending"></span>启动中（初始化中）`;
   } else if (!d.gatewayRunning && postInstallWarmup && d.gatewayProcessRunning) {
-    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>启动中`;
+    $('oc-gateway').innerHTML = `<span class="pulse pending"></span>启动中`;
   } else if (!d.gatewayRunning && d.gatewayPairingRequired) {
     $('oc-gateway').innerHTML = `<span class="pulse offline"></span>待配对（控制台鉴权）`;
   } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
-    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>启动中（初始化中）`;
+    $('oc-gateway').innerHTML = `<span class="pulse pending"></span>启动中（初始化中）`;
   } else {
     $('oc-gateway').innerHTML = d.gatewayRunning
       ? `<span class="pulse online"></span>运行中`
@@ -1142,6 +1150,7 @@ async function pollTask(taskId){
   let lastSeq = 0;
   let errorStreak = 0;
   const startedAt = Date.now();
+  let lastHeartbeatAt = 0;
 
   const tick = async () => {
     const st = await api('/api/openclaw/install/' + taskId + '?since=' + lastSeq);
@@ -1181,6 +1190,20 @@ async function pollTask(taskId){
       setColored(logEl, st.log, 6000, autoScroll);
     }
     lastSeq = Number(st.seq || lastSeq || 0);
+
+    const now = Date.now();
+    if (now - lastHeartbeatAt >= 5000) {
+      lastHeartbeatAt = now;
+      const elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1000));
+      const quick = await refreshOpenClaw({ retries: 0 });
+      if (!quick?.error) {
+        const op = String(quick.operationState?.type || 'idle');
+        const gw = quick.gatewayRunning ? 'running' : (quick.gatewayStarting ? 'starting' : 'down');
+        appendOcLogLine(`[progress] task=${taskId} seq=${lastSeq} elapsed=${formatRemainingTime(elapsedSec)} op=${op} gateway=${gw}`);
+      } else {
+        appendOcLogLine(`[progress] task=${taskId} seq=${lastSeq} elapsed=${formatRemainingTime(elapsedSec)} status=running`);
+      }
+    }
 
     if (st.status && st.status !== 'running'){
       clearInterval(ocPollTimer);
@@ -1397,6 +1420,8 @@ $('btn-oc-install').addEventListener('click', async ()=>{
       }
       toast('开始安装', '正在执行 OpenClaw 安装...');
       appendOcLogLine(`[openclaw] 安装任务已启动: ${i.taskId}`);
+      if (i?.release?.tag) appendOcLogLine(`[openclaw] 目标版本: ${i.release.tag}`);
+      if (i?.logFile) appendOcLogLine(`[openclaw] 日志文件: ${i.logFile}`);
       taskStarted = true;
       pollTask(i.taskId);
       return;
@@ -1437,6 +1462,8 @@ $('btn-oc-install').addEventListener('click', async ()=>{
     }
     toast('开始更新', `正在更新到 ${current.latestVersion}...`);
     appendOcLogLine(`[openclaw] 更新任务已启动: ${r.taskId}`);
+    if (r?.release?.tag) appendOcLogLine(`[openclaw] 目标版本: ${r.release.tag}`);
+    if (r?.logFile) appendOcLogLine(`[openclaw] 日志文件: ${r.logFile}`);
     taskStarted = true;
     pollTask(r.taskId);
   } catch (e) {
