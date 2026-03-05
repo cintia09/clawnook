@@ -63,7 +63,11 @@ COPY motd.sh /etc/profile.d/openclaw-motd.sh
 RUN chmod +x /etc/profile.d/openclaw-motd.sh
 
 # OpenClaw
-RUN npm install -g openclaw
+RUN npm install -g openclaw \
+    && mkdir -p /root/.openclaw/openclaw-source /root/.openclaw/openclaw /root/.openclaw/logs /root/.openclaw/cache/openclaw /root/.openclaw/locks /root/.openclaw/home \
+    && OPENCLAW_NPM_ROOT="$(npm root -g)" \
+    && if [ -d "$OPENCLAW_NPM_ROOT/openclaw" ]; then cp -a "$OPENCLAW_NPM_ROOT/openclaw"/. /root/.openclaw/openclaw-source/; fi \
+    && ln -sfn /root/.openclaw/openclaw-source /root/.openclaw/openclaw
 
 # Web管理面板
 COPY web/ /opt/openclaw-web/

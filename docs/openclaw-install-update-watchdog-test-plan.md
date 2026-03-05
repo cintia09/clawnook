@@ -45,11 +45,11 @@
 
 在容器内确认以下路径：
 
-- `/workspace/project/openclaw`
+- `/root/.openclaw/openclaw-source`
 - `/root/.openclaw/openclaw.json`
 - `/root/.openclaw/config-backups`
 - `/root/.openclaw/logs/gateway-watchdog.log`
-- `/workspace/tmp/openclaw-gateway.log`
+- `/root/.openclaw/logs/openclaw-gateway.log`
 
 ---
 
@@ -78,7 +78,7 @@ ss -tlnp | grep 18789
 
 # 查看日志
 tail -n 200 /root/.openclaw/logs/gateway-watchdog.log
-tail -n 200 /workspace/tmp/openclaw-gateway.log
+tail -n 200 /root/.openclaw/logs/openclaw-gateway.log
 
 # 健康检查
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18789/health
@@ -130,7 +130,7 @@ docker exec openclaw-pro bash -lc 'rm -f /root/.openclaw/config-backups/openclaw
 | F-11 | 状态接口一致性 | 服务运行中 | 轮询 `/api/openclaw` 与 `/api/status` | UI 状态与进程/日志一致 |
 | F-12 | 任务日志完整性 | 触发安装/更新任务 | 轮询 task API | 可增量读取日志，状态终态正确 |
 | F-13 | 安装/更新/Gateway 启动日志正确显示 | 已启用 OpenClaw 引擎页 | 执行安装/更新并触发重启，检查 `oc-log` 与 `/api/openclaw/gateway/logs` | UI 显示包含任务日志 + Gateway/Watchdog 启动日志快照，日志源正确 |
-| F-14 | Gateway 运行日志路径自愈 | 删除 `/workspace/tmp` 后触发重启 | 检查 watchdog 与 gateway 日志 | 不出现 `No such file or directory`；运行日志可写入 runtime 或 legacy 兜底路径 |
+| F-14 | Gateway 运行日志路径自愈 | 删除 runtime 日志文件后触发重启 | 检查 watchdog 与 gateway 日志 | 不出现 `No such file or directory`；运行日志可写入 runtime 或 legacy 兜底路径 |
 | F-15 | 状态聚合字段完整性 | 服务运行中 | 调用 `/api/openclaw` | 返回 `gatewayWatchdogRunning`、`operationState`、`lastBackupAt`、`lastRollbackAt` 字段且语义正确 |
 
 ## 6.2 安全测试集（S）
@@ -164,7 +164,7 @@ docker exec openclaw-pro bash -lc 'rm -f /root/.openclaw/config-backups/openclaw
 | E2E-07 | watchdog 失效恢复 | watchdog 异常后被拉起并继续守护 |
 | E2E-08 | 安全回归链路 | 鉴权、输入校验、审计日志均通过 |
 | E2E-09 | SSH 登录链路（HOST_USER） | 非 root 用户（如 `wm_20`）可使用宿主机公钥登录 |
-| E2E-10 | Gateway 启动日志链路自愈 | `/workspace/tmp` 缺失后仍能恢复并输出正确启动日志 |
+| E2E-10 | Gateway 启动日志链路自愈 | runtime 日志文件缺失后仍能恢复并输出正确启动日志 |
 
 ---
 
@@ -258,12 +258,12 @@ docker exec openclaw-pro bash -lc 'rm -f /root/.openclaw/config-backups/openclaw
 ## 7.10 E2E-10：Gateway 启动日志链路自愈
 
 1. 在容器内模拟 runtime 日志目录缺失：
-   - `rm -rf /workspace/tmp`
+   - `rm -f /root/.openclaw/logs/openclaw-gateway.log`
 2. 触发 Gateway 重启（Web 按钮或 `POST /api/openclaw/start`）。
 3. 检查 watchdog 日志与 gateway 日志：
    - `tail -n 120 /root/.openclaw/logs/gateway-watchdog.log`
-   - `ls -ld /workspace/tmp /workspace/tmp/openclaw-gateway.log 2>/dev/null`
-   - `tail -n 80 /workspace/tmp/openclaw-gateway.log 2>/dev/null || tail -n 80 /root/.openclaw/logs/gateway.log`
+   - `ls -l /root/.openclaw/logs/openclaw-gateway.log 2>/dev/null`
+   - `tail -n 80 /root/.openclaw/logs/openclaw-gateway.log 2>/dev/null || tail -n 80 /root/.openclaw/logs/gateway.log`
 4. 调用日志接口（已登录会话）：
    - `GET /api/openclaw/gateway/logs?lines=200`
 5. 断言：
@@ -289,7 +289,7 @@ docker exec openclaw-pro bash -lc 'ls -lt /root/.openclaw/config-backups'
 
 # 5) 查看关键日志
 docker exec openclaw-pro bash -lc 'tail -n 120 /root/.openclaw/logs/gateway-watchdog.log'
-docker exec openclaw-pro bash -lc 'tail -n 120 /workspace/tmp/openclaw-gateway.log'
+docker exec openclaw-pro bash -lc 'tail -n 120 /root/.openclaw/logs/openclaw-gateway.log'
 ```
 
 ---

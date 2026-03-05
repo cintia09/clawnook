@@ -177,13 +177,15 @@ const STT_CONFIG_PATH = '/root/.openclaw/stt-config.json';
 const PLUGINS_STATE_PATH = '/root/.openclaw/plugins-state.json';
 const OPENCLAW_SOURCE_INSTALL_META_PATH = '/root/.openclaw/openclaw-source-install.json';
 const OPENCLAW_SOURCE_REPO_DEFAULT = 'openclaw/openclaw';
-const OPENCLAW_SOURCE_ROOT = '/workspace/project/openclaw';
+const OPENCLAW_SOURCE_ROOT = '/root/.openclaw/openclaw-source';
 const OPENCLAW_SOURCE_ENTRY = `${OPENCLAW_SOURCE_ROOT}/openclaw.mjs`;
 const OPENCLAW_CONFIG_BACKUP_DIR = '/root/.openclaw/config-backups';
-const GATEWAY_RUNTIME_LOG_FILE = '/workspace/tmp/openclaw-gateway.log';
+const GATEWAY_RUNTIME_LOG_FILE = '/root/.openclaw/logs/openclaw-gateway.log';
 const GATEWAY_LEGACY_LOG_FILE = '/root/.openclaw/logs/gateway.log';
 const GATEWAY_WATCHDOG_LOG = '/root/.openclaw/logs/gateway-watchdog.log';
-const WEB_PANEL_LOG_FILE = '/tmp/openclaw-web.log';
+const WEB_PANEL_LOG_FILE = '/root/.openclaw/logs/web-panel.log';
+const OPENCLAW_STATE_ROOT = '/root/.openclaw';
+const OPENCLAW_LOCK_DIR = `${OPENCLAW_STATE_ROOT}/locks`;
 
 const TRADING_DIR = '/root/trading-system';
 const STRATEGY_PARAMS_PATH = path.join(TRADING_DIR, 'strategy_params.json');
@@ -363,8 +365,43 @@ function ensureGatewayWatchdog(callback) {
   exec(`bash --noprofile --norc -lc '${cmd}'`, { env: { ...process.env, TERM: 'dumb' } }, callback);
 }
 
+function ensureOpenClawSourceEntryCompat() {
+  try {
+    const srcEntry = OPENCLAW_SOURCE_ENTRY;
+    const distDir = path.join(OPENCLAW_SOURCE_ROOT, 'dist');
+    if (!fs.existsSync(srcEntry) || !fs.existsSync(distDir) || !fs.statSync(distDir).isDirectory()) {
+      return { checked: false, repaired: false, reason: 'source-entry-or-dist-missing' };
+    }
+
+    const entryJs = path.join(distDir, 'entry.js');
+    const entryMjs = path.join(distDir, 'entry.mjs');
+    if (fs.existsSync(entryJs) || fs.existsSync(entryMjs)) {
+      return { checked: true, repaired: false, reason: 'entry-exists' };
+    }
+
+    const indexJs = path.join(distDir, 'index.js');
+    const indexMjs = path.join(distDir, 'index.mjs');
+    if (fs.existsSync(indexJs)) {
+      fs.symlinkSync('index.js', entryJs);
+      return { checked: true, repaired: true, target: 'entry.js', source: 'index.js' };
+    }
+    if (fs.existsSync(indexMjs)) {
+      fs.symlinkSync('index.mjs', entryMjs);
+      return { checked: true, repaired: true, target: 'entry.mjs', source: 'index.mjs' };
+    }
+
+    return { checked: true, repaired: false, reason: 'index-missing' };
+  } catch (e) {
+    return { checked: true, repaired: false, reason: e?.message || 'unknown' };
+  }
+}
+
 function restartGatewayForeground(callback) {
   repairOpenClawConfigProviders();
+  const compat = ensureOpenClawSourceEntryCompat();
+  if (compat?.repaired) {
+    console.log(`[openclaw][start] repaired dist/${compat.target} -> ${compat.source}`);
+  }
   ensureGatewayWatchdog((watchdogErr, watchdogStdout, watchdogStderr) => {
     if (watchdogErr) {
       return callback(watchdogErr, watchdogStdout, watchdogStderr);
@@ -564,8 +601,7 @@ function getInstalledOpenClawVersion() {
   };
 
   const packagePaths = [
-    '/workspace/project/openclaw/package.json',
-    '/opt/openclaw-runtime/node_modules/openclaw/package.json',
+    '/root/.openclaw/openclaw-source/package.json',
     '/root/.npm-global/lib/node_modules/openclaw/package.json',
     '/usr/local/lib/node_modules/openclaw/package.json',
     '/usr/lib/node_modules/openclaw/package.json'
@@ -576,12 +612,11 @@ function getInstalledOpenClawVersion() {
   }
 
   const candidates = [
-    runCommandText('node /workspace/project/openclaw/openclaw.mjs --version 2>&1 || node /workspace/project/openclaw/openclaw.mjs -v 2>&1 || true', 2600),
+    runCommandText('node /root/.openclaw/openclaw-source/openclaw.mjs --version 2>&1 || node /root/.openclaw/openclaw-source/openclaw.mjs -v 2>&1 || true', 2600),
     runCommandText('/root/.npm-global/bin/openclaw --version 2>&1 || true', 2200),
     runCommandText('openclaw --version 2>&1 || true', 1800),
     runCommandText('bash --noprofile --norc -lc "openclaw --version 2>&1 || true"', 2000),
-    runCommandText('node -e "try{const p=require(\"/opt/openclaw-runtime/node_modules/openclaw/package.json\"); console.log(p.version||\"\")}catch(e){}"', 1800),
-    runCommandText('node -e "try{const p=require(\"/root/.npm-global/lib/node_modules/openclaw/package.json\"); console.log(p.version||\"\")}catch(e){}"', 1800),
+    runCommandText("node -e 'try{const p=require(\"/root/.npm-global/lib/node_modules/openclaw/package.json\"); console.log(p.version||\"\")}catch(e){}'", 1800),
     runCommandText('npm list -g openclaw --depth=0 2>/dev/null | sed -n "s/.*openclaw@\\([^[:space:]]*\\).*/\\1/p" | head -1', 2200),
     runCommandText('npm root -g 2>/dev/null | xargs -I{} sh -c "test -f \"{}/openclaw/package.json\" && sed -n \"s/.*\\\"version\\\": *\\\"\\([^\\\"]*\\\)\\\".*/\\1/p\" \"{}/openclaw/package.json\" | head -1"', 2200)
   ];
@@ -605,7 +640,7 @@ function getInstalledOpenClawVersion() {
 function isOpenClawInstalledByPath() {
   return runCommandOk('command -v openclaw >/dev/null 2>&1', 1500)
     || runCommandOk('bash --noprofile --norc -lc "command -v openclaw >/dev/null 2>&1"', 1800)
-    || runCommandOk('test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw || test -f /opt/openclaw-runtime/node_modules/openclaw/openclaw.mjs || test -f /opt/openclaw-cli/openclaw/openclaw.mjs || test -f /workspace/project/openclaw/openclaw.mjs', 1200);
+    || runCommandOk('test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw || test -f /root/.openclaw/openclaw-source/openclaw.mjs', 1200);
 }
 
 function isOpenClawInstalledByNpmPackage() {
@@ -1825,7 +1860,7 @@ const installLogs = {};
 const repairLogs = {};
 let activeInstallTaskId = '';
 let activeRepairTaskId = '';
-const REPAIR_LOCK_FILE = '/tmp/openclaw-config-repair.lock';
+const REPAIR_LOCK_FILE = '/root/.openclaw/locks/config-repair.lock';
 
 function isTaskRunning(taskMap, taskId) {
   if (!taskId) return false;
@@ -1878,6 +1913,7 @@ function isRepairLockActive() {
 function acquireRepairLock() {
   if (isRepairLockActive()) return false;
   try {
+    fs.mkdirSync(path.dirname(REPAIR_LOCK_FILE), { recursive: true });
     fs.writeFileSync(REPAIR_LOCK_FILE, String(process.pid), { mode: 0o600 });
     return true;
   } catch {
@@ -1919,8 +1955,8 @@ function runOpenClawRepairTask() {
     appendRepairLog(task, '[repair] 正在执行 openclaw doctor --fix ...\n');
 
     let doctorOutput = '';
-    if (runCommandOk('command -v openclaw >/dev/null 2>&1 || test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -f /opt/openclaw-runtime/node_modules/openclaw/openclaw.mjs || test -f /opt/openclaw-cli/openclaw/openclaw.mjs', 1000)) {
-      const doctor = await runOpenClawCli('OPENCLAW_BIN="$(command -v openclaw 2>/dev/null || true)"; if [ -z "$OPENCLAW_BIN" ]; then for p in /root/.npm-global/bin/openclaw /usr/local/bin/openclaw /opt/openclaw-runtime/node_modules/openclaw/openclaw.mjs /opt/openclaw-cli/openclaw/openclaw.mjs; do if [ -x "$p" ] || [ -f "$p" ]; then OPENCLAW_BIN="$p"; break; fi; done; fi; if [ -z "$OPENCLAW_BIN" ]; then echo "openclaw not found"; exit 127; fi; "$OPENCLAW_BIN" doctor --fix 2>&1', 120000);
+    if (runCommandOk('command -v openclaw >/dev/null 2>&1 || test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -f /root/.openclaw/openclaw-source/openclaw.mjs', 1000)) {
+      const doctor = await runOpenClawCli('OPENCLAW_BIN="$(command -v openclaw 2>/dev/null || true)"; if [ -z "$OPENCLAW_BIN" ]; then for p in /root/.npm-global/bin/openclaw /usr/local/bin/openclaw /root/.openclaw/openclaw-source/openclaw.mjs; do if [ -x "$p" ] || [ -f "$p" ]; then OPENCLAW_BIN="$p"; break; fi; done; fi; if [ -z "$OPENCLAW_BIN" ]; then echo "openclaw not found"; exit 127; fi; "$OPENCLAW_BIN" doctor --fix 2>&1', 120000);
       doctorOutput = compactOutput(doctor.output || '');
       if (doctorOutput) appendRepairLog(task, `[repair] doctor 输出: ${doctorOutput}\n`);
       if (doctor.ok) appendRepairLog(task, '[repair] doctor --fix 执行完成。\n');
@@ -2079,8 +2115,18 @@ function getLastBackupAt() {
 }
 
 let gatewayRestartRunning = false;
-const OPENCLAW_OPERATION_LOCK_FILE = '/tmp/openclaw-operation.lock';
+const OPENCLAW_OPERATION_LOCK_FILE = `${OPENCLAW_LOCK_DIR}/operation.lock`;
 let openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
+
+function ensureOpenClawRuntimeStateDirs() {
+  try {
+    fs.mkdirSync(OPENCLAW_LOCK_DIR, { recursive: true });
+    fs.mkdirSync(`${OPENCLAW_STATE_ROOT}/logs`, { recursive: true });
+    fs.mkdirSync(`${OPENCLAW_STATE_ROOT}/cache/openclaw`, { recursive: true });
+  } catch {}
+}
+
+ensureOpenClawRuntimeStateDirs();
 
 function readOperationLockFromFile() {
   try {
@@ -2110,6 +2156,7 @@ function readOperationLockFromFile() {
 
 function writeOperationLock(state) {
   try {
+    fs.mkdirSync(path.dirname(OPENCLAW_OPERATION_LOCK_FILE), { recursive: true });
     if (!state || !state.type || state.type === 'idle') {
       if (fs.existsSync(OPENCLAW_OPERATION_LOCK_FILE)) fs.unlinkSync(OPENCLAW_OPERATION_LOCK_FILE);
       return;
@@ -2162,6 +2209,97 @@ function isOpenClawOperationBusy() {
   return !!(op.type && op.type !== 'idle');
 }
 
+const OPENCLAW_OPERATION_ESTIMATE_SEC = {
+  installing: 1200,
+  updating: 900,
+  restarting_gateway: 120,
+  repairing_config: 240
+};
+
+function buildOpenClawOperationProgress(state) {
+  const type = String(state?.type || 'idle');
+  const startedAt = Number(state?.startedAt || 0);
+  if (!type || type === 'idle' || !startedAt) {
+    return {
+      active: false,
+      type,
+      startedAt,
+      elapsedSec: 0,
+      totalSec: 0,
+      remainingSec: 0
+    };
+  }
+
+  const now = Date.now();
+  const elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const totalSec = Number(OPENCLAW_OPERATION_ESTIMATE_SEC[type] || 0);
+  const remainingSec = totalSec > 0 ? Math.max(0, totalSec - elapsedSec) : 0;
+
+  return {
+    active: true,
+    type,
+    startedAt,
+    elapsedSec,
+    totalSec,
+    remainingSec,
+    display: {
+      label: type === 'installing'
+        ? '安装中'
+        : type === 'updating'
+          ? '更新中'
+          : type === 'restarting_gateway'
+            ? 'Gateway 启动中'
+            : type === 'repairing_config'
+              ? '配置恢复中'
+              : '处理中'
+    }
+  };
+}
+
+function auditOpenClawImageDependencies() {
+  const requiredCommands = ['bash', 'node', 'npm', 'pnpm', 'git', 'curl', 'jq', 'tar', 'gzip'];
+  const commands = requiredCommands.map((name) => ({
+    name,
+    ok: runCommandOk(`command -v ${name} >/dev/null 2>&1`, 1200),
+    path: runCommandText(`command -v ${name} 2>/dev/null || true`, 1200)
+  }));
+
+  const files = [
+    '/usr/local/bin/openclaw-gateway-watchdog.sh',
+    '/usr/local/bin/start-services.sh',
+    '/opt/openclaw-web/server.js'
+  ].map((filePath) => ({
+    path: filePath,
+    ok: fs.existsSync(filePath)
+  }));
+
+  const dirs = [
+    '/root/.openclaw',
+    '/root/.openclaw/logs',
+    '/root/.openclaw/cache/openclaw',
+    '/root/.openclaw/locks'
+  ].map((dirPath) => ({
+    path: dirPath,
+    ok: fs.existsSync(dirPath)
+  }));
+
+  const missingCommands = commands.filter((item) => !item.ok).map((item) => item.name);
+  const missingFiles = files.filter((item) => !item.ok).map((item) => item.path);
+  const missingDirs = dirs.filter((item) => !item.ok).map((item) => item.path);
+  const ok = missingCommands.length === 0 && missingFiles.length === 0 && missingDirs.length === 0;
+
+  return {
+    ok,
+    commands,
+    files,
+    dirs,
+    missingCommands,
+    missingFiles,
+    missingDirs,
+    checkedAt: new Date().toISOString()
+  };
+}
+
 function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
   const safeRepo = parseGitHubRepo(repo) || OPENCLAW_SOURCE_REPO_DEFAULT;
   const safeTag = String(tag || '').trim();
@@ -2173,11 +2311,11 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     `OPENCLAW_REPO="${safeRepo}"`,
     `OPENCLAW_TAG="${safeTag.replace(/"/g, '')}"`,
     `OPENCLAW_TARBALL_URL="${safeTarball.replace(/"/g, '')}"`,
-    'WORK_BASE="/workspace/project"',
+    'WORK_BASE="/root/.openclaw"',
     'SRC_DIR="$WORK_BASE/openclaw"',
     'PERSIST_SRC_DIR="/root/.openclaw/openclaw-source"',
-    'TMP_BASE="/workspace/tmp/openclaw-build"',
-    'CACHE_BASE="/opt/openclaw-web/cache/openclaw"',
+    'TMP_BASE="/root/.openclaw/tmp/openclaw-build"',
+    'CACHE_BASE="/root/.openclaw/cache/openclaw"',
     'SRC_TMP="$TMP_BASE/src"',
     'CACHE_KEY="${OPENCLAW_REPO//\//_}--${OPENCLAW_TAG}.tar.gz"',
     'CACHE_TARBALL="$CACHE_BASE/$CACHE_KEY"',
@@ -2228,9 +2366,8 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     'else',
     '  echo "[openclaw] tarball 下载失败，回退 git clone tag..."',
     '  if ! command -v git >/dev/null 2>&1; then',
-    '    export DEBIAN_FRONTEND=noninteractive',
-    '    apt-get update -y',
-    '    apt-get install -y git ca-certificates',
+    '    echo "[openclaw] 缺少镜像内依赖: git（请重新构建镜像，不在运行时安装系统依赖）"',
+    '    exit 11',
     '  fi',
     '  CLONE_DIR="$SRC_TMP/repo-src"',
     '  rm -rf "$CLONE_DIR"',
@@ -2246,13 +2383,12 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  EXTRACT_DIR="$CLONE_DIR"',
     'fi',
     'if [ -z "$EXTRACT_DIR" ] || [ ! -d "$EXTRACT_DIR" ]; then echo "[openclaw] 未获取到源码目录"; exit 2; fi',
-    'if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then',
-    '  export DEBIAN_FRONTEND=noninteractive',
-    '  apt-get update -y',
-    '  apt-get install -y ca-certificates curl gnupg build-essential git',
-    '  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -',
-    '  apt-get install -y nodejs',
-    'fi',
+    'for bin in node npm pnpm git curl tar gzip; do',
+    '  if ! command -v "$bin" >/dev/null 2>&1; then',
+    '    echo "[openclaw] 缺少镜像内依赖: $bin（请重新构建镜像，不在运行时安装系统依赖）"',
+    '    exit 11',
+    '  fi',
+    'done',
     'cd "$EXTRACT_DIR"',
     'npm config set fetch-retries 5',
     'npm config set fetch-retry-mintimeout 2000',
@@ -2279,22 +2415,7 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  install_with_registry https://registry.npmmirror.com',
     'fi',
     'if command -v corepack >/dev/null 2>&1; then corepack disable >/dev/null 2>&1 || true; fi',
-    'install_pnpm() {',
-    '  local reg="$1"',
-    '  npm config set registry "$reg"',
-    '  local i=1',
-    '  while [ "$i" -le 4 ]; do',
-    '    npm install -g pnpm@10.23.0 --no-audit --no-fund && return 0',
-    '    echo "[openclaw] pnpm 安装失败(registry=$reg, attempt=$i)，重试..."',
-    '    npm cache verify >/dev/null 2>&1 || true',
-    '    sleep 2',
-    '    i=$((i + 1))',
-    '  done',
-    '  return 1',
-    '}',
-    'if ! command -v pnpm >/dev/null 2>&1; then',
-    '  install_pnpm https://registry.npmjs.org || install_pnpm https://registry.npmmirror.com',
-    'fi',
+    'if ! command -v pnpm >/dev/null 2>&1; then echo "[openclaw] 缺少镜像内依赖: pnpm"; exit 11; fi',
     'PNPM_BIN_DIR="$(npm prefix -g 2>/dev/null)/bin"',
     'export PATH="$PNPM_BIN_DIR:/root/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"',
     'if [ -x "$PNPM_BIN_DIR/pnpm" ]; then ln -sf "$PNPM_BIN_DIR/pnpm" /usr/local/bin/pnpm 2>/dev/null || true; fi',
@@ -2327,10 +2448,34 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     'ln -sfn "$PERSIST_SRC_DIR" "$SRC_DIR"',
     'if [ ! -f "$SRC_DIR/openclaw.mjs" ] && [ -f "$SRC_DIR/dist/openclaw.mjs" ]; then ln -sf "$SRC_DIR/dist/openclaw.mjs" "$SRC_DIR/openclaw.mjs"; fi',
     'if [ ! -f "$SRC_DIR/openclaw.mjs" ]; then echo "[openclaw] 编译产物缺失: $SRC_DIR/openclaw.mjs"; exit 4; fi',
+    'if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ]; then',
+    '  if [ -f "$SRC_DIR/dist/index.js" ]; then ln -sfn index.js "$SRC_DIR/dist/entry.js"; fi',
+    '  if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ] && [ -f "$SRC_DIR/dist/index.mjs" ]; then ln -sfn index.mjs "$SRC_DIR/dist/entry.mjs"; fi',
+    'fi',
+    'if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ]; then echo "[openclaw] 编译产物缺失: $SRC_DIR/dist/entry.(m)js"; exit 4; fi',
     'mkdir -p /root/.openclaw',
     'printf "{\\n  \\\"repo\\\": \\\"%s\\\",\\n  \\\"tag\\\": \\\"%s\\\",\\n  \\\"tarballUrl\\\": \\\"%s\\\",\\n  \\\"installedAt\\\": \\\"%s\\\"\\n}\\n" "$OPENCLAW_REPO" "$OPENCLAW_TAG" "$OPENCLAW_TARBALL_URL" "$(date -Iseconds)" > /root/.openclaw/openclaw-source-install.json',
     'echo "[openclaw] source build install completed: $OPENCLAW_REPO@$OPENCLAW_TAG"',
     'node "$SRC_DIR/openclaw.mjs" --version 2>/dev/null || node "$SRC_DIR/openclaw.mjs" -v 2>/dev/null || true'
+  ].join('\n');
+}
+
+function buildOpenClawPreferredInstallCommand(release) {
+  const npmCmd = buildOpenClawNpmInstallCommand();
+  const sourceCmd = buildOpenClawSourceInstallCommand(release);
+  return [
+    'set -euo pipefail',
+    'echo "[openclaw] 优先使用预构建 npm 包安装（官方推荐路径）..."',
+    'if (',
+    npmCmd,
+    '); then',
+    '  echo "[openclaw] 预构建安装完成。"',
+    '  rm -f /root/.openclaw/openclaw-source-install.json >/dev/null 2>&1 || true',
+    'else',
+    '  rc=$?',
+    '  echo "[openclaw] 预构建安装失败(exit=${rc})，回退源码构建安装..."',
+    sourceCmd,
+    'fi'
   ].join('\n');
 }
 
@@ -2355,13 +2500,17 @@ app.get('/api/openclaw', async (req, res) => {
 
     const invalidConfigKeys = detectInvalidConfigKeysFromText(readGatewayLogTail(300));
 
-    const gatewayRunning = runCommandOk('curl -sS --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health >/dev/null 2>&1', 2500)
+    const gatewayHealthCodeText = runCommandText('curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health || true', 3000);
+    const gatewayHealthCode = Number.parseInt(String(gatewayHealthCodeText || '').trim(), 10) || 0;
+    const gatewayRunning = gatewayHealthCode === 200;
+    const gatewayProcessRunning = runCommandOk('pgrep -f "[o]penclaw.*gateway" >/dev/null 2>&1', 1200)
       || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
     const gatewayWatchdogRunning = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200);
 
     const installTaskRunning = isTaskRunning(installLogs, activeInstallTaskId);
     const repairTaskRunning = isTaskRunning(repairLogs, activeRepairTaskId) || isRepairLockActive();
     const operationState = getOpenClawOperationState();
+    const operationProgress = buildOpenClawOperationProgress(operationState);
     const lastBackupAt = getLastBackupAt();
     const lastRollbackAt = getLastRollbackAtFromWatchdog();
 
@@ -2372,6 +2521,8 @@ app.get('/api/openclaw', async (req, res) => {
       hasUpdate,
       updateCheckError,
       gatewayRunning,
+      gatewayProcessRunning,
+      gatewayHealthCode,
       gatewayWatchdogRunning,
       invalidConfigKeys,
       installSource: detected.source,
@@ -2379,6 +2530,7 @@ app.get('/api/openclaw', async (req, res) => {
       repairTaskRunning,
       gatewayRestartRunning,
       operationState,
+      operationProgress,
       lastBackupAt,
       lastRollbackAt
     });
@@ -2514,8 +2666,8 @@ app.post('/api/openclaw/install', async (req, res) => {
 
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
-    const command = buildOpenClawSourceInstallCommand(release);
-    const taskId = runOpenClawTask(command, `从 GitHub Release 安装 OpenClaw (${release.tag})`, 'installing');
+    const command = buildOpenClawPreferredInstallCommand(release);
+    const taskId = runOpenClawTask(command, `安装 OpenClaw（预构建优先，失败回退源码）(${release.tag})`, 'installing');
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
@@ -2542,15 +2694,18 @@ app.get('/api/openclaw/install/:taskId', (req, res) => {
 function buildOpenClawNpmInstallCommand() {
   return [
     'set -e',
-    'if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then',
-    '  export DEBIAN_FRONTEND=noninteractive',
-    '  apt-get update -y',
-    '  apt-get install -y ca-certificates curl gnupg',
-    '  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -',
-    '  apt-get install -y nodejs',
-    'fi',
+    'for bin in node npm; do',
+    '  if ! command -v "$bin" >/dev/null 2>&1; then',
+    '    echo "[openclaw] 缺少镜像内依赖: $bin（请重新构建镜像，不在运行时安装系统依赖）"',
+    '    exit 11',
+    '  fi',
+    'done',
     'npm config set registry https://registry.npmmirror.com',
     'NPM_PREFIX="$(npm config get prefix 2>/dev/null || echo /usr/local)"',
+    'OPENCLAW_STATE_ROOT="/root/.openclaw"',
+    'PERSIST_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source"',
+    'WORK_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw"',
+    'mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$OPENCLAW_STATE_ROOT/cache/openclaw" "$OPENCLAW_STATE_ROOT/locks"',
     'OPENCLAW_LIB_DIR="${NPM_PREFIX}/lib/node_modules"',
     'OPENCLAW_BIN="${NPM_PREFIX}/bin/openclaw"',
     'MIRROR_LATEST="$(npm view openclaw version --registry=https://registry.npmmirror.com 2>/dev/null || true)"',
@@ -2578,6 +2733,17 @@ function buildOpenClawNpmInstallCommand() {
     '  *) export PATH="$PATH:${NPM_PREFIX}/bin" ;;',
     'esac',
     'CURRENT_VER=""',
+    'NPM_ROOT="$(npm root -g 2>/dev/null || true)"',
+    'OPENCLAW_PKG_DIR="$NPM_ROOT/openclaw"',
+    'if [ -d "$OPENCLAW_PKG_DIR" ]; then',
+    '  rm -rf "$PERSIST_SRC_DIR"',
+    '  mkdir -p "$PERSIST_SRC_DIR"',
+    '  cp -a "$OPENCLAW_PKG_DIR"/. "$PERSIST_SRC_DIR"/',
+    '  ln -sfn "$PERSIST_SRC_DIR" "$WORK_SRC_DIR"',
+    '  if [ ! -f "$PERSIST_SRC_DIR/openclaw.mjs" ] && [ -f "$PERSIST_SRC_DIR/dist/openclaw.mjs" ]; then',
+    '    ln -sfn "$PERSIST_SRC_DIR/dist/openclaw.mjs" "$PERSIST_SRC_DIR/openclaw.mjs"',
+    '  fi',
+    'fi',
     'if command -v openclaw >/dev/null 2>&1; then',
     '  CURRENT_VER="$(openclaw -v 2>/dev/null || openclaw --version 2>/dev/null || true)"',
     'elif [ -x "$OPENCLAW_BIN" ]; then',
@@ -2618,8 +2784,8 @@ app.post('/api/openclaw/update', async (req, res) => {
 
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
-    const command = buildOpenClawSourceInstallCommand(release);
-    const taskId = runOpenClawTask(command, `从 GitHub Release 更新 OpenClaw (${release.tag})`, 'updating');
+    const command = buildOpenClawPreferredInstallCommand(release);
+    const taskId = runOpenClawTask(command, `更新 OpenClaw（预构建优先，失败回退源码）(${release.tag})`, 'updating');
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
@@ -2629,8 +2795,20 @@ app.post('/api/openclaw/update', async (req, res) => {
   }
 });
 
+app.get('/api/openclaw/dependencies', (req, res) => {
+  try {
+    ensureOpenClawRuntimeStateDirs();
+    const audit = auditOpenClawImageDependencies();
+    res.json({ success: true, ...audit });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || '依赖审计失败' });
+  }
+});
+
 app.post('/api/openclaw/start', (req, res) => {
+  console.log('[openclaw][start] restart requested');
   if (gatewayRestartRunning) {
+    console.log('[openclaw][start] restart already running, returning reuse response');
     return res.json({
       success: true,
       message: 'Gateway 重启任务已在进行中，请稍候',
@@ -2639,6 +2817,7 @@ app.post('/api/openclaw/start', (req, res) => {
   }
   const opState = getOpenClawOperationState();
   if (opState.type !== 'idle' && opState.type !== 'restarting_gateway') {
+    console.log(`[openclaw][start] blocked by operation state: ${opState.type}`);
     return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
   }
   gatewayRestartRunning = true;
@@ -2648,9 +2827,11 @@ app.post('/api/openclaw/start', (req, res) => {
     clearOpenClawOperationState('restarting_gateway');
     const startupLogs = readOpenClawGatewayLogs(160, { includeWatchdog: true });
     if (!err) {
+      console.log('[openclaw][start] gateway restart request finished, watchdog should relaunch');
       return res.json({ success: true, message: 'Gateway 进程已终止，watchdog 将自动拉起', logs: startupLogs });
     }
     const detail = compactOutput(stderr || stdout || err.message || '');
+    console.log(`[openclaw][start] restart failed: ${detail || 'unknown error'}`);
     if (String(detail || '').includes('exit 21')) {
       return res.json({ success: false, error: 'watchdog 脚本不存在，无法自动拉起 Gateway', logs: startupLogs });
     }

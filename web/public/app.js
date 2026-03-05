@@ -682,12 +682,18 @@ let ocInstallRunning = false;
 let ocStartRunning = false;
 let ocInstalled = false;
 let ocGatewayRunning = false;
+let ocHasUpdate = false;
+let ocLatestKnown = false;
 let ocInstallTaskRunningRemote = false;
 let ocRepairTaskRunningRemote = false;
 let ocGatewayRestartRunningRemote = false;
 let ocLastGatewaySnapshot = '';
 let ocGatewayLogPollTimer = null;
 let ocGatewayLogPollRunning = false;
+let ocLogsBurstTimer = null;
+let ocStatusTicker = null;
+let ocStatusBaseText = '更新状态：自动检查中';
+let ocStatusProgress = null;
 
 function syncOpenClawButtons(){
   const installBtn = $('btn-oc-install');
@@ -698,7 +704,8 @@ function syncOpenClawButtons(){
   const restartBusy = !!ocStartRunning || !!ocGatewayRestartRunningRemote;
   const anyBusy = installBusy || repairBusy || restartBusy;
   const canRestartGateway = !!ocInstalled || !!ocGatewayRunning;
-  if (installBtn) installBtn.disabled = anyBusy;
+  const noUpdateNeeded = !!ocInstalled && !!ocLatestKnown && !ocHasUpdate;
+  if (installBtn) installBtn.disabled = anyBusy || noUpdateNeeded;
   if (repairBtn) repairBtn.disabled = installBusy || repairBusy;
   if (startBtn) startBtn.disabled = anyBusy || !canRestartGateway;
 }
@@ -721,6 +728,46 @@ function appendOcLogBlock(text){
   const chunk = String(text || '').trim();
   if (!chunk) return;
   appendColored(logEl, `${chunk}\n`, 6000, shouldAutoScroll(logEl));
+}
+
+function formatRemainingTime(totalSec){
+  const sec = Math.max(0, Number(totalSec || 0) | 0);
+  const mm = Math.floor(sec / 60);
+  const ss = sec % 60;
+  return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
+function renderOpenClawStatusTicker(){
+  const el = $('oc-update-status');
+  if (!el) return;
+  let text = ocStatusBaseText || '更新状态：自动检查中';
+  const p = ocStatusProgress;
+  if (p && p.active && Number(p.totalSec || 0) > 0 && Number(p.startedAt || 0) > 0) {
+    const elapsed = Math.max(0, Math.floor((Date.now() - Number(p.startedAt || 0)) / 1000));
+    const remain = Math.max(0, Number(p.totalSec || 0) - elapsed);
+    text += `（已耗时 ${formatRemainingTime(elapsed)} / 预计剩余 ${formatRemainingTime(remain)}）`;
+  } else if (p && p.active && Number(p.startedAt || 0) > 0) {
+    const elapsed = Math.max(0, Math.floor((Date.now() - Number(p.startedAt || 0)) / 1000));
+    text += `（已耗时 ${formatRemainingTime(elapsed)}）`;
+  }
+  el.textContent = text;
+}
+
+function setOpenClawStatusLine(baseText, progress){
+  ocStatusBaseText = String(baseText || '更新状态：自动检查中');
+  ocStatusProgress = progress && progress.active ? {
+    active: true,
+    totalSec: Number(progress.totalSec || 0),
+    startedAt: Number(progress.startedAt || 0)
+  } : null;
+  if (ocStatusTicker) {
+    clearInterval(ocStatusTicker);
+    ocStatusTicker = null;
+  }
+  renderOpenClawStatusTicker();
+  if (ocStatusProgress && ocStatusProgress.totalSec > 0) {
+    ocStatusTicker = setInterval(renderOpenClawStatusTicker, 1000);
+  }
 }
 
 async function loadGatewayStartupLogs(lines = 160){
@@ -751,6 +798,31 @@ function stopGatewayStartupLogPulls(){
   ocGatewayLogPollRunning = false;
 }
 
+function applyGatewayRestartingUi(){
+  if ($('oc-gateway')) {
+    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>启动中`;
+  }
+  setOpenClawStatusLine('更新状态：Gateway 启动中', { active: true, startedAt: Date.now(), totalSec: 60 });
+}
+
+function triggerLogsBurstPolling(durationMs = 18000, intervalMs = 1200){
+  if (ocLogsBurstTimer) {
+    clearInterval(ocLogsBurstTimer);
+    ocLogsBurstTimer = null;
+  }
+  const startedAt = Date.now();
+  const tick = async () => {
+    if ((Date.now() - startedAt) > durationMs) {
+      if (ocLogsBurstTimer) clearInterval(ocLogsBurstTimer);
+      ocLogsBurstTimer = null;
+      return;
+    }
+    await refreshLogs();
+  };
+  void tick();
+  ocLogsBurstTimer = setInterval(() => { void tick(); }, Math.max(600, intervalMs));
+}
+
 function scheduleGatewayStartupLogPulls(lines = 200){
   stopGatewayStartupLogPulls();
   let tries = 0;
@@ -765,6 +837,7 @@ function scheduleGatewayStartupLogPulls(lines = 200){
       if ((st && !st.error && st.gatewayRunning) || tries >= maxTries) {
         stopGatewayStartupLogPulls();
       }
+      void refreshLogs();
     } finally {
       ocGatewayLogPollRunning = false;
     }
@@ -789,13 +862,17 @@ async function refreshOpenClaw(opts = {}){
 
   if (!d || d.error || !Object.prototype.hasOwnProperty.call(d, 'installed')) {
     const detail = lastErr || '状态读取失败';
-    if ($('oc-update-status')) {
-      $('oc-update-status').textContent = `更新状态：读取失败（${detail}）`;
-    }
+    setOpenClawStatusLine(`更新状态：读取失败（${detail}）`, null);
     return { error: detail };
   }
 
   const opType = String(d?.operationState?.type || 'idle');
+  const opProgressRaw = d?.operationProgress && d.operationProgress.active ? d.operationProgress : null;
+  const opProgress = opProgressRaw ? {
+    active: true,
+    startedAt: Number(opProgressRaw.startedAt || d?.operationState?.startedAt || Date.now()),
+    totalSec: Number(opProgressRaw.totalSec || 0)
+  } : null;
   const installBusyNow = !!ocInstallRunning || !!d.installTaskRunning || opType === 'installing' || opType === 'updating';
   const restartBusyNow = !!ocStartRunning || !!d.gatewayRestartRunning || opType === 'restarting_gateway';
   const repairBusyNow = !!ocRepairRunning || !!d.repairTaskRunning || opType === 'repairing_config';
@@ -822,14 +899,20 @@ async function refreshOpenClaw(opts = {}){
   }
   if (restartBusyNow) {
     $('oc-gateway').innerHTML = `<span class="pulse offline"></span>启动中`;
+  } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
+    $('oc-gateway').innerHTML = `<span class="pulse offline"></span>已启动（健康异常）`;
   } else {
     $('oc-gateway').innerHTML = d.gatewayRunning
       ? `<span class="pulse online"></span>运行中`
       : `<span class="pulse offline"></span>未启动`;
   }
 
+  const displayLatestVersion = d.latestVersion || ((d.installed && d.version && !d.hasUpdate) ? d.version : '');
+
   ocInstalled = !!d.installed;
   ocGatewayRunning = !!d.gatewayRunning;
+  ocHasUpdate = !!d.hasUpdate;
+  ocLatestKnown = !!displayLatestVersion;
   ocInstallTaskRunningRemote = !!d.installTaskRunning;
   ocRepairTaskRunningRemote = !!d.repairTaskRunning;
   ocGatewayRestartRunningRemote = !!d.gatewayRestartRunning;
@@ -838,42 +921,43 @@ async function refreshOpenClaw(opts = {}){
   if (actionBtn) {
     if (installBusyNow && !d.installed) actionBtn.textContent = '安装中...';
     else if (installBusyNow && d.installed) actionBtn.textContent = '更新中...';
+    else if (d.installed && !d.hasUpdate) actionBtn.textContent = '已是最新';
     else actionBtn.textContent = d.installed ? '更新' : '安装';
   }
 
   if ($('oc-current-ver')) $('oc-current-ver').textContent = d.version || '—';
   if ($('oc-latest-ver')) {
-    if (d.latestVersion) {
-      $('oc-latest-ver').textContent = d.latestVersion;
+    if (displayLatestVersion) {
+      $('oc-latest-ver').textContent = displayLatestVersion;
     } else if (d.updateCheckError) {
       $('oc-latest-ver').textContent = `检测失败（${d.updateCheckError}）`;
     } else {
       $('oc-latest-ver').textContent = '检测中';
     }
   }
-  if ($('oc-update-status')) {
-    const invalidKeys = Array.isArray(d.invalidConfigKeys) ? d.invalidConfigKeys : [];
-    if (installBusyNow && !d.installed) {
-      $('oc-update-status').textContent = '更新状态：安装中';
-    } else if (installBusyNow && d.installed) {
-      $('oc-update-status').textContent = '更新状态：更新中';
-    } else if (restartBusyNow) {
-      $('oc-update-status').textContent = '更新状态：Gateway 启动中';
-    } else if (repairBusyNow) {
-      $('oc-update-status').textContent = '更新状态：配置恢复中';
-    } else if (invalidKeys.length > 0) {
-      $('oc-update-status').textContent = `配置状态：检测到无效 key（${invalidKeys.join(', ')}），请点击“配置恢复”`;
-    } else if (!d.installed) {
-      $('oc-update-status').textContent = '更新状态：未安装，可执行安装';
-    } else if (d.updateCheckError) {
-      $('oc-update-status').textContent = `更新状态：检查失败（${d.updateCheckError}）`;
-    } else if (d.hasUpdate) {
-      $('oc-update-status').textContent = '更新状态：发现新版本，可更新';
-    } else if (d.latestVersion) {
-      $('oc-update-status').textContent = '更新状态：已是最新版本';
-    } else {
-      $('oc-update-status').textContent = '更新状态：自动检查中';
-    }
+  const invalidKeys = Array.isArray(d.invalidConfigKeys) ? d.invalidConfigKeys : [];
+  if (installBusyNow && !d.installed) {
+    setOpenClawStatusLine('更新状态：安装中', opProgress);
+  } else if (installBusyNow && d.installed) {
+    setOpenClawStatusLine('更新状态：更新中', opProgress);
+  } else if (restartBusyNow) {
+    setOpenClawStatusLine('更新状态：Gateway 启动中（正在等待健康检查）', opProgress);
+  } else if (repairBusyNow) {
+    setOpenClawStatusLine('更新状态：配置恢复中', opProgress);
+  } else if (invalidKeys.length > 0) {
+    setOpenClawStatusLine(`配置状态：检测到无效 key（${invalidKeys.join(', ')}），请点击“配置恢复”`, null);
+  } else if (!d.installed) {
+    setOpenClawStatusLine('更新状态：未安装，可执行安装', null);
+  } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
+    setOpenClawStatusLine('Gateway 状态：已启动（健康异常），请查看下方日志', null);
+  } else if (d.updateCheckError) {
+    setOpenClawStatusLine(`更新状态：检查失败（${d.updateCheckError}）`, null);
+  } else if (d.hasUpdate) {
+    setOpenClawStatusLine('更新状态：发现新版本，可更新', null);
+  } else if (d.installed) {
+    setOpenClawStatusLine('更新状态：已是最新版本', null);
+  } else {
+    setOpenClawStatusLine('更新状态：自动检查中', null);
   }
 
   syncOpenClawButtons();
@@ -1200,18 +1284,23 @@ $('btn-oc-start').addEventListener('click', async ()=>{
     return;
   }
   ocStartRunning = true;
+  ocGatewayRestartRunningRemote = true;
+  applyGatewayRestartingUi();
   syncOpenClawButtons();
   appendOcLogLine('[gateway] 正在提交重启请求...');
   ocLastGatewaySnapshot = '';
+  let restartAccepted = false;
   try {
     const r = await api('/api/openclaw/start', { method:'POST' });
     if (r.success) {
+      restartAccepted = true;
       appendOcLogLine(`[gateway] ${r.message || '重启请求已提交'}`);
       appendOcLogLine('[gateway] 请稍候 2-5 秒，状态将自动刷新。');
       if (r.logs) {
         appendOcLogBlock(r.logs);
         ocLastGatewaySnapshot = String(r.logs || '').trim() || ocLastGatewaySnapshot;
       }
+      triggerLogsBurstPolling(22000, 1200);
       scheduleGatewayStartupLogPulls(220);
       toast('已触发重启', r.message || 'Gateway 正在重启，请稍候');
     } else {
@@ -1223,13 +1312,18 @@ $('btn-oc-start').addEventListener('click', async ()=>{
       if (/Unrecognized key|Invalid config|配置无效/i.test(String(r.error || ''))) {
         appendOcLogLine('[gateway] 检测到配置无效，请点击“配置恢复”按钮后重试。');
       }
+      ocGatewayRestartRunningRemote = false;
       toast('重启失败', r.error || '请查看日志');
     }
   } finally {
+    if (!restartAccepted) {
+      ocGatewayRestartRunningRemote = false;
+    }
     ocStartRunning = false;
     syncOpenClawButtons();
   }
-  setTimeout(refreshOpenClaw, 2500);
+  setTimeout(() => refreshOpenClaw({ retries: 0 }), 200);
+  setTimeout(refreshOpenClaw, 1800);
 });
 
 // ------------------------

@@ -133,13 +133,13 @@ fi
 
 CONFIG_FILE="/root/.openclaw/docker-config.json"
 LOG_DIR="/root/.openclaw/logs"
-mkdir -p "$LOG_DIR" /root/.openclaw /workspace/tmp
+mkdir -p "$LOG_DIR" /root/.openclaw
 
 # ── 恢复 OpenClaw 源码安装目录（持久化在 /root 下）──
 PERSIST_OPENCLAW_SRC="/root/.openclaw/openclaw-source"
-WORK_OPENCLAW_SRC="/workspace/project/openclaw"
+WORK_OPENCLAW_SRC="/root/.openclaw/openclaw"
 if [ -f "$PERSIST_OPENCLAW_SRC/openclaw.mjs" ]; then
-    mkdir -p /workspace/project
+    mkdir -p /root/.openclaw
     if [ -L "$WORK_OPENCLAW_SRC" ] || [ ! -e "$WORK_OPENCLAW_SRC" ]; then
         ln -sfn "$PERSIST_OPENCLAW_SRC" "$WORK_OPENCLAW_SRC"
         echo "[start-services] Restored OpenClaw source symlink: $WORK_OPENCLAW_SRC -> $PERSIST_OPENCLAW_SRC"
@@ -443,10 +443,32 @@ NOVNC_PID=""
 CHROME_PID=""
 CADDY_PID=""
 GATEWAY_WATCHDOG_SCRIPT="/usr/local/bin/openclaw-gateway-watchdog.sh"
-OPENCLAW_RUNTIME_JS="/opt/openclaw-runtime/node_modules/openclaw/openclaw.mjs"
+OPENCLAW_STATE_ROOT="/root/.openclaw"
+OPENCLAW_SOURCE_DIR="$OPENCLAW_STATE_ROOT/openclaw-source"
+OPENCLAW_RUNTIME_JS="$OPENCLAW_SOURCE_DIR/openclaw.mjs"
+
+ensure_openclaw_source_from_global_package() {
+    mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$OPENCLAW_STATE_ROOT/cache/openclaw" "$OPENCLAW_STATE_ROOT/locks" "$OPENCLAW_STATE_ROOT/home"
+    if [ -f "$OPENCLAW_SOURCE_DIR/openclaw.mjs" ]; then
+        return 0
+    fi
+    if ! command -v npm >/dev/null 2>&1; then
+        return 0
+    fi
+    local npm_root pkg_dir
+    npm_root=$(npm root -g 2>/dev/null || true)
+    pkg_dir="$npm_root/openclaw"
+    if [ -d "$pkg_dir" ] && [ -f "$pkg_dir/openclaw.mjs" ]; then
+        echo "[start-services] Seeding OpenClaw source from global npm package into $OPENCLAW_SOURCE_DIR"
+        rm -rf "$OPENCLAW_SOURCE_DIR"
+        mkdir -p "$OPENCLAW_SOURCE_DIR"
+        cp -a "$pkg_dir"/. "$OPENCLAW_SOURCE_DIR"/
+        ln -sfn "$OPENCLAW_SOURCE_DIR" "$OPENCLAW_STATE_ROOT/openclaw"
+    fi
+}
 
 has_openclaw_cli() {
-    command -v openclaw >/dev/null 2>&1 || [ -x "/root/.npm-global/bin/openclaw" ] || [ -x "/usr/local/bin/openclaw" ] || { command -v node >/dev/null 2>&1 && [ -f "$OPENCLAW_RUNTIME_JS" ]; }
+    [ -f "$OPENCLAW_RUNTIME_JS" ] || command -v openclaw >/dev/null 2>&1 || [ -x "/root/.npm-global/bin/openclaw" ] || [ -x "/usr/local/bin/openclaw" ]
 }
 
 refresh_openclaw_availability() {
@@ -461,6 +483,7 @@ HAS_OPENCLAW="false"
 refresh_openclaw_availability
 
 start_gateway() {
+    ensure_openclaw_source_from_global_package
     refresh_openclaw_availability
     if [ "$HAS_OPENCLAW" != "true" ]; then
         echo "[start-services] openclaw CLI not installed, skipping Gateway"
@@ -468,14 +491,15 @@ start_gateway() {
     fi
     echo "[start-services] Starting OpenClaw Gateway (foreground mode)..."
     if command -v node >/dev/null 2>&1 && [ -f "$OPENCLAW_RUNTIME_JS" ]; then
-        nohup env HOME=/opt/openclaw-home node "$OPENCLAW_RUNTIME_JS" gateway run --allow-unconfigured --force >> "$LOG_DIR/gateway.log" 2>&1 &
+        nohup env HOME="$OPENCLAW_STATE_ROOT/home" node "$OPENCLAW_RUNTIME_JS" gateway run --allow-unconfigured --force >> "$LOG_DIR/openclaw-gateway.log" 2>&1 &
     else
-        nohup openclaw gateway run --allow-unconfigured --force >> "$LOG_DIR/gateway.log" 2>&1 &
+        nohup env HOME="$OPENCLAW_STATE_ROOT/home" openclaw gateway run --allow-unconfigured --force >> "$LOG_DIR/openclaw-gateway.log" 2>&1 &
     fi
     GATEWAY_PID=$!
 }
 
 start_gateway_watchdog() {
+    ensure_openclaw_source_from_global_package
     if [ ! -x "$GATEWAY_WATCHDOG_SCRIPT" ]; then
         echo "[start-services] watchdog script missing ($GATEWAY_WATCHDOG_SCRIPT), fallback to direct gateway start"
         start_gateway

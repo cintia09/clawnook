@@ -7,6 +7,7 @@ set -u
 
 LOG_DIR="/root/.openclaw/logs"
 mkdir -p "$LOG_DIR"
+mkdir -p "/root/.openclaw/locks"
 LOG_FILE="$LOG_DIR/gateway-watchdog.log"
 
 CHECK_INTERVAL=30
@@ -21,13 +22,13 @@ HOME="${HOME:-/root}"
 export HOME
 export DISPLAY=:99
 
-SOURCE_ROOT="/workspace/project/openclaw"
-GATEWAY_CMD="node --experimental-sqlite /workspace/project/openclaw/openclaw.mjs gateway run --force --allow-unconfigured"
-GATEWAY_LOG="/workspace/tmp/openclaw-gateway.log"
+SOURCE_ROOT="/root/.openclaw/openclaw-source"
+GATEWAY_CMD="node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs gateway run --force --allow-unconfigured"
+GATEWAY_LOG="/root/.openclaw/logs/openclaw-gateway.log"
 
-LOCK_DIR="/tmp/openclaw-gateway-watchdog.lock"
+LOCK_DIR="/root/.openclaw/locks/gateway-watchdog.lock"
 LOCK_PID_FILE="$LOCK_DIR/pid"
-LOCK_FILE="/tmp/openclaw-gateway-watchdog.lockfile"
+LOCK_FILE="/root/.openclaw/locks/gateway-watchdog.lockfile"
 
 CONFIG_FILE="/root/.openclaw/openclaw.json"
 BACKUP_DIR="/root/.openclaw/config-backups"

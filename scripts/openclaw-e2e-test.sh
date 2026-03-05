@@ -221,21 +221,21 @@ else
   fail "gateway logs endpoint failed: $(cat /tmp/oc-gateway-logs.err 2>/dev/null || true)"
 fi
 
-log "T11: runtime log dir self-heal after /workspace/tmp removal"
+log "T11: runtime log dir self-heal after runtime-dir removal"
 MARKER="[t11-marker] $(date +%s)"
 echo "$MARKER" >> /root/.openclaw/logs/gateway-watchdog.log 2>/dev/null || true
 if [ "$CHECK_ONLY_COMMAND_CHAIN" = "1" ]; then
   pass "skip self-heal check in command-chain-only mode"
 else
-  rm -rf /workspace/tmp 2>/dev/null || true
+  rm -f /root/.openclaw/logs/openclaw-gateway.log 2>/dev/null || true
   if api POST /api/openclaw/start >/tmp/oc-start-2.json 2>/tmp/oc-start-2.err; then
     for _ in $(seq 1 40); do
-      if [ -f /workspace/tmp/openclaw-gateway.log ] || [ -f /root/.openclaw/logs/gateway.log ]; then
+      if [ -f /root/.openclaw/logs/openclaw-gateway.log ] || [ -f /root/.openclaw/logs/gateway.log ]; then
         break
       fi
       sleep 2
     done
-    if [ -f /workspace/tmp/openclaw-gateway.log ] || [ -f /root/.openclaw/logs/gateway.log ]; then
+    if [ -f /root/.openclaw/logs/openclaw-gateway.log ] || [ -f /root/.openclaw/logs/gateway.log ]; then
       pass "gateway log path self-healed after tmp removal"
     else
       fail "gateway log path not restored after tmp removal"
