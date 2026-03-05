@@ -135,6 +135,27 @@ CONFIG_FILE="/root/.openclaw/docker-config.json"
 LOG_DIR="/root/.openclaw/logs"
 mkdir -p "$LOG_DIR" /root/.openclaw
 
+# 确保容器内本地环回访问不走代理（与 Windows 行为对齐）
+ensure_local_no_proxy() {
+    local merged="${no_proxy:-${NO_PROXY:-}}"
+    local host
+    for host in 127.0.0.1 localhost ::1; do
+        case ",${merged}," in
+            *",${host},"*) ;;
+            *)
+                if [ -n "$merged" ]; then
+                    merged="${merged},${host}"
+                else
+                    merged="${host}"
+                fi
+                ;;
+        esac
+    done
+    export no_proxy="$merged"
+    export NO_PROXY="$merged"
+}
+ensure_local_no_proxy
+
 # ── 恢复 OpenClaw 源码安装目录（持久化在 /root 下）──
 PERSIST_OPENCLAW_SRC="/root/.openclaw/openclaw-source"
 WORK_OPENCLAW_SRC="/root/.openclaw/openclaw"
@@ -586,7 +607,7 @@ start_web_panel() {
 
 web_is_healthy() {
     local web_code
-    web_code=$(curl -sS --connect-timeout 2 --max-time 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ 2>/dev/null)
+    web_code=$(curl --noproxy '*' -sS --connect-timeout 2 --max-time 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ 2>/dev/null)
     if [ "$web_code" = "200" ] || [ "$web_code" = "302" ] || [ "$web_code" = "401" ]; then
         return 0
     fi
@@ -596,7 +617,7 @@ web_is_healthy() {
 gateway_is_healthy() {
     # 优先用健康检查接口判断（进程存在但卡死也能识别）
     local code
-    code=$(curl -sS --connect-timeout 2 --max-time 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:18789/health 2>/dev/null)
+    code=$(curl --noproxy '*' -sS --connect-timeout 2 --max-time 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:18789/health 2>/dev/null)
     if [ "$code" = "200" ] || [ "$code" = "401" ] || [ "$code" = "403" ]; then
         return 0
     fi
@@ -639,7 +660,7 @@ start_web_panel
 
 # 等待 Web 面板就绪（仅用于日志诊断，不阻塞启动）
 for i in 1 2 3 4 5 6 7 8 9 10; do
-    web_code=$(curl -sS --connect-timeout 2 --max-time 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ 2>/dev/null)
+    web_code=$(curl --noproxy '*' -sS --connect-timeout 2 --max-time 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ 2>/dev/null)
     if [ "$web_code" = "200" ] || [ "$web_code" = "302" ] || [ "$web_code" = "401" ]; then
         echo "[start-services] Web panel healthy (attempt $i, code=$web_code)"
         break
