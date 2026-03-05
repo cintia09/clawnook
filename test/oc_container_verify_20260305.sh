@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+TMP_DIR="${TMP_DIR:-/root/.openclaw/test-tmp}"
+mkdir -p "$TMP_DIR"
 
 echo '== phase1: build control-ui in container source =='
 SRC='/root/.openclaw/openclaw-source'
@@ -12,14 +14,14 @@ else
   else
     echo 'control_ui_exists=0 -> building...'
     if command -v pnpm >/dev/null 2>&1; then
-      pnpm ui:build >/tmp/oc_ui_build.log 2>&1 || npm run ui:build >>/tmp/oc_ui_build.log 2>&1 || true
+      pnpm ui:build >"$TMP_DIR/oc_ui_build.log" 2>&1 || npm run ui:build >>"$TMP_DIR/oc_ui_build.log" 2>&1 || true
     else
-      npm run ui:build >/tmp/oc_ui_build.log 2>&1 || true
+      npm run ui:build >"$TMP_DIR/oc_ui_build.log" 2>&1 || true
     fi
     if [ ! -f dist/control-ui/index.html ] && [ -d control-ui ] && [ -f control-ui/package.json ]; then
       cd control-ui
-      (pnpm install --prefer-offline --no-frozen-lockfile || npm install --no-audit --no-fund) >/tmp/oc_ui_sub_install.log 2>&1 || true
-      (pnpm build || npm run build) >/tmp/oc_ui_sub_build.log 2>&1 || true
+      (pnpm install --prefer-offline --no-frozen-lockfile || npm install --no-audit --no-fund) >"$TMP_DIR/oc_ui_sub_install.log" 2>&1 || true
+      (pnpm build || npm run build) >"$TMP_DIR/oc_ui_sub_build.log" 2>&1 || true
       cd "$SRC"
       if [ -f control-ui/dist/index.html ]; then
         mkdir -p dist/control-ui
@@ -30,8 +32,8 @@ else
       echo 'control_ui_build_ok=1'
     else
       echo 'control_ui_build_ok=0'
-      tail -n 80 /tmp/oc_ui_build.log 2>/dev/null || true
-      tail -n 80 /tmp/oc_ui_sub_build.log 2>/dev/null || true
+      tail -n 80 "$TMP_DIR/oc_ui_build.log" 2>/dev/null || true
+      tail -n 80 "$TMP_DIR/oc_ui_sub_build.log" 2>/dev/null || true
     fi
   fi
 fi

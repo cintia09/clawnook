@@ -3,7 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
+TMP_DIR="$SCRIPT_DIR/.tmp"
 mkdir -p "$LOG_DIR"
+mkdir -p "$TMP_DIR"
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
 
@@ -13,7 +15,7 @@ run_with_log() {
   local log_file="$LOG_DIR/${timestamp}-${name}.log"
   echo "[test] running: $name"
   set +e
-  bash -lc "$cmd" >"$log_file" 2>&1
+  TMPDIR="$TMP_DIR" bash -lc "$cmd" >"$log_file" 2>&1
   local rc=$?
   set -e
   echo "[test] done: $name (rc=$rc) log=$log_file"
@@ -31,6 +33,7 @@ latest_summary="$LOG_DIR/${timestamp}-summary.txt"
   echo "timestamp=$timestamp"
   echo "overall_rc=$overall"
   echo "logs_dir=$LOG_DIR"
+  echo "tmp_dir=$TMP_DIR"
   ls -1 "$LOG_DIR" | sed -n "1,200p"
 } > "$latest_summary"
 

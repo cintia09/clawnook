@@ -30,6 +30,7 @@ OPENCLAW_RUNTIME_VERSION="${OPENCLAW_VERSION:-}"
 LOCK_DIR="/root/.openclaw/locks/gateway-watchdog.lock"
 LOCK_PID_FILE="$LOCK_DIR/pid"
 LOCK_FILE="/root/.openclaw/locks/gateway-watchdog.lockfile"
+OPERATION_LOCK_FILE="/root/.openclaw/locks/operation.lock"
 
 CONFIG_FILE="/root/.openclaw/openclaw.json"
 BACKUP_DIR="/root/.openclaw/config-backups"
@@ -193,6 +194,22 @@ is_port_listening() {
   return 1
 }
 
+current_operation_type() {
+  if [ ! -f "$OPERATION_LOCK_FILE" ]; then
+    echo "idle"
+    return 0
+  fi
+  local op
+  op=$(grep -o '"type":"[^"]*"' "$OPERATION_LOCK_FILE" 2>/dev/null | head -1 | cut -d':' -f2 | tr -d '"')
+  echo "${op:-idle}"
+}
+
+is_install_update_active() {
+  local op
+  op="$(current_operation_type)"
+  [[ "$op" = "installing" || "$op" = "updating" ]]
+}
+
 kill_gateway() {
   local pid
   pid=$(get_gateway_pid)
@@ -246,6 +263,10 @@ start_once() {
   detect_runtime_version >/dev/null 2>&1 || true
   if [ ! -f "$SOURCE_ROOT/openclaw.mjs" ]; then
     log "Cannot start gateway: source entry not found at $SOURCE_ROOT/openclaw.mjs"
+    return 2
+  fi
+  if [ ! -f "$SOURCE_ROOT/dist/entry.js" ] && [ ! -f "$SOURCE_ROOT/dist/entry.mjs" ]; then
+    log "Cannot start gateway: build output missing ($SOURCE_ROOT/dist/entry.(m)js)"
     return 2
   fi
 
@@ -397,6 +418,12 @@ log "Watchdog v2 started (poll=${POLL_INTERVAL}s, timeout=${STARTUP_TIMEOUT}s, p
 log_event "start" "poll=${POLL_INTERVAL}s timeout=${STARTUP_TIMEOUT}s port=$PORT"
 
 while true; do
+  if is_install_update_active; then
+    log "OpenClaw install/update in progress, watchdog standby"
+    sleep "$CHECK_INTERVAL"
+    continue
+  fi
+
   if [ ! -f "$SOURCE_ROOT/openclaw.mjs" ]; then
     log "OpenClaw source entry missing at $SOURCE_ROOT/openclaw.mjs, watchdog idle"
     sleep "$CHECK_INTERVAL"

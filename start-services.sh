@@ -837,6 +837,7 @@ while true; do
     sleep 10
 
     refresh_openclaw_availability
+    ensure_gateway_proxy_compat_config
     sync_root_authorized_keys_to_ssh_user "$SSH_USER"
     normalize_ssh_user_keys_and_permissions "$SSH_USER"
 

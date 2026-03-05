@@ -135,15 +135,15 @@ button, input, select, textarea{font-family:inherit}
   color:var(--text);
   background:rgba(148,163,184,.12);
   border:1px solid rgba(148,163,184,.16);
-  transition: filter .12s, background .12s, border-color .12s;
+  transition: transform .10s ease, filter .12s, background .12s, border-color .12s;
   display:inline-flex;
   gap:10px;
   align-items:center;
   justify-content:center;
   user-select:none;
 }
-.btn:hover{filter:brightness(1.06)}
-.btn:active{filter:brightness(0.98)}
+.btn:hover{filter:brightness(1.06); transform:translateY(-1px)}
+.btn:active{filter:brightness(0.98); transform:translateY(0) scale(0.98)}
 .btn:disabled{opacity:.55; cursor:not-allowed; transform:none}
 
 .btn-primary{background:var(--accentGrad); color:#111114; border-color:rgba(255,255,255,.35)}

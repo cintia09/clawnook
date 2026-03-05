@@ -15,7 +15,7 @@ printf "direct_gateway_health=%s\n" "$code1"
 printf "caddy_gateway_health=%s\n" "$code2"
 
 printf "\n=== latest gateway logs (tail 120) ===\n"
-tail -n 120 /workspace/tmp/openclaw-gateway.log 2>/dev/null || true
+tail -n 120 /root/.openclaw/logs/openclaw-gateway.log 2>/dev/null || tail -n 120 /root/.openclaw/logs/gateway.log 2>/dev/null || true
 
 printf "\n=== latest watchdog logs (tail 180) ===\n"
 tail -n 180 /root/.openclaw/logs/gateway-watchdog.log 2>/dev/null || true

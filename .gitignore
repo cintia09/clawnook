@@ -3,6 +3,7 @@
 install-log.txt
 node_modules/
 test/logs/
+test/.tmp/
 
 # OS
 .DS_Store

@@ -1,8 +1,10 @@
 set -e
+TMP_DIR="${TMP_DIR:-/root/.openclaw/test-tmp}"
+mkdir -p "$TMP_DIR"
 pkill -f 'node server.js' || true
 sleep 1
 cd /opt/openclaw-web
-nohup node server.js >/tmp/openclaw-web.log 2>&1 &
+nohup node server.js >"$TMP_DIR/openclaw-web.log" 2>&1 &
 sleep 2
 pgrep -af 'node server.js' || true
 SECRET=$(jq -r '.webAuth.secret // empty' /root/.openclaw/docker-config.json)

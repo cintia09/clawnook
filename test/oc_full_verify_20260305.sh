@@ -9,11 +9,14 @@ REMOTE_HOST="${REMOTE_HOST:-wm_20@192.168.31.107}"
 REMOTE_PORT="${REMOTE_PORT:-2223}"
 OC_USER="${OC_USER:-}"
 OC_PASS="${OC_PASS:-}"
+REMOTE_TMP_DIR="${REMOTE_TMP_DIR:-/root/.openclaw/test-tmp}"
 
 echo "[local] run full verify against ${REMOTE_HOST}:${REMOTE_PORT}"
 
 ssh -T -p "$REMOTE_PORT" "$REMOTE_HOST" 'sudo -n bash -s' <<'REMOTE_SCRIPT'
 set -euo pipefail
+TMP_DIR="/root/.openclaw/test-tmp"
+mkdir -p "$TMP_DIR"
 
 echo "=== A. 依赖审计（镜像内） ==="
 req_bins=(bash node npm pnpm git curl jq tar gzip)
@@ -53,7 +56,7 @@ pkill -f openclaw-gateway-watchdog.sh >/dev/null 2>&1 || true
 sleep 1
 nohup bash /usr/local/bin/openclaw-gateway-watchdog.sh >/dev/null 2>&1 &
 for i in $(seq 1 40); do
-  code=$(curl -s -o /tmp/oc_h.out -w '%{http_code}' http://127.0.0.1:18789/health || true)
+  code=$(curl -s -o "$TMP_DIR/oc_h.out" -w '%{http_code}' http://127.0.0.1:18789/health || true)
   if [ "$code" = "200" ]; then
     echo "old_persist_health_ok_try=$i"
     break
@@ -91,7 +94,7 @@ pkill -f openclaw-gateway-watchdog.sh >/dev/null 2>&1 || true
 sleep 1
 nohup bash /usr/local/bin/openclaw-gateway-watchdog.sh >/dev/null 2>&1 &
 for i in $(seq 1 40); do
-  code=$(curl -s -o /tmp/oc_h2.out -w '%{http_code}' http://127.0.0.1:18789/health || true)
+  code=$(curl -s -o "$TMP_DIR/oc_h2.out" -w '%{http_code}' http://127.0.0.1:18789/health || true)
   if [ "$code" = "200" ]; then
     echo "new_persist_health_ok_try=$i"
     break

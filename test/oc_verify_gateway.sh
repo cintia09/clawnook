@@ -13,4 +13,4 @@ done
 echo '---watchdog---'
 tail -n 45 /root/.openclaw/logs/gateway-watchdog.log || true
 echo '---runtime---'
-tail -n 35 /workspace/tmp/openclaw-gateway.log || true
+tail -n 35 /root/.openclaw/logs/openclaw-gateway.log 2>/dev/null || tail -n 35 /root/.openclaw/logs/gateway.log 2>/dev/null || true

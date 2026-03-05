@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+TMP_DIR="${TMP_DIR:-/root/.openclaw/test-tmp}"
+mkdir -p "$TMP_DIR"
 
 echo "STEP1 control-ui build"
 cd /root/.openclaw/openclaw-source
@@ -8,11 +10,11 @@ if [ -f dist/control-ui/index.html ]; then
 else
   echo "control_ui_before=0"
 fi
-pnpm ui:build >/tmp/oc_ui_build_final.log 2>&1 || npm run ui:build >/tmp/oc_ui_build_final.log 2>&1 || true
+pnpm ui:build >"$TMP_DIR/oc_ui_build_final.log" 2>&1 || npm run ui:build >"$TMP_DIR/oc_ui_build_final.log" 2>&1 || true
 if [ ! -f dist/control-ui/index.html ] && [ -d control-ui ] && [ -f control-ui/package.json ]; then
   cd control-ui
-  (pnpm install --prefer-offline --no-frozen-lockfile || npm install --no-audit --no-fund) >/tmp/oc_ui_sub_install_final.log 2>&1 || true
-  (pnpm build || npm run build) >/tmp/oc_ui_sub_build_final.log 2>&1 || true
+  (pnpm install --prefer-offline --no-frozen-lockfile || npm install --no-audit --no-fund) >"$TMP_DIR/oc_ui_sub_install_final.log" 2>&1 || true
+  (pnpm build || npm run build) >"$TMP_DIR/oc_ui_sub_build_final.log" 2>&1 || true
   cd /root/.openclaw/openclaw-source
   if [ -f control-ui/dist/index.html ]; then
     mkdir -p dist/control-ui
