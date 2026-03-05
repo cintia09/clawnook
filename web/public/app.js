@@ -720,6 +720,7 @@ let ocLatestKnown = false;
 let ocInstallTaskRunningRemote = false;
 let ocRepairTaskRunningRemote = false;
 let ocGatewayRestartRunningRemote = false;
+let ocGatewayStartingRemote = false;
 let ocLastGatewaySnapshot = '';
 let ocGatewayLogPollTimer = null;
 let ocGatewayLogPollRunning = false;
@@ -734,7 +735,7 @@ function syncOpenClawButtons(){
   const startBtn = $('btn-oc-start');
   const installBusy = !!ocInstallRunning || !!ocInstallTaskRunningRemote;
   const repairBusy = !!ocRepairRunning || !!ocRepairTaskRunningRemote;
-  const restartBusy = !!ocStartRunning || !!ocGatewayRestartRunningRemote;
+  const restartBusy = !!ocStartRunning || !!ocGatewayRestartRunningRemote || !!ocGatewayStartingRemote;
   const anyBusy = installBusy || repairBusy || restartBusy;
   const canRestartGateway = !!ocInstalled || !!ocGatewayRunning;
   const noUpdateNeeded = !!ocInstalled && !!ocLatestKnown && !ocHasUpdate;
@@ -954,6 +955,7 @@ async function refreshOpenClaw(opts = {}){
   ocInstallTaskRunningRemote = !!d.installTaskRunning;
   ocRepairTaskRunningRemote = !!d.repairTaskRunning;
   ocGatewayRestartRunningRemote = !!d.gatewayRestartRunning;
+  ocGatewayStartingRemote = !!d.gatewayStarting;
 
   const actionBtn = $('btn-oc-install');
   if (actionBtn) {
@@ -2004,8 +2006,10 @@ async function terminalConnect(){
   }
 
   function connectWs(url, attemptLabel){
+    let socket = null;
     try {
-      termWs = new WebSocket(url);
+      socket = new WebSocket(url);
+      termWs = socket;
     } catch {
       $('term-state').textContent = 'WebSocket 不可用';
       termAppendText(`[terminal] WebSocket 不可用，无法建立交互会话 (${attemptLabel})\n`);
@@ -2014,7 +2018,8 @@ async function terminalConnect(){
 
     armConnectTimeout();
 
-    termWs.onopen = ()=> {
+    socket.onopen = ()=> {
+      if (socket !== termWs) return;
       clearConnectTimeout();
       termFailureCount = 0;
       if (termFallbackTimer) {
@@ -2038,7 +2043,8 @@ async function terminalConnect(){
       setTimeout(() => sendTerminalResize(), 4200);
     };
 
-    termWs.onclose = (ev)=> {
+    socket.onclose = (ev)=> {
+      if (socket !== termWs) return;
       clearConnectTimeout();
       const code = Number(ev?.code || 0);
       const reason = ev?.reason ? ` reason=${ev.reason}` : '';
@@ -2071,7 +2077,8 @@ async function terminalConnect(){
       }
     };
 
-    termWs.onerror = ()=> {
+    socket.onerror = ()=> {
+      if (socket !== termWs) return;
       clearConnectTimeout();
       termFailureCount += 1;
       $('term-state').textContent = '连接错误';
@@ -2090,7 +2097,8 @@ async function terminalConnect(){
       }).catch(() => {});
     };
 
-    termWs.onmessage = (ev)=>{
+    socket.onmessage = (ev)=>{
+      if (socket !== termWs) return;
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'output') {

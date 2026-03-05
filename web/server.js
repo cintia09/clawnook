@@ -208,6 +208,67 @@ function writeJson(p, obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2), { mode: 0o600 });
 }
 
+function ensureGatewayControlUiAccessForRequest(req) {
+  let changed = false;
+  try {
+    const cfg = readJson(CONFIG_PATH, {});
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { changed: false, error: 'config-invalid' };
+
+    const hostHeader = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim();
+    const protoHeader = String(req?.headers?.['x-forwarded-proto'] || req?.protocol || 'http').split(',')[0].trim().toLowerCase();
+    const hostname = (hostHeader.split(':')[0] || '').trim();
+    if (!hostname) return { changed: false, error: 'host-empty' };
+
+    cfg.gateway = cfg.gateway || {};
+    cfg.gateway.controlUi = cfg.gateway.controlUi || {};
+
+    const currentAllowed = Array.isArray(cfg.gateway.controlUi.allowedOrigins)
+      ? cfg.gateway.controlUi.allowedOrigins.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+
+    const wantedOrigins = new Set();
+    const hostCandidates = new Set([hostHeader, hostname]);
+    hostCandidates.forEach((h) => {
+      const safeHost = String(h || '').trim();
+      if (!safeHost) return;
+      wantedOrigins.add(`https://${safeHost}`);
+      wantedOrigins.add(`http://${safeHost}`);
+    });
+
+    if (protoHeader === 'https') wantedOrigins.add(`https://${hostHeader || hostname}`);
+    if (protoHeader === 'http') wantedOrigins.add(`http://${hostHeader || hostname}`);
+
+    for (const origin of wantedOrigins) {
+      if (!origin || currentAllowed.includes(origin)) continue;
+      currentAllowed.push(origin);
+      changed = true;
+    }
+    cfg.gateway.controlUi.allowedOrigins = currentAllowed;
+
+    const currentTrusted = Array.isArray(cfg.gateway.trustedProxies)
+      ? cfg.gateway.trustedProxies.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+
+    const requiredTrusted = ['127.0.0.1', '::1', '::ffff:127.0.0.1', '172.17.0.1'];
+    for (const proxyIp of requiredTrusted) {
+      if (currentTrusted.includes(proxyIp)) continue;
+      currentTrusted.push(proxyIp);
+      changed = true;
+    }
+    cfg.gateway.trustedProxies = currentTrusted;
+
+    if (changed) {
+      const backupPath = `${CONFIG_PATH}.bak.gateway-control-ui-${Date.now()}`;
+      try { fs.copyFileSync(CONFIG_PATH, backupPath); } catch {}
+      writeJson(CONFIG_PATH, cfg);
+    }
+
+    return { changed, host: hostHeader || hostname };
+  } catch (e) {
+    return { changed: false, error: e?.message || 'unknown' };
+  }
+}
+
 function repairOpenClawConfigProviders() {
   const cfg = readJson(CONFIG_PATH, null);
   if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return false;
@@ -2563,6 +2624,11 @@ function buildOpenClawPreferredInstallCommand(release) {
 
 app.get('/api/openclaw', async (req, res) => {
   try {
+    const accessPatch = ensureGatewayControlUiAccessForRequest(req);
+    if (accessPatch?.changed) {
+      console.log(`[openclaw][gateway] controlUi access patched for host=${accessPatch.host || 'unknown'}`);
+    }
+
     const forceCheck = String(req.query.force || '') === '1';
     const detected = getOpenClawInstallationSnapshot(forceCheck);
     const installed = detected.installed;
@@ -2645,6 +2711,12 @@ app.get('/api/openclaw', async (req, res) => {
 
 app.get('/api/openclaw/gateway-link', (req, res) => {
   try {
+    const accessPatch = ensureGatewayControlUiAccessForRequest(req);
+    if (accessPatch?.changed) {
+      console.log(`[openclaw][gateway-link] patched controlUi/trustedProxies for host=${accessPatch.host || 'unknown'}`);
+      restartGatewayForeground(() => {});
+    }
+
     const cfg = readJson(CONFIG_PATH, {});
     const authMode = String(cfg?.gateway?.auth?.mode || 'none').trim() || 'none';
     const rawToken = String(cfg?.gateway?.auth?.token || '').trim();
