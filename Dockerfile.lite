@@ -9,10 +9,10 @@ ENV NPM_CONFIG_PREFIX=/root/.npm-global
 # PATH 优先使用持久化目录中的可执行文件
 ENV PATH="/root/.venv/bin:/root/.npm-global/bin:$PATH"
 
-# 系统工具（精简版：去掉 Chrome/noVNC/LightGBM/openclaw，后期通过 Web 面板按需安装）
+# 系统工具（精简版：去掉 Chrome/noVNC/LightGBM）
 RUN apt-get update && apt-get install -y \
     vim nano \
-    curl wget net-tools iputils-ping dnsutils openssh-client openssh-server \
+    curl wget net-tools iputils-ping dnsutils traceroute telnet nmap openssh-client openssh-server \
     htop procps psmisc tmux screen tree less file unzip tar gzip \
     git jq python3 python3-pip python3-venv build-essential \
     sudo cron rsync ca-certificates gnupg gettext-base \
@@ -29,17 +29,16 @@ RUN sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/
 RUN echo 'Defaults env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY"' > /etc/sudoers.d/keep-proxy \
     && chmod 0440 /etc/sudoers.d/keep-proxy
 
-# Node.js + npm（Web 管理面板必需）
-RUN apt-get update && apt-get install -y nodejs npm \
-    && command -v node && command -v npm \
-    && node -v && npm -v \
-    && rm -rf /var/lib/apt/lists/*
+# Node.js 22
+RUN curl -fsSL --retry 3 --retry-delay 3 https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
 # 预装源码构建工具（避免运行时网络抖动）
 RUN npm install -g pnpm@10.23.0 rolldown@1.0.0-rc.6 --no-audit --no-fund \
-    && corepack disable >/dev/null 2>&1 || true
+    && corepack disable >/dev/null 2>&1 \
+    && pnpm -v >/dev/null 2>&1
 
-# OpenClaw 持久化运行目录骨架（lite 版按需安装 openclaw，但目录结构固定）
+# OpenClaw 持久化运行目录骨架（不预装 openclaw，本地按需安装）
 RUN mkdir -p /root/.openclaw/openclaw-source /root/.openclaw/openclaw /root/.openclaw/logs /root/.openclaw/cache/openclaw /root/.openclaw/locks /root/.openclaw/home
 
 # Caddy（网关）
