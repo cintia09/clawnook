@@ -40,6 +40,7 @@ MAX_BACKUPS=30
 
 CONSECUTIVE_FAILURES=0
 LAST_PID=""
+STARTUP_OLD_PIDS=""
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
@@ -179,6 +180,59 @@ get_gateway_pid() {
   done
 }
 
+collect_gateway_pids() {
+  {
+    pgrep -x "openclaw-gateway" 2>/dev/null || true
+    pgrep -x "openclaw-gatewa" 2>/dev/null || true
+    pgrep -x "openclaw" 2>/dev/null || true
+    pgrep -f "openclaw.mjs gateway" 2>/dev/null || true
+    pgrep -f "openclaw.*gateway run" 2>/dev/null || true
+  } | sed '/^$/d' | sort -u
+}
+
+pid_in_list() {
+  local target="$1"
+  shift || true
+  local item
+  for item in "$@"; do
+    [ "$item" = "$target" ] && return 0
+  done
+  return 1
+}
+
+has_new_gateway_pid() {
+  local current pid
+  current="$(collect_gateway_pids | tr '\n' ' ')"
+  [ -z "$current" ] && return 1
+  for pid in $current; do
+    if ! pid_in_list "$pid" $STARTUP_OLD_PIDS; then
+      LAST_PID="$pid"
+      return 0
+    fi
+  done
+  return 1
+}
+
+old_gateway_pids_gone() {
+  local pid
+  [ -z "$STARTUP_OLD_PIDS" ] && return 0
+  for pid in $STARTUP_OLD_PIDS; do
+    if kill -0 "$pid" 2>/dev/null; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+gateway_health_ready() {
+  local code
+  code=$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 2 -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/health" 2>/dev/null || true)
+  case "$code" in
+    200|401|403) return 0 ;;
+  esac
+  return 1
+}
+
 is_gateway_process_alive() {
   if [[ -n "$LAST_PID" ]] && kill -0 "$LAST_PID" 2>/dev/null; then
     return 0
@@ -249,7 +303,13 @@ wait_for_ready() {
 
   while [[ $elapsed -lt $timeout ]]; do
     if is_port_listening; then
-      return 0
+      if has_new_gateway_pid && old_gateway_pids_gone && gateway_health_ready; then
+        return 0
+      fi
+      if [[ $((elapsed - last_log)) -ge 30 ]]; then
+        log "Port $PORT is listening but restart handoff not complete (need new pid + old pid gone + health ready), waiting..."
+        last_log=$elapsed
+      fi
     fi
 
     if ! is_gateway_process_alive; then
@@ -310,6 +370,7 @@ start_once() {
     log "Gateway runtime version: $OPENCLAW_RUNTIME_VERSION"
   fi
   log "Gateway launch command: $launch_cmd"
+  STARTUP_OLD_PIDS="$(collect_gateway_pids | tr '\n' ' ')"
   nohup bash --noprofile --norc -lc "$launch_cmd" > "$GATEWAY_LOG" 2>&1 &
   LAST_PID=$!
   log "Gateway process launched (PID $LAST_PID), polling every ${POLL_INTERVAL}s (timeout ${STARTUP_TIMEOUT}s)..."

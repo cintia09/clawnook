@@ -1396,7 +1396,7 @@ async function pollTask(taskId){
         ocPostInstallWarmupUntil = Date.now() + (5 * 60 * 1000);
         ocLastGatewaySnapshot = '';
         try {
-          const rr = await api('/api/openclaw/start', { method:'POST' });
+          const rr = await api('/api/openclaw/start', { method:'POST', timeoutMs: 90000 });
           if (rr.success) {
             appendOcLogLine(`[gateway] ${rr.message || '重启请求已提交，watchdog 将自动拉起'}`);
             if (rr.logs) {
@@ -1749,7 +1749,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
   ocLastGatewaySnapshot = '';
   let restartAccepted = false;
   try {
-    const r = await api('/api/openclaw/start', { method:'POST' });
+    const r = await api('/api/openclaw/start', { method:'POST', timeoutMs: 90000 });
     if (r.success) {
       restartAccepted = true;
       appendOcLogLine('[state] operation=restarting_gateway status=running source=api');
@@ -1763,6 +1763,22 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
       scheduleGatewayStartupLogPulls(220);
       toast('已触发重启', r.message || 'Gateway 正在重启，请稍候');
     } else {
+      const timeoutLike = /超时|timeout/i.test(String(r.error || ''));
+      if (timeoutLike) {
+        const status = await api('/api/openclaw', { timeoutMs: 8000 });
+        const opType = String(status.operationType || '').trim();
+        const backendRestarting = !!status.gatewayRestartRunning || opType === 'restarting_gateway';
+        if (backendRestarting) {
+          restartAccepted = true;
+          ocGatewayRestartRunningRemote = true;
+          appendOcLogLine('[state] operation=restarting_gateway status=running source=status-check');
+          appendOcLogLine('[gateway] 重启请求返回超时，但后端显示仍在执行重启，继续跟踪日志。');
+          triggerLogsBurstPolling(22000, 1200);
+          scheduleGatewayStartupLogPulls(220);
+          toast('重启处理中', '请求超时，但后端仍在重启 Gateway');
+          return;
+        }
+      }
       appendOcLogLine('[state] operation=restarting_gateway status=failed source=api');
       appendOcLogLine(`[gateway] 重启失败: ${r.error || '请查看日志'}`);
       if (r.logs) {

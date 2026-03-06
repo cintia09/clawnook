@@ -982,7 +982,7 @@ function clearGatewayRestartSettleTimer() {
   }
 }
 
-function scheduleGatewayRestartSettle({ timeoutMs = 240000, intervalMs = 3000 } = {}) {
+function scheduleGatewayRestartSettle({ timeoutMs = 480000, intervalMs = 3000 } = {}) {
   clearGatewayRestartSettleTimer();
   const startedAt = Date.now();
   const tick = () => {
@@ -3279,7 +3279,7 @@ const OPENCLAW_OPERATION_MAX_SEC = {
   installing: 5400,
   updating: 5400,
   uninstalling: 1200,
-  restarting_gateway: 300,
+  restarting_gateway: 480,
   repairing_config: 900
 };
 
@@ -3396,8 +3396,10 @@ function setOpenClawOperationState(type, taskId = '') {
   const nextType = String(type || 'idle') || 'idle';
   const nextTaskId = String(taskId || '');
   const current = getOpenClawOperationState();
+  const forceRefreshStartedAt = nextType === 'restarting_gateway';
   const keepStartedAt = (
-    current
+    !forceRefreshStartedAt
+    && current
     && current.type === nextType
     && String(current.taskId || '') === nextTaskId
     && Number(current.startedAt || 0) > 0
@@ -3428,7 +3430,7 @@ const OPENCLAW_OPERATION_ESTIMATE_SEC = {
   installing: 1200,
   updating: 900,
   uninstalling: 420,
-  restarting_gateway: 120,
+  restarting_gateway: 360,
   repairing_config: 240
 };
 
