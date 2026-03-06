@@ -1572,12 +1572,17 @@ $('btn-oc-install').addEventListener('click', async ()=>{
   syncOpenClawButtons();
   let taskStarted = false;
   try{
-    const current = await refreshOpenClaw({ retries: 2 });
+    let current = await refreshOpenClaw({ retries: 2 });
     if (!current || current.error) {
       const detail = current?.error || '无法获取当前 OpenClaw 状态';
-      appendOcLogLine(`[openclaw] 状态读取失败，无法继续（${detail}）。`);
-      toast('读取失败', detail);
-      return;
+      appendOcLogLine(`[openclaw] 状态读取失败，改用本地缓存状态继续（${detail}）。`);
+      current = {
+        installed: !!ocInstalled,
+        version: '',
+        latestVersion: '',
+        hasUpdate: false,
+        updateCheckError: detail
+      };
     }
 
     if (!current.installed) {
