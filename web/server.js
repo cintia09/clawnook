@@ -3295,17 +3295,26 @@ function readOperationLockFromFile() {
     const raw = fs.readFileSync(OPENCLAW_OPERATION_LOCK_FILE, 'utf8');
     const parsed = JSON.parse(raw);
     const pid = Number(parsed?.pid || 0);
+    const type = String(parsed?.type || '');
     if (pid > 1 && pid !== process.pid) {
       try {
         process.kill(pid, 0);
       } catch {
+        if (type === 'restarting_gateway') {
+          return {
+            type,
+            taskId: String(parsed?.taskId || ''),
+            startedAt: Number(parsed?.startedAt || 0),
+            pid
+          };
+        }
         try { fs.unlinkSync(OPENCLAW_OPERATION_LOCK_FILE); } catch {}
         return null;
       }
     }
-    if (!parsed?.type || parsed.type === 'idle') return null;
+    if (!type || type === 'idle') return null;
     return {
-      type: String(parsed.type),
+      type,
       taskId: String(parsed.taskId || ''),
       startedAt: Number(parsed.startedAt || 0),
       pid: Number(parsed.pid || process.pid)
