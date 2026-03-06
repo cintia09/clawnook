@@ -4,6 +4,7 @@ install-log.txt
 node_modules/
 test/logs/
 test/.tmp/
+test/*.remote.sh
 
 # OS
 .DS_Store
