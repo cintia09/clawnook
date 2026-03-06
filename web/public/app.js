@@ -190,7 +190,7 @@ function colorizeLine(rawLine){
 
 function appendColored(el, text, maxLines = 5000, autoscroll = true){
   if (!el) return;
-  const html = stripAnsi(String(text ?? '')).split('\n').map(colorizeLine).join('');
+  const html = stripAnsi(String(text ?? '')).split('\n').map(colorizeLine).join('\n');
   el.insertAdjacentHTML('beforeend', html);
   const nodes = el.querySelectorAll('.term-line');
   if (nodes.length > maxLines) {

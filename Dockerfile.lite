@@ -1,3 +1,9 @@
+FROM node:22-alpine AS pnpm-builder
+WORKDIR /tmp
+RUN npm install -g pnpm@10.23.0 rolldown@1.0.0-rc.6 --no-audit --no-fund \
+    && pnpm -v >/dev/null 2>&1 \
+    && rolldown --version >/dev/null 2>&1
+
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -33,10 +39,19 @@ RUN echo 'Defaults env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no
 RUN curl -fsSL --retry 3 --retry-delay 3 https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
-# 预装源码构建工具（安装到 /usr/local，避免 /root 挂载覆盖）
-RUN npm_config_prefix=/usr/local npm install -g pnpm@10.23.0 rolldown@1.0.0-rc.6 --no-audit --no-fund \
-    && corepack disable >/dev/null 2>&1 \
-    && /usr/local/bin/pnpm -v >/dev/null 2>&1
+# 从构建阶段拷贝 pnpm/rolldown（确保构建期即固定版本，不依赖运行时安装）
+COPY --from=pnpm-builder /usr/local/lib/node_modules/pnpm /usr/local/lib/node_modules/pnpm
+COPY --from=pnpm-builder /usr/local/lib/node_modules/rolldown /usr/local/lib/node_modules/rolldown
+COPY --from=pnpm-builder /usr/local/bin/pnpm /usr/local/bin/pnpm
+COPY --from=pnpm-builder /usr/local/bin/rolldown /usr/local/bin/rolldown
+RUN /usr/local/bin/pnpm -v >/dev/null 2>&1 \
+    && /usr/local/bin/rolldown --version >/dev/null 2>&1
+
+# 构建时强校验：lite 镜像必须包含构建依赖，但不能预装 openclaw
+RUN for bin in node npm pnpm git curl jq tar gzip unzip python3 make g++; do command -v "$bin" >/dev/null 2>&1; done \
+    && ! command -v openclaw >/dev/null 2>&1 \
+    && test ! -x /usr/local/bin/openclaw \
+    && test ! -d /usr/local/lib/node_modules/openclaw
 
 # OpenClaw 持久化运行目录骨架（不预装 openclaw，本地按需安装）
 RUN mkdir -p /root/.openclaw/openclaw-source /root/.openclaw/openclaw /root/.openclaw/logs /root/.openclaw/cache/openclaw /root/.openclaw/locks /root/.openclaw/home

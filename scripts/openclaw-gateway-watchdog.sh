@@ -300,7 +300,7 @@ start_once() {
     log "Gateway runtime version: $OPENCLAW_RUNTIME_VERSION"
   fi
   log "Gateway launch command: $launch_cmd"
-  nohup bash -lc "$launch_cmd" > "$GATEWAY_LOG" 2>&1 &
+  nohup bash --noprofile --norc -lc "$launch_cmd" > "$GATEWAY_LOG" 2>&1 &
   LAST_PID=$!
   log "Gateway process launched (PID $LAST_PID), polling every ${POLL_INTERVAL}s (timeout ${STARTUP_TIMEOUT}s)..."
 

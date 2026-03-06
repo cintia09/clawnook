@@ -42,7 +42,7 @@ check_service() {
     fi
 }
 
-GATEWAY_STATUS=$(check_service "openclaw.*gateway")
+GATEWAY_STATUS=$(check_service "openclaw-gatewa|openclaw\\.mjs gateway|openclaw .*gateway run")
 WEB_STATUS=$(check_service "node.*server\.js")
 CADDY_STATUS=$(check_service "caddy run")
 

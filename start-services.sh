@@ -719,6 +719,61 @@ web_is_healthy() {
     return 1
 }
 
+WEB_UNHEALTHY_STREAK=0
+WEB_RESTART_THRESHOLD="${WEB_RESTART_THRESHOLD:-3}"
+
+current_operation_type() {
+    local lock_file="/root/.openclaw/locks/operation.lock"
+    local op
+    if [ ! -f "$lock_file" ]; then
+        echo "idle"
+        return 0
+    fi
+    op=$(grep -o '"type":"[^"]*"' "$lock_file" 2>/dev/null | head -1 | cut -d':' -f2 | tr -d '"')
+    [ -n "$op" ] || op="idle"
+    echo "$op"
+}
+
+is_openclaw_operation_active() {
+    local op="$1"
+    case "$op" in
+        installing|updating|uninstalling|repairing_config)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+stop_web_panel_processes() {
+    local pids pid
+    pids=$(pgrep -f "node server.js" 2>/dev/null || true)
+    [ -z "$pids" ] && return 0
+
+    for pid in $pids; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    sleep 2
+    for pid in $pids; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    done
+}
+
+restart_web_panel() {
+    if [ -n "${WEB_PID:-}" ] && kill -0 "$WEB_PID" 2>/dev/null; then
+        kill -TERM "$WEB_PID" 2>/dev/null || true
+        sleep 2
+        if kill -0 "$WEB_PID" 2>/dev/null; then
+            kill -KILL "$WEB_PID" 2>/dev/null || true
+        fi
+    fi
+    stop_web_panel_processes
+    start_web_panel
+}
+
 gateway_is_healthy() {
     # 优先用健康检查接口判断（进程存在但卡死也能识别）
     local code
@@ -885,14 +940,21 @@ while true; do
         echo "[health] INFO: openclaw CLI not found yet; watchdog is running and will retry"
     fi
 
-    # 检查 Web 面板
-    if ! web_is_healthy; then
-        echo "[health] WARNING: Web panel unhealthy or down, restarting..."
-        if [ -n "${WEB_PID:-}" ]; then
-            kill -9 "$WEB_PID" 2>/dev/null || true
+    # 检查 Web 面板（避免单次抖动导致误重启）
+    if web_is_healthy; then
+        WEB_UNHEALTHY_STREAK=0
+    else
+        WEB_UNHEALTHY_STREAK=$((WEB_UNHEALTHY_STREAK + 1))
+        current_op="$(current_operation_type)"
+        if is_openclaw_operation_active "$current_op"; then
+            echo "[health] WARNING: Web panel unhealthy, but operation=$current_op active; defer restart (streak=$WEB_UNHEALTHY_STREAK)"
+        elif [ "$WEB_UNHEALTHY_STREAK" -lt "$WEB_RESTART_THRESHOLD" ]; then
+            echo "[health] WARNING: Web panel unhealthy, retry later (streak=$WEB_UNHEALTHY_STREAK/$WEB_RESTART_THRESHOLD)"
+        else
+            echo "[health] WARNING: Web panel unhealthy for $WEB_UNHEALTHY_STREAK checks, restarting..."
+            WEB_UNHEALTHY_STREAK=0
+            restart_web_panel
         fi
-        pkill -f "node server.js" 2>/dev/null || true
-        start_web_panel
     fi
 
     # 检查 Caddy
