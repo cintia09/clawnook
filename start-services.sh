@@ -737,7 +737,7 @@ current_operation_type() {
 is_openclaw_operation_active() {
     local op="$1"
     case "$op" in
-        installing|updating|uninstalling|repairing_config)
+        installing|updating|uninstalling|repairing_config|restarting_gateway)
             return 0
             ;;
         *)

@@ -3349,13 +3349,32 @@ function getOpenClawOperationState() {
     return { ...openClawOperationState };
   };
 
+  const reconcileRestartingGatewayState = (state) => {
+    const current = state && typeof state === 'object' ? { ...state } : { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
+    if (current.type !== 'restarting_gateway') return current;
+
+    const gatewayHealthCode = Number.parseInt(String(runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000) || '').trim(), 10) || 0;
+    const gatewayRunning = gatewayHealthCode === 200;
+    const gatewayProcessRunning = isGatewayRuntimeProcessRunning()
+      || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
+    const watchdogStarting = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200)
+      && isGatewayWatchdogStartupInProgress(900);
+
+    if (gatewayRunning || (!gatewayProcessRunning && !watchdogStarting)) {
+      openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
+      writeOperationLock(null);
+      return { ...openClawOperationState };
+    }
+    return current;
+  };
+
   if (openClawOperationState.type && openClawOperationState.type !== 'idle') {
     if (Number(openClawOperationState.pid || process.pid) === process.pid) {
-      return normalizeState({ ...openClawOperationState });
+      return reconcileRestartingGatewayState(normalizeState({ ...openClawOperationState }));
     }
     const fromFile = readOperationLockFromFile();
     if (fromFile) {
-      openClawOperationState = normalizeState({ ...fromFile });
+      openClawOperationState = reconcileRestartingGatewayState(normalizeState({ ...fromFile }));
       return { ...openClawOperationState };
     }
     openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
@@ -3363,7 +3382,7 @@ function getOpenClawOperationState() {
   }
   const lockState = readOperationLockFromFile();
   if (lockState) {
-    openClawOperationState = normalizeState({ ...lockState });
+    openClawOperationState = reconcileRestartingGatewayState(normalizeState({ ...lockState }));
     return { ...openClawOperationState };
   }
   return { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
