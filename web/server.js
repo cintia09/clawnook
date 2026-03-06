@@ -541,7 +541,7 @@ function watchdogFoldSignature(line) {
     .replace(/^\[[^\]]+\]\s*/, '')
     .trim();
   if (!body) return '';
-  if (/OpenClaw install\/update in progress, watchdog standby/i.test(body)) return 'standby';
+  if (/OpenClaw (?:install\/update|operation) in progress, watchdog standby/i.test(body)) return 'standby';
   if (/OpenClaw source entry missing .*watchdog idle/i.test(body)) return `idle:${body}`;
   return '';
 }
@@ -885,16 +885,113 @@ function restartGatewayForeground(callback) {
   if (compat?.repaired) {
     console.log(`[openclaw][start] repaired dist/${compat.target} -> ${compat.source}`);
   }
-  const killCmd = [
+  console.log('[openclaw][start] trying fast restart via direct `gateway run --force --allow-unconfigured`');
+  const fastRestartCmd = [
+    `SOURCE_ENTRY=${JSON.stringify(OPENCLAW_SOURCE_ENTRY)}`,
+    `RUNTIME_LOG=${JSON.stringify(GATEWAY_RUNTIME_LOG_FILE)}`,
+    'OPENCLAW_BIN="$(command -v openclaw 2>/dev/null || true)"',
+    'if [ -z "$OPENCLAW_BIN" ] && [ -x /root/.npm-global/bin/openclaw ]; then OPENCLAW_BIN=/root/.npm-global/bin/openclaw; fi',
+    'if [ -z "$OPENCLAW_BIN" ] && [ -x /usr/local/bin/openclaw ]; then OPENCLAW_BIN=/usr/local/bin/openclaw; fi',
+    'LAUNCH_CMD=""',
+    'if [ -f "$SOURCE_ENTRY" ]; then',
+    '  LAUNCH_CMD="node --experimental-sqlite $SOURCE_ENTRY gateway run --force --allow-unconfigured"',
+    'elif [ -n "$OPENCLAW_BIN" ]; then',
+    '  LAUNCH_CMD="$OPENCLAW_BIN gateway run --force --allow-unconfigured"',
+    'fi',
+    'if [ -z "$LAUNCH_CMD" ]; then exit 19; fi',
+    'pkill -TERM -x openclaw-gateway >/dev/null 2>&1 || true',
+    'pkill -TERM -x openclaw >/dev/null 2>&1 || true',
     'pgrep -x openclaw-gatewa 2>/dev/null | xargs -r kill -TERM >/dev/null 2>&1 || true',
     'pgrep -f "[o]penclaw\\.mjs gateway" 2>/dev/null | xargs -r kill -TERM >/dev/null 2>&1 || true',
-    'pgrep -f "[o]penclaw-gateway-watchdog\\.sh" 2>/dev/null | xargs -r kill -TERM >/dev/null 2>&1 || true',
+    'pgrep -f "[o]penclaw[^\\n]*gateway run" 2>/dev/null | xargs -r kill -TERM >/dev/null 2>&1 || true',
+    'sleep 1',
+    'nohup bash --noprofile --norc -lc "$LAUNCH_CMD" >> "$RUNTIME_LOG" 2>&1 &',
+    'sleep 1',
+    'if pgrep -x openclaw-gateway >/dev/null 2>&1; then exit 0; fi',
+    'if pgrep -x openclaw >/dev/null 2>&1; then exit 0; fi',
+    'if pgrep -x openclaw-gatewa >/dev/null 2>&1; then exit 0; fi',
+    'if pgrep -f "[o]penclaw\\.mjs gateway" >/dev/null 2>&1; then exit 0; fi',
+    'if pgrep -f "[o]penclaw[^\\n]*gateway run" >/dev/null 2>&1; then exit 0; fi',
+    'for i in 1 2 3 4 5 6 7 8 9 10; do',
+    '  code="$(curl --noproxy \"*\" -sS --connect-timeout 1 --max-time 2 -o /dev/null -w \"%{http_code}\" http://127.0.0.1:18789/health 2>/dev/null || true)"',
+    '  case "$code" in 200|401|403) exit 0 ;; esac',
+    '  if pgrep -x openclaw-gateway >/dev/null 2>&1; then exit 0; fi',
+    '  if pgrep -x openclaw >/dev/null 2>&1; then exit 0; fi',
+    '  if pgrep -x openclaw-gatewa >/dev/null 2>&1; then exit 0; fi',
+    '  if pgrep -f "[o]penclaw\\.mjs gateway" >/dev/null 2>&1; then exit 0; fi',
+    '  if pgrep -f "[o]penclaw[^\\n]*gateway run" >/dev/null 2>&1; then exit 0; fi',
+    '  sleep 1',
+    'done',
+    'exit 18'
+  ].join('\n');
+  exec(`bash --noprofile --norc -lc '${fastRestartCmd}'`, { env: { ...process.env, TERM: 'dumb' } }, (fastErr, fastStdout, fastStderr) => {
+    if (!fastErr) {
+      console.log('[openclaw][start] gateway restart handled by direct gateway run (process launched or health ready)');
+      return callback(null, 'gateway restart via direct run', '');
+    }
+    const fastDetail = compactOutput(fastStderr || fastStdout || fastErr?.message || '');
+    console.log(`[openclaw][start] fast restart unavailable, fallback to watchdog path: ${fastDetail || 'exit != 0'}`);
+  const killCmd = [
+    'pkill -TERM -x openclaw-gateway >/dev/null 2>&1 || true',
+    'pkill -TERM -x openclaw >/dev/null 2>&1 || true',
+    'pgrep -x openclaw-gatewa 2>/dev/null | xargs -r kill -TERM >/dev/null 2>&1 || true',
+    'pgrep -f "[o]penclaw\\.mjs gateway" 2>/dev/null | xargs -r kill -TERM >/dev/null 2>&1 || true',
+    'pgrep -f "[o]penclaw[^\\n]*gateway run" 2>/dev/null | xargs -r kill -TERM >/dev/null 2>&1 || true',
     'sleep 1'
   ].join('\n');
   exec(`bash --noprofile --norc -lc '${killCmd}'`, { env: { ...process.env, TERM: 'dumb' } }, (killErr, killStdout, killStderr) => {
     if (killErr) return callback(killErr, killStdout, killStderr);
     ensureGatewayWatchdog(callback);
   });
+  });
+}
+
+let gatewayRestartSettleTimer = null;
+
+function clearGatewayRestartSettleTimer() {
+  if (gatewayRestartSettleTimer) {
+    clearTimeout(gatewayRestartSettleTimer);
+    gatewayRestartSettleTimer = null;
+  }
+}
+
+function scheduleGatewayRestartSettle({ timeoutMs = 240000, intervalMs = 3000 } = {}) {
+  clearGatewayRestartSettleTimer();
+  const startedAt = Date.now();
+  const tick = () => {
+    const opState = getOpenClawOperationState();
+    if (opState?.type !== 'restarting_gateway') {
+      clearGatewayRestartSettleTimer();
+      return;
+    }
+    const gatewayHealthCode = Number.parseInt(String(runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000) || '').trim(), 10) || 0;
+    const gatewayRunning = gatewayHealthCode === 200;
+    const gatewayProcessRunning = isGatewayRuntimeProcessRunning()
+      || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
+    const watchdogStarting = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200)
+      && isGatewayWatchdogStartupInProgress(900);
+
+    if (gatewayRunning) {
+      console.log('[openclaw][start] gateway became healthy, clearing restart operation state');
+      clearOpenClawOperationState('restarting_gateway');
+      clearGatewayRestartSettleTimer();
+      return;
+    }
+    if (!gatewayProcessRunning && !watchdogStarting) {
+      console.log('[openclaw][start] gateway process missing during restart settle, clearing restart operation state');
+      clearOpenClawOperationState('restarting_gateway');
+      clearGatewayRestartSettleTimer();
+      return;
+    }
+    if ((Date.now() - startedAt) >= Math.max(30000, Number(timeoutMs || 240000))) {
+      console.log('[openclaw][start] restart settle timeout reached, clearing restart operation state');
+      clearOpenClawOperationState('restarting_gateway');
+      clearGatewayRestartSettleTimer();
+      return;
+    }
+    gatewayRestartSettleTimer = setTimeout(tick, Math.max(1000, Number(intervalMs || 3000)));
+  };
+  gatewayRestartSettleTimer = setTimeout(tick, Math.max(1000, Number(intervalMs || 3000)));
 }
 
 function stripAnsi(input) {
@@ -930,7 +1027,8 @@ function runCommandText(cmd, timeoutMs = 2500) {
 
 function getGatewayRuntimePid() {
   const cmd = [
-    'pid="$(pgrep -x openclaw-gatewa 2>/dev/null | head -1 || true)"',
+    'pid="$(pgrep -x openclaw-gateway 2>/dev/null | head -1 || true)"',
+    'if [ -z "$pid" ]; then pid="$(pgrep -x openclaw-gatewa 2>/dev/null | head -1 || true)"; fi',
     'if [ -z "$pid" ]; then pid="$(pgrep -f "[o]penclaw\\.mjs gateway" 2>/dev/null | head -1 || true)"; fi',
     'if [ -z "$pid" ]; then pid="$(pgrep -f "[o]penclaw[^\\n]*gateway run" 2>/dev/null | head -1 || true)"; fi',
     'if [ -z "$pid" ]; then',
@@ -2390,13 +2488,30 @@ app.post('/api/update/hotpatch', async (req, res) => {
 // ============================================================
 app.get('/api/status', (req, res) => {
   const statusStart = Date.now();
-  const status = { gateway: false, web: true, caddy: false, uptime: 0, memory: {}, version: getCurrentVersion() };
+  const status = { gateway: false, gatewayStarting: false, web: true, caddy: false, uptime: 0, memory: {}, version: getCurrentVersion() };
   const ocSnapshot = getOpenClawInstallationSnapshot();
   status.openclawInstalled = !!ocSnapshot?.installed;
   status.openclawVersion = String(ocSnapshot?.version || '').trim();
 
-  status.gateway = runCommandOk('curl -s --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health >/dev/null 2>&1', 2500)
+  const gatewayLogTail = readGatewayLogTail(220);
+  const gatewayHealthCodeText = runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000);
+  const gatewayHealthCode = Number.parseInt(String(gatewayHealthCodeText || '').trim(), 10) || 0;
+  const gatewayRuntimePid = getGatewayRuntimePid();
+  const gatewayPidSafe = Number.parseInt(String(gatewayRuntimePid || '').trim(), 10) || 0;
+  const gatewayProcessRunning = isGatewayRuntimeProcessRunning()
     || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
+  const gatewayProcessUptimeSec = gatewayPidSafe > 0
+    ? Number.parseInt(String(runCommandText(`ps -o etimes= -p ${gatewayPidSafe} 2>/dev/null || true`, 1200) || '').trim(), 10) || 0
+    : 0;
+  const gatewayPairingRequired = !isGatewayDeviceAuthDisabled()
+    && detectGatewayPairingRequiredRecent(gatewayLogTail, 900);
+  const opState = getOpenClawOperationState();
+
+  status.gateway = gatewayHealthCode === 200;
+  status.gatewayHealthCode = gatewayHealthCode;
+  status.gatewayProcessRunning = gatewayProcessRunning;
+  status.gatewayProcessUptimeSec = gatewayProcessUptimeSec;
+  status.gatewayPairingRequired = gatewayPairingRequired;
   if (!status.gateway) {
     const e = new Error('gateway not detected');
     if (req.query.debug === '1') {
@@ -2433,6 +2548,23 @@ app.get('/api/status', (req, res) => {
   status.port = dockerConfig.port || 18789;
   status.browserEnabled = !!dockerConfig.browserEnabled;
   status.gatewayWatchdog = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200);
+  const gatewayWarmupByProcess = !!(
+    status.openclawInstalled
+    && !status.gateway
+    && status.gatewayProcessRunning
+    && status.gatewayProcessUptimeSec > 0
+    && status.gatewayProcessUptimeSec <= 300
+  );
+  const gatewayRestartingByOp = !!(
+    opState?.type === 'restarting_gateway'
+    && (status.openclawInstalled || gatewayRestartRunning || status.gatewayProcessRunning || status.gateway)
+  );
+  const gatewayWarmupByWatchdog = !!(
+    !status.gateway
+    && status.gatewayWatchdog
+    && isGatewayWatchdogStartupInProgress(900)
+  );
+  status.gatewayStarting = gatewayWarmupByProcess || gatewayRestartingByOp || gatewayWarmupByWatchdog;
 
   if (status.browserEnabled) {
     status.browser = runCommandOk('pgrep -f "websockify.*6080" >/dev/null 2>&1', 1200);
@@ -2458,6 +2590,7 @@ app.get('/api/status', (req, res) => {
   const debugMode = req.query.debug === '1';
   const snapshot = [
     Number(status.gateway),
+    Number(status.gatewayStarting),
     Number(status.caddy),
     Number(status.browser),
     Number(status.browserEnabled),
@@ -3071,6 +3204,29 @@ function getLastRollbackAtFromWatchdog() {
     }
   }
   return '';
+}
+
+function isGatewayWatchdogStartupInProgress(maxAgeSec = 900) {
+  try {
+    const text = tailFile(GATEWAY_WATCHDOG_LOG, 2400, 5000);
+    if (!text) return false;
+    const lines = text.split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = String(lines[i] || '');
+      if (!line) continue;
+      if (/Gateway started and healthy|Gateway is UP|startup completed/i.test(line)) return false;
+      if (/Startup timed out|Gateway failed|watchdog idle|runtime entry missing/i.test(line)) return false;
+      if (/Startup in progress|Gateway process launched|Gateway is DOWN\s+—\s+restarting|Starting gateway/i.test(line)) {
+        const ts = extractWatchdogTimestamp(line);
+        if (!ts) return true;
+        const parsed = Date.parse(ts.replace(' ', 'T'));
+        if (!Number.isFinite(parsed)) return true;
+        const ageSec = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
+        return ageSec <= Math.max(60, Number(maxAgeSec || 900));
+      }
+    }
+  } catch {}
+  return false;
 }
 
 function getLastBackupAt() {
@@ -3989,7 +4145,12 @@ app.get('/api/openclaw', async (req, res) => {
       operationState?.type === 'restarting_gateway'
       && (installed || gatewayRestartRunning || gatewayProcessRunning || gatewayRunning)
     );
-    const gatewayStarting = gatewayWarmupByProcess || gatewayRestartingByOp;
+    const gatewayWarmupByWatchdog = !!(
+      !gatewayRunning
+      && gatewayWatchdogRunning
+      && isGatewayWatchdogStartupInProgress(900)
+    );
+    const gatewayStarting = gatewayWarmupByProcess || gatewayRestartingByOp || gatewayWarmupByWatchdog;
     const lastBackupAt = getLastBackupAt();
     const lastRollbackAt = getLastRollbackAtFromWatchdog();
 
@@ -4409,6 +4570,14 @@ app.post('/api/openclaw/start', (req, res) => {
     });
   }
   const opState = getOpenClawOperationState();
+  if (opState.type === 'restarting_gateway') {
+    console.log('[openclaw][start] restart already settling, returning reuse response');
+    return res.json({
+      success: true,
+      message: 'Gateway 正在启动中，请稍候',
+      logs: readOpenClawGatewayLogs(120, { includeWatchdog: true })
+    });
+  }
   if (opState.type !== 'idle' && opState.type !== 'restarting_gateway') {
     console.log(`[openclaw][start] blocked by operation state: ${opState.type}`);
     return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
@@ -4417,12 +4586,24 @@ app.post('/api/openclaw/start', (req, res) => {
   setOpenClawOperationState('restarting_gateway');
   restartGatewayForeground((err, stdout, stderr) => {
     gatewayRestartRunning = false;
-    clearOpenClawOperationState('restarting_gateway');
     const startupLogs = readOpenClawGatewayLogs(160, { includeWatchdog: true, includeInstall: true });
     if (!err) {
-      console.log('[openclaw][start] gateway restart request finished, watchdog should relaunch');
-      return res.json({ success: true, message: 'Gateway 进程已终止，watchdog 将自动拉起', logs: startupLogs });
+      const directRunHandled = /direct run/i.test(String(stdout || ''));
+      if (directRunHandled) {
+        scheduleGatewayRestartSettle();
+      } else {
+        clearOpenClawOperationState('restarting_gateway');
+      }
+      console.log(directRunHandled
+        ? '[openclaw][start] gateway restart request finished via direct run'
+        : '[openclaw][start] gateway restart request finished, watchdog should relaunch');
+      return res.json({
+        success: true,
+        message: directRunHandled ? 'Gateway 新进程已直接拉起，正在预热' : 'Gateway 进程已终止，watchdog 将自动拉起',
+        logs: startupLogs
+      });
     }
+    clearOpenClawOperationState('restarting_gateway');
     const detail = compactOutput(stderr || stdout || err.message || '');
     console.log(`[openclaw][start] restart failed: ${detail || 'unknown error'}`);
     if (String(detail || '').includes('exit 21')) {

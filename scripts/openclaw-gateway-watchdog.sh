@@ -161,13 +161,21 @@ restore_previous_backup() {
 }
 
 get_gateway_pid() {
+  pgrep -x "openclaw-gateway" 2>/dev/null | head -1 && return
   pgrep -x "openclaw-gatewa" 2>/dev/null | head -1 && return
   pgrep -f "openclaw.mjs gateway" 2>/dev/null | head -1 && return
+  pgrep -f "openclaw.*gateway run" 2>/dev/null | head -1 && return
   local pid
   for pid in $(pgrep -x "openclaw" 2>/dev/null); do
     [[ "$(cat /proc/$pid/comm 2>/dev/null)" == "bash" ]] && continue
-    echo "$pid"
-    return
+    local cmdline
+    cmdline="$(tr '\000' ' ' < /proc/$pid/cmdline 2>/dev/null || true)"
+    case "$cmdline" in
+      *"gateway run"*|*" openclaw gateway"*)
+        echo "$pid"
+        return
+        ;;
+    esac
   done
 }
 
@@ -204,10 +212,10 @@ current_operation_type() {
   echo "${op:-idle}"
 }
 
-is_install_update_active() {
+is_watchdog_standby_active() {
   local op
   op="$(current_operation_type)"
-  [[ "$op" = "installing" || "$op" = "updating" ]]
+  [[ "$op" = "installing" || "$op" = "updating" || "$op" = "restarting_gateway" ]]
 }
 
 kill_gateway() {
@@ -224,9 +232,11 @@ kill_gateway() {
       ((waited++))
     done
   fi
+  pkill -9 -x "openclaw-gateway" 2>/dev/null || true
   pkill -9 -x "openclaw-gatewa" 2>/dev/null || true
   pkill -9 -x "openclaw" 2>/dev/null || true
   pkill -9 -f "openclaw.mjs gateway" 2>/dev/null || true
+  pkill -9 -f "openclaw.*gateway run" 2>/dev/null || true
   [[ -n "$LAST_PID" ]] && kill -9 "$LAST_PID" 2>/dev/null || true
   LAST_PID=""
   sleep 2
@@ -432,8 +442,8 @@ log "Watchdog v2 started (poll=${POLL_INTERVAL}s, timeout=${STARTUP_TIMEOUT}s, p
 log_event "start" "poll=${POLL_INTERVAL}s timeout=${STARTUP_TIMEOUT}s port=$PORT"
 
 while true; do
-  if is_install_update_active; then
-    log "OpenClaw install/update in progress, watchdog standby"
+  if is_watchdog_standby_active; then
+    log "OpenClaw operation in progress, watchdog standby"
     sleep "$CHECK_INTERVAL"
     continue
   fi
