@@ -1143,12 +1143,13 @@ async function refreshOpenClaw(opts = {}){
     setOpenClawStatusLine('更新状态：正在检测 OpenClaw 状态', null);
     syncOpenClawButtons();
   }
-  const retries = Math.max(0, Number(opts.retries ?? 1));
+  const retries = Math.max(0, Number(opts.retries ?? 0));
+  const openclawStatusTimeoutMs = Math.max(2000, Number(opts.timeoutMs ?? 5000));
   let d = null;
   let lastErr = '';
 
   for (let i = 0; i <= retries; i++) {
-    d = await api('/api/openclaw', { timeoutMs: 15000 });
+    d = await api('/api/openclaw', { timeoutMs: openclawStatusTimeoutMs });
     if (d && !d.error && Object.prototype.hasOwnProperty.call(d, 'installed')) break;
     lastErr = d?.error || '接口返回异常';
     if (i < retries) {
