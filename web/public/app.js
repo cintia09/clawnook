@@ -22,6 +22,14 @@ function dlog(...args){
   console.debug('[oc-debug]', ...args);
 }
 
+const UI_MAX_LINES_DEFAULT = 10000;
+const UI_OC_LOG_MAX_LINES = 12000;
+const UI_TERMINAL_MAX_LINES = 15000;
+const UI_LOG_VIEW_FETCH_LINES = 1200;
+const UI_LOG_VIEW_RENDER_MAX_LINES = 12000;
+const UI_TERMINAL_FALLBACK_FETCH_LINES = 400;
+const UI_XTERM_SCROLLBACK = 50000;
+
 // ------------------------
 // API helper
 // ------------------------
@@ -188,7 +196,7 @@ function colorizeLine(rawLine){
   return `<span class="term-line">${safe}</span>`;
 }
 
-function appendColored(el, text, maxLines = 5000, autoscroll = true){
+function appendColored(el, text, maxLines = UI_MAX_LINES_DEFAULT, autoscroll = true){
   if (!el) return;
   const html = stripAnsi(String(text ?? '')).split('\n').map(colorizeLine).join('\n');
   el.insertAdjacentHTML('beforeend', html);
@@ -199,7 +207,7 @@ function appendColored(el, text, maxLines = 5000, autoscroll = true){
   if (autoscroll) el.scrollTop = el.scrollHeight;
 }
 
-function setColored(el, text, maxLines = 5000, autoscroll = true){
+function setColored(el, text, maxLines = UI_MAX_LINES_DEFAULT, autoscroll = true){
   if (!el) return;
   el.innerHTML = '';
   appendColored(el, text, maxLines, autoscroll);
@@ -908,7 +916,7 @@ function shouldAutoScroll(el, threshold = 24){
 function appendOcLogLine(line){
   const logEl = $('oc-log');
   if (!logEl) return;
-  appendColored(logEl, `${line}\n`, 6000, shouldAutoScroll(logEl));
+  appendColored(logEl, `${line}\n`, UI_OC_LOG_MAX_LINES, shouldAutoScroll(logEl));
 }
 
 function appendOcLogBlock(text){
@@ -916,7 +924,7 @@ function appendOcLogBlock(text){
   if (!logEl) return;
   const chunk = String(text || '').trim();
   if (!chunk) return;
-  appendColored(logEl, `${chunk}\n`, 6000, shouldAutoScroll(logEl));
+  appendColored(logEl, `${chunk}\n`, UI_OC_LOG_MAX_LINES, shouldAutoScroll(logEl));
 }
 
 function formatRemainingTime(totalSec){
@@ -1285,10 +1293,10 @@ async function pollTask(taskId){
     const autoScroll = shouldAutoScroll(logEl);
 
     if (logEl && st.delta) {
-      appendColored(logEl, st.delta, 6000, autoScroll);
+      appendColored(logEl, st.delta, UI_OC_LOG_MAX_LINES, autoScroll);
     } else if (logEl && !lastSeq && st.log) {
       // First render fallback
-      setColored(logEl, st.log, 6000, autoScroll);
+      setColored(logEl, st.log, UI_OC_LOG_MAX_LINES, autoScroll);
     }
     lastSeq = Number(st.seq || lastSeq || 0);
 
@@ -1394,7 +1402,7 @@ async function pollRepairTask(taskId){
     }
 
     if (st.delta) {
-      appendColored($('oc-log'), st.delta, 6000, shouldAutoScroll($('oc-log')));
+      appendColored($('oc-log'), st.delta, UI_OC_LOG_MAX_LINES, shouldAutoScroll($('oc-log')));
     }
     lastSeq = Number(st.seq || lastSeq || 0);
 
@@ -2016,7 +2024,7 @@ let termConnectTimeoutTimer = null;
 let termEmulator = null;
 let termFitAddon = null;
 const TERM_CACHE_KEY = 'oc_terminal_cache_v2';
-const TERM_CACHE_MAX = 800000;
+const TERM_CACHE_MAX = 2000000;
 let termOutputCache = '';
 
 function stripTerminalBootstrapNoise(text){
@@ -2105,7 +2113,7 @@ function initTerminalEmulator(){
       cursorBlink: true,
       cursorInactiveStyle: 'none',
       convertEol: true,
-      scrollback: 20000,
+      scrollback: UI_XTERM_SCROLLBACK,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
       fontSize: 13,
       theme: {
@@ -2157,7 +2165,7 @@ function termAppendText(text){
   if (!el) return;
   const chunk = normalizeTerminalChunk(chunkRaw);
   if (!chunk) return;
-  appendColored(el, chunk, 8000, !!$('term-autoscroll')?.checked);
+  appendColored(el, chunk, UI_TERMINAL_MAX_LINES, !!$('term-autoscroll')?.checked);
 }
 
 function terminalDisconnect(){
@@ -2178,11 +2186,11 @@ function terminalDisconnect(){
 
 async function pullTerminalFallbackLogs(){
   if (termWs && termWs.readyState === WebSocket.OPEN) return;
-  const d = await api('/api/logs?lines=140');
+  const d = await api(`/api/logs?lines=${UI_TERMINAL_FALLBACK_FETCH_LINES}`);
   if (d.error) return;
   const logs = String(d.logs || '').trimEnd();
   if (!logs) return;
-  setColored($('terminal'), logs, 6000, !!$('term-autoscroll')?.checked);
+  setColored($('terminal'), logs, UI_TERMINAL_MAX_LINES, !!$('term-autoscroll')?.checked);
   if ($('term-autoscroll')?.checked) {
     $('terminal').scrollTop = $('terminal').scrollHeight;
   }
@@ -2241,7 +2249,7 @@ function bindTerminalInteraction(){
   }
 
   if (termOutputCache) {
-    appendColored(terminalEl, normalizeTerminalChunk(termOutputCache), 8000, !!$('term-autoscroll')?.checked);
+    appendColored(terminalEl, normalizeTerminalChunk(termOutputCache), UI_TERMINAL_MAX_LINES, !!$('term-autoscroll')?.checked);
   }
 
   terminalEl.addEventListener('keydown', (e) => {
@@ -2470,9 +2478,9 @@ bindTerminalInteraction();
 let logsTimer = null;
 async function refreshLogs(){
   const mode = String($('logs-view-mode')?.value || 'timeline');
-  const d = await api(`/api/logs?lines=400&view=${encodeURIComponent(mode)}&fold=1`);
+  const d = await api(`/api/logs?lines=${UI_LOG_VIEW_FETCH_LINES}&view=${encodeURIComponent(mode)}&fold=1`);
   if (d.error) return;
-  setColored($('log-viewer'), d.logs || '', 6000, true);
+  setColored($('log-viewer'), d.logs || '', UI_LOG_VIEW_RENDER_MAX_LINES, true);
   $('log-viewer').scrollTop = $('log-viewer').scrollHeight;
 }
 

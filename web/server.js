@@ -27,6 +27,19 @@ const baseConsole = {
 };
 
 const OPENCLAW_LOG_TIMEZONE = process.env.OPENCLAW_LOG_TIMEZONE || 'Asia/Shanghai';
+const LOG_TAIL_MAX_LINES = 10000;
+const LOG_VIEW_DEFAULT_LINES = 300;
+const LOG_VIEW_MAX_LINES = 10000;
+const TASK_LOG_BLOCK_MAX_LINES = 5000;
+const OPENCLAW_GATEWAY_LOG_API_MAX_LINES = 3000;
+const GATEWAY_LOG_RUNTIME_MAX_LINES = 600;
+const GATEWAY_LOG_WATCHDOG_MAX_LINES = 300;
+const GATEWAY_LOG_INSTALL_MAX_LINES = 1200;
+const LOG_VIEW_INSTALL_BLOCK_CAP = 1200;
+const LOG_VIEW_REPAIR_BLOCK_CAP = 800;
+const LOG_VIEW_GATEWAY_BLOCK_CAP = 1200;
+const LOG_VIEW_PANEL_BLOCK_CAP = 800;
+const WS_LOG_BOOTSTRAP_LINES = 400;
 
 function getLogTimezoneOffsetMinutes(value = Date.now()) {
   const date = value instanceof Date ? value : new Date(value);
@@ -398,7 +411,7 @@ function repairOpenClawConfigProviders() {
 function tailFile(filePath, lines = 200, timeoutMs = 2500) {
   try {
     if (!filePath || !fs.existsSync(filePath)) return '';
-    return execSync(`tail -${Math.max(1, Math.min(lines, 5000))} "${filePath}"`, { encoding: 'utf8', timeout: timeoutMs });
+    return execSync(`tail -${Math.max(1, Math.min(lines, LOG_TAIL_MAX_LINES))} "${filePath}"`, { encoding: 'utf8', timeout: timeoutMs });
   } catch {
     return '';
   }
@@ -406,7 +419,7 @@ function tailFile(filePath, lines = 200, timeoutMs = 2500) {
 
 function keepLastLines(text, maxLines = 200) {
   const list = String(text || '').split('\n');
-  const safe = Math.max(20, Math.min(Number(maxLines || 200), 5000));
+  const safe = Math.max(20, Math.min(Number(maxLines || 200), LOG_VIEW_MAX_LINES));
   return list.slice(-safe).join('\n');
 }
 
@@ -661,21 +674,21 @@ function readOpenClawGatewayLogs(lines = 200, { includeWatchdog = false, include
     chunks.push(`[${label}]`);
     chunks.push(body);
   };
-  const runtimeLog = tailFile(GATEWAY_RUNTIME_LOG_FILE, Math.min(lines, 180), 2500);
+  const runtimeLog = tailFile(GATEWAY_RUNTIME_LOG_FILE, Math.min(lines, GATEWAY_LOG_RUNTIME_MAX_LINES), 2500);
   if (runtimeLog.trim()) {
     pushLabeledChunk('gateway-runtime', runtimeLog);
   } else {
-    const legacyLog = tailFile(GATEWAY_LEGACY_LOG_FILE, Math.min(lines, 180), 2500);
+    const legacyLog = tailFile(GATEWAY_LEGACY_LOG_FILE, Math.min(lines, GATEWAY_LOG_RUNTIME_MAX_LINES), 2500);
     if (legacyLog.trim()) pushLabeledChunk('gateway-legacy', legacyLog);
   }
 
   if (includeInstall) {
-    const installTail = readLatestInstallTaskLogSection(Math.min(Math.max(lines, 160), 420));
+    const installTail = readLatestInstallTaskLogSection(Math.min(Math.max(lines, 160), GATEWAY_LOG_INSTALL_MAX_LINES));
     if (installTail.trim()) pushLabeledChunk('install', installTail);
   }
 
   if (includeWatchdog) {
-    const watchdogLog = tailFile(GATEWAY_WATCHDOG_LOG, Math.min(lines, 120), 2500);
+    const watchdogLog = tailFile(GATEWAY_WATCHDOG_LOG, Math.min(lines, GATEWAY_LOG_WATCHDOG_MAX_LINES), 2500);
     const reducedWatchdog = String(watchdogLog || '')
       .split('\n')
       .filter((line) => {
@@ -3277,6 +3290,12 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  fi',
     'done',
     'cd "$EXTRACT_DIR"',
+    'export NODE_ENV=development',
+    'export NPM_CONFIG_PRODUCTION=false',
+    'export npm_config_production=false',
+    'export NPM_CONFIG_INCLUDE=dev',
+    'export npm_config_include=dev',
+    'echo "[openclaw] source 构建阶段使用 dev 依赖模式 (NPM_CONFIG_PRODUCTION=false)"',
     'npm config set fetch-retries 5',
     'npm config set fetch-retry-mintimeout 2000',
     'npm config set fetch-retry-maxtimeout 15000',
@@ -4273,7 +4292,7 @@ app.post('/api/openclaw/start', (req, res) => {
 
 app.get('/api/openclaw/gateway/logs', (req, res) => {
   try {
-    const lines = Math.max(20, Math.min(parseInt(req.query.lines || '200', 10) || 200, 1200));
+    const lines = Math.max(20, Math.min(parseInt(req.query.lines || String(LOG_VIEW_DEFAULT_LINES), 10) || LOG_VIEW_DEFAULT_LINES, OPENCLAW_GATEWAY_LOG_API_MAX_LINES));
     const logs = readOpenClawGatewayLogs(lines, { includeWatchdog: true, includeInstall: true });
     res.json({ success: true, logs });
   } catch (e) {
@@ -4298,7 +4317,7 @@ function sanitizeLogLine(line) {
 function tailLogLines(lines = 200) {
   const logFile = resolveGatewayLogFileForStreaming();
   if (!fs.existsSync(logFile)) return [];
-  const output = execSync(`tail -${Math.max(1, Math.min(lines, 5000))} "${logFile}"`, { encoding: 'utf8', timeout: 2500 });
+  const output = execSync(`tail -${Math.max(1, Math.min(lines, LOG_TAIL_MAX_LINES))} "${logFile}"`, { encoding: 'utf8', timeout: 2500 });
   return output
     .split('\n')
     .filter(Boolean)
@@ -4320,7 +4339,7 @@ function formatTaskLogBlock(title, task, lines = 200) {
   if (!task || typeof task !== 'object') return '';
   const text = String(task.log || '').trim();
   if (!text) return '';
-  const safeLines = Math.max(20, Math.min(lines, 2000));
+  const safeLines = Math.max(20, Math.min(lines, TASK_LOG_BLOCK_MAX_LINES));
   const tail = text.split('\n').slice(-safeLines).map(sanitizeLogLine).join('\n').trim();
   if (!tail) return '';
   const status = String(task.status || 'unknown');
@@ -4330,29 +4349,29 @@ function formatTaskLogBlock(title, task, lines = 200) {
 }
 
 app.get('/api/logs', (req, res) => {
-  const lines = parseInt(req.query.lines, 10) || 100;
+  const lines = parseInt(req.query.lines, 10) || LOG_VIEW_DEFAULT_LINES;
   try {
-    const safeLines = Math.max(20, Math.min(lines, 5000));
+    const safeLines = Math.max(20, Math.min(lines, LOG_VIEW_MAX_LINES));
     const foldWatchdog = String(req.query.fold || '1') !== '0';
     const viewMode = String(req.query.view || 'timeline').trim().toLowerCase();
     const mergedBlocks = [];
 
     const activeInstall = activeInstallTaskId ? installLogs[activeInstallTaskId] : null;
     const installTask = activeInstall || getLatestTaskLog(installLogs);
-    const installBlock = formatTaskLogBlock('openclaw-install', installTask, Math.min(safeLines, 400));
+    const installBlock = formatTaskLogBlock('openclaw-install', installTask, Math.min(safeLines, LOG_VIEW_INSTALL_BLOCK_CAP));
     if (installBlock) mergedBlocks.push(installBlock);
 
     const activeRepair = activeRepairTaskId ? repairLogs[activeRepairTaskId] : null;
     const repairTask = activeRepair || getLatestTaskLog(repairLogs);
-    const repairBlock = formatTaskLogBlock('openclaw-repair', repairTask, Math.min(safeLines, 300));
+    const repairBlock = formatTaskLogBlock('openclaw-repair', repairTask, Math.min(safeLines, LOG_VIEW_REPAIR_BLOCK_CAP));
     if (repairBlock) mergedBlocks.push(repairBlock);
 
-    const gatewayCombined = readOpenClawGatewayLogs(Math.min(safeLines, 400), { includeWatchdog: true }).trim();
+    const gatewayCombined = readOpenClawGatewayLogs(Math.min(safeLines, LOG_VIEW_GATEWAY_BLOCK_CAP), { includeWatchdog: true }).trim();
     if (gatewayCombined) {
       mergedBlocks.push(gatewayCombined);
     }
 
-    const panelLog = tailFile(WEB_PANEL_LOG_FILE, Math.min(safeLines, 220), 2500).trim();
+    const panelLog = tailFile(WEB_PANEL_LOG_FILE, Math.min(safeLines, LOG_VIEW_PANEL_BLOCK_CAP), 2500).trim();
     if (panelLog) {
       const sanitizedPanel = panelLog
         .split('\n')
@@ -4581,7 +4600,7 @@ if (WebSocketServer) {
 
     // Send recent lines on connect
     try {
-      const lines = tailLogLines(120);
+      const lines = tailLogLines(WS_LOG_BOOTSTRAP_LINES);
       ws.send(JSON.stringify({ type: 'lines', lines }));
     } catch {}
 

@@ -150,7 +150,9 @@ trigger_mode() {
   [ -n "$task_id" ] || fail "mode=$mode missing taskId response=$resp"
 
   final_json="$(poll_task_with_web_stability "$task_id" "$mode" "$web_pid_before")"
-  if ! echo "$final_json" | jq -r '.log // ""' | grep -q "\\[openclaw\\] install mode: ${mode}"; then
+  local final_log
+  final_log="$(echo "$final_json" | jq -r '.log // ""')"
+  if ! grep -Fq "[openclaw] install mode: ${mode}" <<<"$final_log"; then
     fail "mode=$mode task log missing install mode marker"
   fi
 
