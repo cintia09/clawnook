@@ -342,9 +342,36 @@ qa('[data-oc-switch]').forEach((btn) => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  if (getRouteFromHash() !== 'terminal') return;
+  if (getRouteFromHash() !== 'terminal') {
+    if (termFallbackTimer || (termWs && termWs.readyState !== WebSocket.OPEN)) {
+      location.hash = 'terminal';
+      setActiveRoute('terminal');
+    }
+    return;
+  }
   ensureTerminalViewportFitted();
   if (termWs && termWs.readyState === WebSocket.OPEN) return;
+  if (termFallbackTimer) {
+    clearInterval(termFallbackTimer);
+    termFallbackTimer = null;
+  }
+  terminalConnect();
+});
+
+window.addEventListener('focus', () => {
+  if (getRouteFromHash() !== 'terminal') {
+    if (termFallbackTimer || (termWs && termWs.readyState !== WebSocket.OPEN)) {
+      location.hash = 'terminal';
+      setActiveRoute('terminal');
+    }
+    return;
+  }
+  ensureTerminalViewportFitted();
+  if (termWs && termWs.readyState === WebSocket.OPEN) return;
+  if (termFallbackTimer) {
+    clearInterval(termFallbackTimer);
+    termFallbackTimer = null;
+  }
   terminalConnect();
 });
 

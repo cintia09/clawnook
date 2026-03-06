@@ -1312,12 +1312,18 @@ function detectOpenClawInstallation() {
 const openClawRuntimeRecoveryState = {
   lastAttemptAt: 0,
   lastIssue: '',
-  lastTaskId: ''
+  lastTaskId: '',
+  suppressUntil: 0,
+  suppressReason: ''
 };
 const OPENCLAW_RUNTIME_RECOVERY_GAP_MS = 3 * 60 * 1000;
+const OPENCLAW_RUNTIME_RECOVERY_SUPPRESS_AFTER_UNINSTALL_MS = 5 * 60 * 1000;
 
 async function maybeTriggerOpenClawRuntimeRecovery(issue = '') {
   const now = Date.now();
+  if (openClawRuntimeRecoveryState.suppressUntil && now < openClawRuntimeRecoveryState.suppressUntil) {
+    return { triggered: false, reason: openClawRuntimeRecoveryState.suppressReason || 'suppressed', taskId: '' };
+  }
   if (openClawRuntimeRecoveryState.lastAttemptAt && (now - openClawRuntimeRecoveryState.lastAttemptAt) < OPENCLAW_RUNTIME_RECOVERY_GAP_MS) {
     return { triggered: false, reason: 'cooldown', taskId: '' };
   }
@@ -2850,9 +2856,8 @@ function runOpenClawTask(command, title, operationType = 'installing') {
   });
   const heartbeatTimer = setInterval(() => {
     const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
-    appendInstallLog(task, `[openclaw][progress] task=${taskId} op=${operationType} elapsed=${elapsedSec}s status=${task.status}\n`);
     appendInstallLog(task, `[state] operation=${operationType} status=running elapsed=${elapsedSec}s task=${taskId}\n`);
-  }, 15000);
+  }, 30000);
   child.on('error', (err) => {
     clearInterval(heartbeatTimer);
     appendInstallLog(task, `[openclaw] 任务启动失败: ${err.message}\n`);
@@ -2870,6 +2875,14 @@ function runOpenClawTask(command, title, operationType = 'installing') {
     }
     task.status = code === 0 ? 'success' : 'failed';
     task.exitCode = code;
+    if (task.status === 'success' && operationType === 'uninstalling') {
+      openClawRuntimeRecoveryState.suppressUntil = Date.now() + OPENCLAW_RUNTIME_RECOVERY_SUPPRESS_AFTER_UNINSTALL_MS;
+      openClawRuntimeRecoveryState.suppressReason = 'uninstall-cooldown';
+    }
+    if (task.status === 'success' && (operationType === 'installing' || operationType === 'updating')) {
+      openClawRuntimeRecoveryState.suppressUntil = 0;
+      openClawRuntimeRecoveryState.suppressReason = '';
+    }
     if (task.status === 'failed') {
       const lines = String(task.log || '')
         .split(/\r?\n/)
@@ -4161,12 +4174,8 @@ function buildOpenClawNpmInstallCommand() {
     '    echo "[openclaw] 预构建包缺失: $OPENCLAW_PKG_DIR"',
     '    return 14',
     '  fi',
-    '  STAGE_PERSIST_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source.stage.$$"',
-    '  rm -rf "$STAGE_PERSIST_SRC_DIR"',
-    '  mkdir -p "$STAGE_PERSIST_SRC_DIR"',
-    '  cp -a "$OPENCLAW_PKG_DIR"/. "$STAGE_PERSIST_SRC_DIR"/',
     '  rm -rf "$PERSIST_SRC_DIR"',
-    '  mv -Tf "$STAGE_PERSIST_SRC_DIR" "$PERSIST_SRC_DIR"',
+    '  ln -sfn "$OPENCLAW_PKG_DIR" "$PERSIST_SRC_DIR"',
     '  ln -sfn "$PERSIST_SRC_DIR" "$WORK_SRC_DIR"',
     '  if [ ! -f "$PERSIST_SRC_DIR/openclaw.mjs" ] && [ -f "$PERSIST_SRC_DIR/dist/openclaw.mjs" ]; then',
     '    ln -sfn "$PERSIST_SRC_DIR/dist/openclaw.mjs" "$PERSIST_SRC_DIR/openclaw.mjs"',
