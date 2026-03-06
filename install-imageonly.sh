@@ -1057,7 +1057,7 @@ create_and_start(){
       info "注入公钥 $(basename "$keyfile") 到用户 $host_user"
       docker exec "$CONTAINER_NAME" bash -lc "mkdir -p '/home/$host_user/.ssh' && chmod 700 '/home/$host_user/.ssh'" >/dev/null 2>&1 || true
       if docker cp "$keyfile" "$CONTAINER_NAME:/tmp/host_user_key.pub" >/dev/null 2>&1 \
-        && docker exec "$CONTAINER_NAME" bash -lc "cat /tmp/host_user_key.pub >> '/home/$host_user/.ssh/authorized_keys' && sort -u -o '/home/$host_user/.ssh/authorized_keys' '/home/$host_user/.ssh/authorized_keys' && chmod 600 '/home/$host_user/.ssh/authorized_keys' && chown -R '$host_user:$host_user' '/home/$host_user/.ssh' && test -s '/home/$host_user/.ssh/authorized_keys' && rm -f /tmp/host_user_key.pub" >/dev/null 2>&1; then
+        && docker exec "$CONTAINER_NAME" bash -lc "touch '/home/$host_user/.ssh/authorized_keys' && while IFS= read -r k; do [ -z \"\$k\" ] && continue; grep -qxF \"\$k\" '/home/$host_user/.ssh/authorized_keys' || echo \"\$k\" >> '/home/$host_user/.ssh/authorized_keys'; done < /tmp/host_user_key.pub && chmod 600 '/home/$host_user/.ssh/authorized_keys' && chown -R '$host_user:$host_user' '/home/$host_user/.ssh' && test -s '/home/$host_user/.ssh/authorized_keys' && rm -f /tmp/host_user_key.pub" >/dev/null 2>&1; then
         key_injected="true"
         ssh_login_user="$host_user"
         break
@@ -1065,7 +1065,7 @@ create_and_start(){
     fi
     if docker exec "$CONTAINER_NAME" bash -lc "chmod 700 /root 2>/dev/null || true; mkdir -p /root/.ssh && chmod 700 /root/.ssh" >/dev/null 2>&1 \
       && docker cp "$keyfile" "$CONTAINER_NAME:/root/.ssh/authorized_keys.tmp" >/dev/null 2>&1 \
-      && docker exec "$CONTAINER_NAME" bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && test -s /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" >/dev/null 2>&1; then
+      && docker exec "$CONTAINER_NAME" bash -lc "touch /root/.ssh/authorized_keys && while IFS= read -r k; do [ -z \"\$k\" ] && continue; grep -qxF \"\$k\" /root/.ssh/authorized_keys || echo \"\$k\" >> /root/.ssh/authorized_keys; done < /root/.ssh/authorized_keys.tmp && chmod 600 /root/.ssh/authorized_keys && test -s /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" >/dev/null 2>&1; then
       key_injected="true"
       ssh_login_user="root"
       warn "普通用户公钥注入失败，已回退 root 密钥登录"
@@ -1080,7 +1080,7 @@ create_and_start(){
       info "未检测到宿主机公钥，已自动生成 $(basename "$auto_pub")"
       if docker exec "$CONTAINER_NAME" bash -lc "chmod 700 /root 2>/dev/null || true; mkdir -p /root/.ssh && chmod 700 /root/.ssh" >/dev/null 2>&1 \
         && docker cp "$auto_pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys.tmp" >/dev/null 2>&1 \
-        && docker exec "$CONTAINER_NAME" bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && test -s /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" >/dev/null 2>&1; then
+        && docker exec "$CONTAINER_NAME" bash -lc "touch /root/.ssh/authorized_keys && while IFS= read -r k; do [ -z \"\$k\" ] && continue; grep -qxF \"\$k\" /root/.ssh/authorized_keys || echo \"\$k\" >> /root/.ssh/authorized_keys; done < /root/.ssh/authorized_keys.tmp && chmod 600 /root/.ssh/authorized_keys && test -s /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" >/dev/null 2>&1; then
         key_injected="true"
         ssh_login_user="root"
         warn "未发现宿主机公钥，已自动生成并回退 root 密钥登录"

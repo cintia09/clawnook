@@ -4297,7 +4297,7 @@ function Main {
                             & docker exec $containerName bash -lc "mkdir -p '/home/$hostUser/.ssh' && chmod 700 '/home/$hostUser/.ssh'" 2>$null | Out-Null
                             & docker cp $keyFile "${containerName}:/tmp/host_user_key.pub" 2>$null | Out-Null
                             if ($LASTEXITCODE -eq 0) {
-                                & docker exec $containerName bash -lc "cat /tmp/host_user_key.pub >> '/home/$hostUser/.ssh/authorized_keys' && sort -u -o '/home/$hostUser/.ssh/authorized_keys' '/home/$hostUser/.ssh/authorized_keys' && chmod 600 '/home/$hostUser/.ssh/authorized_keys' && chown -R '${hostUser}:${hostUser}' '/home/$hostUser/.ssh' && test -s '/home/$hostUser/.ssh/authorized_keys' && rm -f /tmp/host_user_key.pub" 2>$null | Out-Null
+                                & docker exec $containerName bash -lc "touch '/home/$hostUser/.ssh/authorized_keys' && cat '/home/$hostUser/.ssh/authorized_keys' /tmp/host_user_key.pub | awk 'NF>=2 { k=\$2; if (!seen[k]++) print; next } { if (!seenRaw[\$0]++) print }' > '/home/$hostUser/.ssh/authorized_keys.new' && mv '/home/$hostUser/.ssh/authorized_keys.new' '/home/$hostUser/.ssh/authorized_keys' && chmod 600 '/home/$hostUser/.ssh/authorized_keys' && chown -R '${hostUser}:${hostUser}' '/home/$hostUser/.ssh' && test -s '/home/$hostUser/.ssh/authorized_keys' && rm -f /tmp/host_user_key.pub" 2>$null | Out-Null
                                 if ($LASTEXITCODE -eq 0) {
                                     $script:sshInjectedKeyPath = $keyFile
                                     $injected = $true
@@ -4319,7 +4319,7 @@ function Main {
                             & docker exec $containerName bash -lc "chmod 700 /root 2>/dev/null || true; mkdir -p /root/.ssh && chmod 700 /root/.ssh" 2>$null | Out-Null
                             & docker cp $keyFile "${containerName}:/root/.ssh/authorized_keys.tmp" 2>$null | Out-Null
                             if ($LASTEXITCODE -ne 0) { continue }
-                            & docker exec $containerName bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" 2>$null | Out-Null
+                            & docker exec $containerName bash -lc "touch /root/.ssh/authorized_keys && cat /root/.ssh/authorized_keys /root/.ssh/authorized_keys.tmp | awk 'NF>=2 { k=\$2; if (!seen[k]++) print; next } { if (!seenRaw[\$0]++) print }' > /root/.ssh/authorized_keys.new && mv /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" 2>$null | Out-Null
                             if ($LASTEXITCODE -eq 0) {
                                 $script:sshInjectedKeyPath = $keyFile
                                 $injected = $true
@@ -4351,7 +4351,7 @@ function Main {
                                 & docker exec $containerName bash -lc "chmod 700 /root 2>/dev/null || true; mkdir -p /root/.ssh && chmod 700 /root/.ssh" 2>$null | Out-Null
                                 & docker cp $pubPath "${containerName}:/root/.ssh/authorized_keys.tmp" 2>$null | Out-Null
                                 if ($LASTEXITCODE -eq 0) {
-                                    & docker exec $containerName bash -lc "cat /root/.ssh/authorized_keys.tmp >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" 2>$null | Out-Null
+                                    & docker exec $containerName bash -lc "touch /root/.ssh/authorized_keys && cat /root/.ssh/authorized_keys /root/.ssh/authorized_keys.tmp | awk 'NF>=2 { k=\$2; if (!seen[k]++) print; next } { if (!seenRaw[\$0]++) print }' > /root/.ssh/authorized_keys.new && mv /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp" 2>$null | Out-Null
                                     if ($LASTEXITCODE -eq 0) {
                                         $script:sshInjectedKeyPath = $pubPath
                                         $injected = $true

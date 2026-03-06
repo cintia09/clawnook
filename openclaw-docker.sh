@@ -1074,7 +1074,7 @@ F2B
         fi
     done
     if [ -n "$host_pubkey" ]; then
-        docker exec "$CONTAINER_NAME" bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo '$host_pubkey' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys"
+        docker exec "$CONTAINER_NAME" bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh && touch /root/.ssh/authorized_keys && grep -qxF '$host_pubkey' /root/.ssh/authorized_keys || echo '$host_pubkey' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
         success "容器已创建并启动（已自动注入实机SH公钥）"
     else
         success "容器已创建并启动"
@@ -1374,7 +1374,8 @@ cmd_sshkey() {
 
     info "注入公钥: $keyfile"
     docker exec "$CONTAINER_NAME" bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
-    docker exec -i "$CONTAINER_NAME" bash -c 'cat >> /root/.ssh/authorized_keys && sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < "$keyfile"
+    docker cp "$keyfile" "$CONTAINER_NAME:/root/.ssh/authorized_keys.tmp"
+    docker exec "$CONTAINER_NAME" bash -c 'touch /root/.ssh/authorized_keys && while IFS= read -r k; do [ -z "$k" ] && continue; grep -qxF "$k" /root/.ssh/authorized_keys || echo "$k" >> /root/.ssh/authorized_keys; done < /root/.ssh/authorized_keys.tmp && chmod 600 /root/.ssh/authorized_keys && rm -f /root/.ssh/authorized_keys.tmp'
     success "SSH 公钥已注入容器"
 
     local ssh_port_val
