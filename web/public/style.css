@@ -453,6 +453,7 @@ button, input, select, textarea{font-family:inherit}
 #log-viewer::-webkit-scrollbar-thumb{background:rgba(245,245,247,.72);border-radius:8px}
 #log-viewer::-webkit-scrollbar-track{background:rgba(60,60,66,.62)}
 .term-line{display:block}
+pre.terminal .term-line{display:inline}
 .term-date{color:rgba(190,190,198,.92)}
 .term-warn{color:#ffd166; font-weight:700}
 .term-error{color:#ff8a80; font-weight:700}

@@ -258,6 +258,24 @@ function setTerminalBackendState(patch = {}) {
 }
 
 const terminalWsTokens = new Map();
+let activeTerminalSession = null;
+
+function closeActiveTerminalSession(reason = 'replaced') {
+  const sess = activeTerminalSession;
+  if (!sess) return;
+  activeTerminalSession = null;
+  try {
+    if (sess.ws && sess.ws.readyState === 1) {
+      sess.ws.send(JSON.stringify({ type: 'output', data: `\n[terminal] session closed: ${reason}\n` }));
+    }
+  } catch {}
+  try {
+    if (typeof sess.cleanup === 'function') sess.cleanup();
+  } catch {}
+  try {
+    if (sess.ws) sess.ws.close(1012, 'session-replaced');
+  } catch {}
+}
 
 function issueTerminalWsToken(username) {
   const token = crypto.randomBytes(24).toString('hex');
@@ -314,6 +332,14 @@ const TRADING_DIR = '/root/trading-system';
 const STRATEGY_PARAMS_PATH = path.join(TRADING_DIR, 'strategy_params.json');
 
 app.use(express.json());
+
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    console.warn(`[web][warn] invalid JSON payload: ${err.message}`);
+    return res.status(400).json({ error: 'invalid JSON payload' });
+  }
+  return next(err);
+});
 
 // ============================================================
 // Helpers: JSON read/write
@@ -906,6 +932,17 @@ function getGatewayRuntimePid() {
   const cmd = [
     'pid="$(pgrep -x openclaw-gatewa 2>/dev/null | head -1 || true)"',
     'if [ -z "$pid" ]; then pid="$(pgrep -f "[o]penclaw\\.mjs gateway" 2>/dev/null | head -1 || true)"; fi',
+    'if [ -z "$pid" ]; then pid="$(pgrep -f "[o]penclaw[^\\n]*gateway run" 2>/dev/null | head -1 || true)"; fi',
+    'if [ -z "$pid" ]; then',
+    '  for candidate in $(pgrep -x openclaw 2>/dev/null || true); do',
+    '    cmdline="$(cat /proc/$candidate/cmdline 2>/dev/null | tr "\\000" " ")"',
+    '    comm="$(cat /proc/$candidate/comm 2>/dev/null || true)"',
+    '    if [ "$comm" = "bash" ] || [ "$comm" = "sh" ] || [ "$comm" = "timeout" ]; then continue; fi',
+    '    case "$cmdline" in',
+    '      *"gateway run"*|*" openclaw gateway"*) pid="$candidate"; break ;;',
+    '    esac',
+    '  done',
+    'fi',
     'printf "%s" "$pid"'
   ].join('\n');
   return String(runCommandText(cmd, 1200) || '').trim();
@@ -1345,7 +1382,7 @@ async function maybeTriggerOpenClawRuntimeRecovery(issue = '') {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release);
-    const taskId = runOpenClawTask(command, `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行安装恢复（GitHub Linux 包优先 → 官方 npm → 源码兜底）(${release.tag})`, 'installing');
+    const taskId = runOpenClawTask(command, `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行安装恢复（官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`, 'installing');
     if (!taskId) return { triggered: false, reason: 'busy', taskId: '' };
     openClawRuntimeRecoveryState.lastTaskId = taskId;
     return { triggered: true, reason: 'started', taskId };
@@ -1450,7 +1487,9 @@ function createTerminalShell() {
     return { shell: null, mode: 'unavailable', reason: 'bash not found' };
   }
 
-  const terminalRcPath = '/tmp/openclaw-terminal.bashrc';
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'user';
+  const terminalRcPath = `/tmp/openclaw-terminal-${uid}.bashrc`;
+  let rcReady = false;
   try {
     const rcContent = [
       'export TERM=xterm-256color',
@@ -1473,11 +1512,14 @@ function createTerminalShell() {
       "PS1='\\[\\e[1;32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ '",
       'export PS1'
     ].join('\n');
-    const old = fs.existsSync(terminalRcPath) ? fs.readFileSync(terminalRcPath, 'utf8') : '';
-    if (old !== rcContent) {
-      fs.writeFileSync(terminalRcPath, rcContent, { mode: 0o600 });
-    }
+    const tmpRcPath = `${terminalRcPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpRcPath, rcContent, { mode: 0o644 });
+    fs.renameSync(tmpRcPath, terminalRcPath);
+    try { fs.chmodSync(terminalRcPath, 0o644); } catch {}
+    rcReady = true;
   } catch {}
+
+  const homeDir = (process.env.HOME && fs.existsSync(process.env.HOME)) ? process.env.HOME : '/tmp';
 
   const shellEnv = {
     ...process.env,
@@ -1485,32 +1527,36 @@ function createTerminalShell() {
     COLUMNS: '220',
     LINES: '60',
     SHELL: '/bin/bash',
-    HOME: '/root',
+    HOME: homeDir,
     BASH_ENV: '',
     ENV: ''
   };
 
-  const startupCmd = `stty cols 220 rows 60 >/dev/null 2>&1 || true; exec bash --noprofile --rcfile ${terminalRcPath} -i`;
+  const startupCmd = rcReady
+    ? `stty cols 220 rows 60 >/dev/null 2>&1 || true; exec bash --noprofile --rcfile ${JSON.stringify(terminalRcPath)} -i`
+    : 'stty cols 220 rows 60 >/dev/null 2>&1 || true; exec bash --noprofile --norc -i';
 
   const useScriptPty = runCommandOk('command -v script >/dev/null 2>&1', 800);
   if (useScriptPty) {
     return {
       shell: spawn('script', ['-qf', '-c', startupCmd, '/dev/null'], {
         env: shellEnv,
-        cwd: '/root'
+        cwd: homeDir
       }),
       mode: 'pty',
-      reason: ''
+      reason: rcReady ? '' : 'terminal rc unavailable; started without rcfile'
     };
   }
 
   return {
     shell: spawn('bash', ['--noprofile', '--norc', '-ic', startupCmd], {
       env: shellEnv,
-      cwd: '/root'
+      cwd: homeDir
     }),
     mode: 'fallback',
-    reason: 'script not found; using bash fallback'
+    reason: rcReady
+      ? 'script not found; using bash fallback'
+      : 'script not found and terminal rc unavailable; using bash fallback without rcfile'
   };
 }
 
@@ -2655,6 +2701,7 @@ function isTaskRunning(taskMap, taskId) {
 function appendInstallLog(task, chunk) {
   const text = String(chunk || '');
   if (!text) return;
+  task.lastOutputAt = Date.now();
   if (task.logFile) {
     try {
       fs.mkdirSync(path.dirname(task.logFile), { recursive: true });
@@ -2865,6 +2912,7 @@ function runOpenClawTask(command, title, operationType = 'installing') {
     status: 'running',
     log: '',
     startedAt: Date.now(),
+    lastOutputAt: Date.now(),
     seq: 0,
     chunks: [],
     logFile: taskLogFile
@@ -2896,6 +2944,7 @@ function runOpenClawTask(command, title, operationType = 'installing') {
     timeout: 2700000,
     env: { ...process.env, TERM: 'dumb' }
   });
+  task.pid = Number(child.pid || 0) || 0;
   const heartbeatTimer = setInterval(() => {
     const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
     setOpenClawOperationState(operationType, taskId);
@@ -3129,10 +3178,19 @@ function getOpenClawOperationState() {
 }
 
 function setOpenClawOperationState(type, taskId = '') {
+  const nextType = String(type || 'idle') || 'idle';
+  const nextTaskId = String(taskId || '');
+  const current = getOpenClawOperationState();
+  const keepStartedAt = (
+    current
+    && current.type === nextType
+    && String(current.taskId || '') === nextTaskId
+    && Number(current.startedAt || 0) > 0
+  );
   openClawOperationState = {
-    type: String(type || 'idle') || 'idle',
-    taskId: String(taskId || ''),
-    startedAt: Date.now(),
+    type: nextType,
+    taskId: nextTaskId,
+    startedAt: keepStartedAt ? Number(current.startedAt) : Date.now(),
     pid: process.pid
   };
   writeOperationLock(openClawOperationState);
@@ -3468,10 +3526,13 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     'PERSIST_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source"',
     'WORK_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw"',
     'TMP_BASE="$OPENCLAW_STATE_ROOT/tmp/openclaw-asset-install"',
-    'ARCHIVE_PATH="$TMP_BASE/$OPENCLAW_ASSET_NAME"',
-    'EXTRACT_DIR="$TMP_BASE/extract"',
-    'mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$TMP_BASE" "$EXTRACT_DIR"',
-    'rm -rf "$EXTRACT_DIR"/*',
+    'SESSION_DIR="$(mktemp -d "$TMP_BASE/run.XXXXXX" 2>/dev/null || true)"',
+    'if [ -z "$SESSION_DIR" ]; then SESSION_DIR="$TMP_BASE/run.$(date +%s).$$"; fi',
+    'ARCHIVE_PATH="$SESSION_DIR/$OPENCLAW_ASSET_NAME"',
+    'EXTRACT_DIR="$SESSION_DIR/extract"',
+    'mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$TMP_BASE" "$SESSION_DIR" "$EXTRACT_DIR"',
+    'find "$TMP_BASE" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf {} + >/dev/null 2>&1 || true',
+    'trap "rm -rf \"$SESSION_DIR\" >/dev/null 2>&1 || true" EXIT',
     'echo "[openclaw] 尝试 release 编译包: $OPENCLAW_ASSET_NAME (source=$OPENCLAW_ASSET_SOURCE)"',
     'echo "[openclaw] 资产直链: $OPENCLAW_ASSET_URL"',
     'ASSET_URL_1="$OPENCLAW_ASSET_URL"',
@@ -3671,8 +3732,23 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '  exit 0',
     'fi',
     'AUTO_DONE=0',
-    'if [ "$HAS_RELEASE_ASSET" = "1" ]; then',
-    '  echo "[openclaw] 自动模式：先尝试 release 预构建包..."',
+    'echo "[openclaw] 自动模式：先尝试官方 npm 安装..."',
+    'if (',
+    npmCmd,
+    '); then',
+    '  rm -f /root/.openclaw/openclaw-source-install.json >/dev/null 2>&1 || true',
+    '  if runtime_ready_and_latest; then',
+    '    echo "[openclaw] npm 路径成功。"',
+    '    AUTO_DONE=1',
+    '  else',
+    '    echo "[openclaw] npm 路径后校验未通过，继续尝试 release 预构建包。"',
+    '  fi',
+    'else',
+    '  rc=$?',
+    '  echo "[openclaw] npm 路径失败(exit=${rc})，继续尝试 release 预构建包。"',
+    'fi',
+    'if [ "$AUTO_DONE" != "1" ] && [ "$HAS_RELEASE_ASSET" = "1" ]; then',
+    '  echo "[openclaw] 自动模式：尝试 release 预构建包..."',
     '  if (',
     safeAssetCmd,
     '  ); then',
@@ -3680,31 +3756,14 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '      echo "[openclaw] release 路径成功。"',
     '      AUTO_DONE=1',
     '    else',
-    '      echo "[openclaw] release 路径未达到目标版本或入口不完整，继续尝试 npm。"',
+    '      echo "[openclaw] release 路径未达到目标版本或入口不完整，回退源码构建安装..."',
     '    fi',
     '  else',
     '    rc=$?',
-    '    echo "[openclaw] release 路径失败(exit=${rc})，继续尝试 npm。"',
+    '    echo "[openclaw] release 路径失败(exit=${rc})，回退源码构建安装..."',
     '  fi',
-    'else',
-    '  echo "[openclaw] 自动模式：未检测到 GitHub Linux 资产，转入 npm/source 回退链路。"',
-    'fi',
-    'if [ "$AUTO_DONE" != "1" ]; then',
-    '  echo "[openclaw] 自动模式：尝试官方 npm 安装..."',
-    '  if (',
-    npmCmd,
-    '  ); then',
-    '    rm -f /root/.openclaw/openclaw-source-install.json >/dev/null 2>&1 || true',
-    '    if runtime_ready_and_latest; then',
-    '      echo "[openclaw] npm 路径成功。"',
-    '      AUTO_DONE=1',
-    '    else',
-    '      echo "[openclaw] npm 路径后校验未通过，回退源码构建安装..."',
-    '    fi',
-    '  else',
-    '    rc=$?',
-    '    echo "[openclaw] npm 路径失败(exit=${rc})，回退源码构建安装..."',
-    '  fi',
+    'elif [ "$AUTO_DONE" != "1" ]; then',
+    '  echo "[openclaw] 自动模式：未检测到 GitHub Linux 资产，跳过 release，转入源码构建安装。"',
     'fi',
     'if [ "$AUTO_DONE" != "1" ]; then',
     '  echo "[openclaw] 自动模式：执行源码构建安装..."',
@@ -3852,9 +3911,41 @@ app.get('/api/openclaw', async (req, res) => {
       ? Number.parseInt(String(runCommandText(`ps -o etimes= -p ${gatewayPidSafe} 2>/dev/null || true`, 1200) || '').trim(), 10) || 0
       : 0;
 
-    const operationState = getOpenClawOperationState();
+    let operationState = getOpenClawOperationState();
     let installTaskRunning = isTaskRunning(installLogs, activeInstallTaskId);
     let activeInstallTask = activeInstallTaskId ? installLogs[activeInstallTaskId] : null;
+
+    const installRelatedOp = (type) => type === 'installing' || type === 'updating' || type === 'uninstalling';
+    if (installTaskRunning && activeInstallTask && installRelatedOp(operationState.type)) {
+      const taskPid = Number(activeInstallTask.pid || 0) || 0;
+      const pidAlive = taskPid > 1 ? (() => {
+        try {
+          process.kill(taskPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })() : false;
+      const taskLastOutputAt = Number(activeInstallTask.lastOutputAt || activeInstallTask.startedAt || Date.now());
+      const silentSec = Math.max(0, Math.floor((Date.now() - taskLastOutputAt) / 1000));
+      if (taskPid > 1 && !pidAlive && silentSec > 25) {
+        appendInstallLog(activeInstallTask, `[openclaw] 检测到安装子进程已退出（pid=${taskPid}）且 ${silentSec}s 无输出，自动结束任务。\n`);
+        activeInstallTask.status = 'failed';
+        activeInstallTask.exitCode = Number.isFinite(activeInstallTask.exitCode) ? activeInstallTask.exitCode : -3;
+        activeInstallTask.error = activeInstallTask.error || '安装子进程异常退出';
+        installTaskRunning = false;
+        activeInstallTaskId = '';
+        activeInstallTask = null;
+        clearOpenClawOperationState(operationState.type);
+        operationState = getOpenClawOperationState();
+      }
+    }
+
+    if (!installTaskRunning && installRelatedOp(operationState.type)) {
+      clearOpenClawOperationState(operationState.type);
+      operationState = getOpenClawOperationState();
+    }
+
     if (installTaskRunning && operationState.type === 'idle' && installed && version) {
       const ageSec = Math.max(0, Math.floor((Date.now() - Number(activeInstallTask?.startedAt || Date.now())) / 1000));
       if (ageSec > 90) {
@@ -4079,7 +4170,7 @@ app.post('/api/openclaw/install', async (req, res) => {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
-    const taskId = runOpenClawTask(command, `安装 OpenClaw（mode=${mode}，GitHub Linux 包优先 → 官方 npm → 源码兜底）(${release.tag})`, 'installing');
+    const taskId = runOpenClawTask(command, `安装 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`, 'installing');
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
@@ -4287,7 +4378,7 @@ app.post('/api/openclaw/update', async (req, res) => {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
-    const taskId = runOpenClawTask(command, `更新 OpenClaw（mode=${mode}，GitHub Linux 包优先 → 官方 npm → 源码兜底）(${release.tag})`, 'updating');
+    const taskId = runOpenClawTask(command, `更新 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`, 'updating');
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
@@ -4413,7 +4504,21 @@ app.get('/api/logs', (req, res) => {
     const activeInstall = activeInstallTaskId ? installLogs[activeInstallTaskId] : null;
     const installTask = activeInstall || getLatestTaskLog(installLogs);
     const installBlock = formatTaskLogBlock('openclaw-install', installTask, Math.min(safeLines, LOG_VIEW_INSTALL_BLOCK_CAP));
-    if (installBlock) mergedBlocks.push(installBlock);
+    if (installBlock) {
+      mergedBlocks.push(installBlock);
+    } else {
+      const installTailFallback = readLatestInstallTaskLogSection(Math.min(safeLines, LOG_VIEW_INSTALL_BLOCK_CAP));
+      if (installTailFallback) {
+        const sanitizedInstallFallback = String(installTailFallback)
+          .split('\n')
+          .map(sanitizeLogLine)
+          .join('\n')
+          .trim();
+        if (sanitizedInstallFallback) {
+          mergedBlocks.push(`[openclaw-install]\n${sanitizedInstallFallback}`);
+        }
+      }
+    }
 
     const activeRepair = activeRepairTaskId ? repairLogs[activeRepairTaskId] : null;
     const repairTask = activeRepair || getLatestTaskLog(repairLogs);
@@ -4725,6 +4830,8 @@ if (WebSocketServer) {
       return;
     }
 
+    closeActiveTerminalSession('new-connection');
+
     const { shell, mode, reason } = createTerminalShell();
 
     if (!shell) {
@@ -4789,12 +4896,17 @@ if (WebSocketServer) {
     });
 
     const cleanup = () => {
+      if (activeTerminalSession && activeTerminalSession.ws === ws) {
+        activeTerminalSession = null;
+      }
       try { shell.stdin.end(); } catch {}
       try { shell.kill('SIGTERM'); } catch {}
       setTimeout(() => {
         try { shell.kill('SIGKILL'); } catch {}
       }, 1000);
     };
+
+    activeTerminalSession = { ws, shell, mode, cleanup };
 
     ws.on('close', () => {
       console.log('[terminal-ws] client closed');
@@ -4874,4 +4986,13 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, '0.0.0.0', () => {
   repairOpenClawConfigProviders();
   console.log(`[web] OpenClaw Web 管理面板启动: http://0.0.0.0:${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`[web][error] 端口 ${PORT} 已被占用，疑似重复启动 web-panel，请先停止旧进程后再启动。`);
+  } else {
+    console.error(`[web][error] Web 面板启动失败: ${err?.message || err}`);
+  }
+  process.exit(1);
 });

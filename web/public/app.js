@@ -198,7 +198,15 @@ function colorizeLine(rawLine){
 
 function appendColored(el, text, maxLines = UI_MAX_LINES_DEFAULT, autoscroll = true){
   if (!el) return;
-  const html = stripAnsi(String(text ?? '')).split('\n').map(colorizeLine).join('\n');
+  const raw = stripAnsi(String(text ?? '')).replace(/\r/g, '');
+  const lines = raw.split('\n');
+  const isLogPanel = /(^|-)log($|-)/i.test(String(el.id || '')) || String(el.id || '') === 'log-viewer';
+  const renderLines = isLogPanel
+    ? lines.filter((line) => String(line || '').trim() !== '')
+    : lines;
+  while (renderLines.length > 0 && renderLines[renderLines.length - 1] === '') renderLines.pop();
+  const html = renderLines.map(colorizeLine).join('');
+  if (!html) return;
   el.insertAdjacentHTML('beforeend', html);
   const nodes = el.querySelectorAll('.term-line');
   if (nodes.length > maxLines) {
@@ -342,15 +350,10 @@ qa('[data-oc-switch]').forEach((btn) => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  if (getRouteFromHash() !== 'terminal') {
-    if (termFallbackTimer || (termWs && termWs.readyState !== WebSocket.OPEN)) {
-      location.hash = 'terminal';
-      setActiveRoute('terminal');
-    }
-    return;
-  }
+  if (getRouteFromHash() !== 'terminal') return;
   ensureTerminalViewportFitted();
   if (termWs && termWs.readyState === WebSocket.OPEN) return;
+  if (termReconnectTimer) return;
   if (termFallbackTimer) {
     clearInterval(termFallbackTimer);
     termFallbackTimer = null;
@@ -359,15 +362,10 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('focus', () => {
-  if (getRouteFromHash() !== 'terminal') {
-    if (termFallbackTimer || (termWs && termWs.readyState !== WebSocket.OPEN)) {
-      location.hash = 'terminal';
-      setActiveRoute('terminal');
-    }
-    return;
-  }
+  if (getRouteFromHash() !== 'terminal') return;
   ensureTerminalViewportFitted();
   if (termWs && termWs.readyState === WebSocket.OPEN) return;
+  if (termReconnectTimer) return;
   if (termFallbackTimer) {
     clearInterval(termFallbackTimer);
     termFallbackTimer = null;
@@ -2044,6 +2042,7 @@ let termWs = null;
 let terminalBound = false;
 let termResizeTimer = null;
 let termReconnectTimer = null;
+let termConnectInFlight = false;
 let termWsToken = null;
 let termFallbackTimer = null;
 let termFailureCount = 0;
@@ -2335,9 +2334,11 @@ async function ensureTerminalWsToken(force = false){
 
 async function terminalConnect(){
   if (!$('page-terminal').classList.contains('active')) return;
+  if (termConnectInFlight) return;
   ensureTerminalViewportFitted();
   if (termWs && (termWs.readyState === WebSocket.OPEN || termWs.readyState === WebSocket.CONNECTING)) return;
 
+  termConnectInFlight = true;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const freshToken = await ensureTerminalWsToken(true);
   const wsPrimaryUrl = `${proto}//${location.host}/api/ws/terminal${freshToken ? `?token=${encodeURIComponent(freshToken)}` : ''}`;
@@ -2375,6 +2376,7 @@ async function terminalConnect(){
     } catch {
       $('term-state').textContent = 'WebSocket 不可用';
       termAppendText(`[terminal] WebSocket 不可用，无法建立交互会话 (${attemptLabel})\n`);
+      termConnectInFlight = false;
       return false;
     }
 
@@ -2383,6 +2385,7 @@ async function terminalConnect(){
     socket.onopen = ()=> {
       if (socket !== termWs) return;
       clearConnectTimeout();
+      termConnectInFlight = false;
       termFailureCount = 0;
       if (termFallbackTimer) {
         clearInterval(termFallbackTimer);
@@ -2412,6 +2415,7 @@ async function terminalConnect(){
     socket.onclose = (ev)=> {
       if (socket !== termWs) return;
       clearConnectTimeout();
+      termConnectInFlight = false;
       const code = Number(ev?.code || 0);
       const reason = ev?.reason ? ` reason=${ev.reason}` : '';
       termFailureCount += 1;
@@ -2446,6 +2450,7 @@ async function terminalConnect(){
     socket.onerror = ()=> {
       if (socket !== termWs) return;
       clearConnectTimeout();
+      termConnectInFlight = false;
       termFailureCount += 1;
       $('term-state').textContent = '连接错误';
       termAppendText(`\n[terminal] 连接错误 [${attemptLabel}]。\n`);
@@ -2483,6 +2488,7 @@ async function terminalConnect(){
   }
 
   connectWs(wsPrimaryUrl, 'token-auth');
+  termConnectInFlight = false;
 }
 
 $('btn-term-clear').addEventListener('click', ()=>{
