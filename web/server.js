@@ -1157,9 +1157,21 @@ function resolveOpenClawNpmDistTarballAsset(tag) {
   const parsed = parseOpenClawVersion(tag || '');
   const version = parsed ? String(parsed).replace(/^v/i, '') : '';
   if (!version) return null;
-  const tarball = runCommandText(`npm view "openclaw@${version}" dist.tarball --registry=https://registry.npmjs.org 2>/dev/null || true`, 5000);
+  const metadataTimeoutMs = 12000;
+  const registries = ['https://registry.npmjs.org', 'https://registry.npmmirror.com'];
+  const readNpmViewWithRetry = (field) => {
+    for (const registry of registries) {
+      for (let i = 0; i < 3; i += 1) {
+        const text = runCommandText(`npm view "openclaw@${version}" ${field} --registry=${registry} 2>/dev/null || true`, metadataTimeoutMs);
+        const value = String(text || '').trim();
+        if (value) return value;
+      }
+    }
+    return '';
+  };
+  const tarball = readNpmViewWithRetry('dist.tarball');
   if (!/^https?:\/\//i.test(String(tarball || '').trim())) return null;
-  const unpackedSizeText = runCommandText(`npm view "openclaw@${version}" dist.unpackedSize --registry=https://registry.npmjs.org 2>/dev/null || true`, 3000);
+  const unpackedSizeText = readNpmViewWithRetry('dist.unpackedSize');
   const unpackedSize = Number.parseInt(String(unpackedSizeText || '').trim(), 10) || 0;
   return {
     name: `openclaw-${version}.tgz`,
@@ -2886,6 +2898,7 @@ function runOpenClawTask(command, title, operationType = 'installing') {
   });
   const heartbeatTimer = setInterval(() => {
     const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
+    setOpenClawOperationState(operationType, taskId);
     appendInstallLog(task, `[state] operation=${operationType} status=running elapsed=${elapsedSec}s task=${taskId}\n`);
   }, 30000);
   child.on('error', (err) => {
@@ -3563,9 +3576,11 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     '  fi',
     'fi',
     'echo "[openclaw] 安装编译包到持久目录: $PERSIST_SRC_DIR"',
-    'rm -rf "$PERSIST_SRC_DIR"',
-    'mkdir -p "$PERSIST_SRC_DIR"',
-    'cp -a "$ASSET_ROOT"/. "$PERSIST_SRC_DIR"/',
+    'STAGE_PERSIST_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source.asset.stage.$$"',
+    'rm -rf "$STAGE_PERSIST_SRC_DIR" "$PERSIST_SRC_DIR"',
+    'mkdir -p "$(dirname "$STAGE_PERSIST_SRC_DIR")"',
+    'mv -Tf "$ASSET_ROOT" "$STAGE_PERSIST_SRC_DIR"',
+    'mv -Tf "$STAGE_PERSIST_SRC_DIR" "$PERSIST_SRC_DIR"',
     'ln -sfn "$PERSIST_SRC_DIR" "$WORK_SRC_DIR"',
     'printf "{\\n  \\\"repo\\\": \\\"%s\\\",\\n  \\\"tag\\\": \\\"%s\\\",\\n  \\\"assetName\\\": \\\"%s\\\",\\n  \\\"assetUrl\\\": \\\"%s\\\",\\n  \\\"installedAt\\\": \\\"%s\\\"\\n}\\n" "$OPENCLAW_REPO" "$OPENCLAW_TAG" "$OPENCLAW_ASSET_NAME" "$OPENCLAW_ASSET_URL" "$(date -Iseconds)" > /root/.openclaw/openclaw-source-install.json',
     'echo "[openclaw] release 资产安装完成: $OPENCLAW_ASSET_NAME"',
