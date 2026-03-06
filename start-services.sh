@@ -156,6 +156,39 @@ ensure_local_no_proxy() {
 }
 ensure_local_no_proxy
 
+# 确保 pnpm 在运行时可用（/root 挂载可能覆盖 /root/.npm-global）
+ensure_pnpm_runtime() {
+    if command -v pnpm >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [ -x /usr/local/bin/pnpm ]; then
+        export PATH="/usr/local/bin:$PATH"
+        if command -v pnpm >/dev/null 2>&1; then
+            echo "[start-services] pnpm available from /usr/local/bin"
+            return 0
+        fi
+    fi
+
+    if command -v corepack >/dev/null 2>&1; then
+        corepack enable >/dev/null 2>&1 || true
+        if corepack pnpm -v >/dev/null 2>&1; then
+            cat > /usr/local/bin/pnpm << 'PNPM_WRAPPER'
+#!/bin/sh
+exec corepack pnpm "$@"
+PNPM_WRAPPER
+            chmod +x /usr/local/bin/pnpm
+            export PATH="/usr/local/bin:$PATH"
+            echo "[start-services] pnpm restored via corepack wrapper"
+            return 0
+        fi
+    fi
+
+    echo "[start-services] WARN: pnpm still unavailable (source fallback build may fail)"
+    return 1
+}
+ensure_pnpm_runtime || true
+
 # ── 恢复 OpenClaw 源码安装目录（持久化在 /root 下）──
 PERSIST_OPENCLAW_SRC="/root/.openclaw/openclaw-source"
 WORK_OPENCLAW_SRC="/root/.openclaw/openclaw"

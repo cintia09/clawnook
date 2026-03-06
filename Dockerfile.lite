@@ -33,10 +33,10 @@ RUN echo 'Defaults env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no
 RUN curl -fsSL --retry 3 --retry-delay 3 https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
-# 预装源码构建工具（避免运行时网络抖动）
-RUN npm install -g pnpm@10.23.0 rolldown@1.0.0-rc.6 --no-audit --no-fund \
+# 预装源码构建工具（安装到 /usr/local，避免 /root 挂载覆盖）
+RUN npm_config_prefix=/usr/local npm install -g pnpm@10.23.0 rolldown@1.0.0-rc.6 --no-audit --no-fund \
     && corepack disable >/dev/null 2>&1 \
-    && pnpm -v >/dev/null 2>&1
+    && /usr/local/bin/pnpm -v >/dev/null 2>&1
 
 # OpenClaw 持久化运行目录骨架（不预装 openclaw，本地按需安装）
 RUN mkdir -p /root/.openclaw/openclaw-source /root/.openclaw/openclaw /root/.openclaw/logs /root/.openclaw/cache/openclaw /root/.openclaw/locks /root/.openclaw/home

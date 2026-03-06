@@ -261,12 +261,25 @@ wait_for_ready() {
 
 start_once() {
   detect_runtime_version >/dev/null 2>&1 || true
-  if [ ! -f "$SOURCE_ROOT/openclaw.mjs" ]; then
-    log "Cannot start gateway: source entry not found at $SOURCE_ROOT/openclaw.mjs"
-    return 2
+  local launch_cmd=""
+  local openclaw_bin=""
+  if [ -f "$SOURCE_ROOT/openclaw.mjs" ]; then
+    launch_cmd="node --experimental-sqlite $SOURCE_ROOT/openclaw.mjs gateway run --force --allow-unconfigured"
+  else
+    openclaw_bin="$(command -v openclaw 2>/dev/null || true)"
+    if [ -z "$openclaw_bin" ] && [ -x /root/.npm-global/bin/openclaw ]; then
+      openclaw_bin="/root/.npm-global/bin/openclaw"
+    fi
+    if [ -z "$openclaw_bin" ] && [ -x /usr/local/bin/openclaw ]; then
+      openclaw_bin="/usr/local/bin/openclaw"
+    fi
+    if [ -n "$openclaw_bin" ]; then
+      launch_cmd="$openclaw_bin gateway run --force --allow-unconfigured"
+    fi
   fi
-  if [ ! -f "$SOURCE_ROOT/dist/entry.js" ] && [ ! -f "$SOURCE_ROOT/dist/entry.mjs" ]; then
-    log "Cannot start gateway: build output missing ($SOURCE_ROOT/dist/entry.(m)js)"
+
+  if [ -z "$launch_cmd" ]; then
+    log "Cannot start gateway: neither source entry nor openclaw binary found"
     return 2
   fi
 
@@ -286,7 +299,8 @@ start_once() {
   if [ -n "$OPENCLAW_RUNTIME_VERSION" ]; then
     log "Gateway runtime version: $OPENCLAW_RUNTIME_VERSION"
   fi
-  nohup $GATEWAY_CMD > "$GATEWAY_LOG" 2>&1 &
+  log "Gateway launch command: $launch_cmd"
+  nohup bash -lc "$launch_cmd" > "$GATEWAY_LOG" 2>&1 &
   LAST_PID=$!
   log "Gateway process launched (PID $LAST_PID), polling every ${POLL_INTERVAL}s (timeout ${STARTUP_TIMEOUT}s)..."
 
@@ -424,8 +438,8 @@ while true; do
     continue
   fi
 
-  if [ ! -f "$SOURCE_ROOT/openclaw.mjs" ]; then
-    log "OpenClaw source entry missing at $SOURCE_ROOT/openclaw.mjs, watchdog idle"
+  if [ ! -f "$SOURCE_ROOT/openclaw.mjs" ] && ! command -v openclaw >/dev/null 2>&1 && [ ! -x /root/.npm-global/bin/openclaw ] && [ ! -x /usr/local/bin/openclaw ]; then
+    log "OpenClaw runtime entry missing (source/binary), watchdog idle"
     sleep "$CHECK_INTERVAL"
     continue
   fi

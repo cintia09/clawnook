@@ -1004,23 +1004,35 @@ function inspectOpenClawRuntimeArtifacts() {
   const sourceEntry = '/root/.openclaw/openclaw-source/openclaw.mjs';
   const distEntryJs = '/root/.openclaw/openclaw-source/dist/entry.js';
   const distEntryMjs = '/root/.openclaw/openclaw-source/dist/entry.mjs';
+  const distIndexJs = '/root/.openclaw/openclaw-source/dist/index.js';
+  const distIndexMjs = '/root/.openclaw/openclaw-source/dist/index.mjs';
   let sourceEntryOk = runCommandOk(`test -f "${sourceEntry}"`, 1200);
-  let distEntryOk = runCommandOk(`test -f "${distEntryJs}" || test -f "${distEntryMjs}"`, 1200);
-  if (!sourceEntryOk || !distEntryOk) {
+  let runtimeEntryOk = runCommandOk(`test -f "${distEntryJs}" || test -f "${distEntryMjs}" || test -f "${distIndexJs}" || test -f "${distIndexMjs}"`, 1200);
+  let npmBinaryOk = runCommandOk('command -v openclaw >/dev/null 2>&1 || test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw', 1200);
+  if (!sourceEntryOk || !runtimeEntryOk || !npmBinaryOk) {
     runCommandText('sleep 0.35', 1200);
     sourceEntryOk = sourceEntryOk || runCommandOk(`test -f "${sourceEntry}"`, 1200);
-    distEntryOk = distEntryOk || runCommandOk(`test -f "${distEntryJs}" || test -f "${distEntryMjs}"`, 1200);
+    runtimeEntryOk = runtimeEntryOk || runCommandOk(`test -f "${distEntryJs}" || test -f "${distEntryMjs}" || test -f "${distIndexJs}" || test -f "${distIndexMjs}"`, 1200);
+    npmBinaryOk = npmBinaryOk || runCommandOk('command -v openclaw >/dev/null 2>&1 || test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw', 1200);
   }
-  const ok = sourceEntryOk && distEntryOk;
+  const ok = npmBinaryOk || (sourceEntryOk && runtimeEntryOk);
   let issue = '';
-  if (!sourceEntryOk && !distEntryOk) issue = 'missing-source-entry-and-dist-entry';
-  else if (!sourceEntryOk) issue = 'missing-source-entry';
-  else if (!distEntryOk) issue = 'missing-dist-entry';
+  if (!ok) {
+    if (!sourceEntryOk && !npmBinaryOk && !runtimeEntryOk) issue = 'missing-source-binary-and-runtime-entry';
+    else if (!sourceEntryOk && !npmBinaryOk) issue = 'missing-source-and-binary-entry';
+    else if (!runtimeEntryOk) issue = 'missing-runtime-entry';
+  }
+  let runtimeEntry = '';
+  if (runCommandOk(`test -f "${distEntryJs}"`, 800)) runtimeEntry = distEntryJs;
+  else if (runCommandOk(`test -f "${distEntryMjs}"`, 800)) runtimeEntry = distEntryMjs;
+  else if (runCommandOk(`test -f "${distIndexJs}"`, 800)) runtimeEntry = distIndexJs;
+  else if (runCommandOk(`test -f "${distIndexMjs}"`, 800)) runtimeEntry = distIndexMjs;
   return {
     ok,
     issue,
     sourceEntry,
-    distEntry: distEntryOk ? (runCommandOk(`test -f "${distEntryJs}"`, 800) ? distEntryJs : distEntryMjs) : ''
+    distEntry: runtimeEntry,
+    npmBinary: runCommandText('command -v openclaw 2>/dev/null || true', 1000) || (npmBinaryOk ? '/root/.npm-global/bin/openclaw' : '')
   };
 }
 
@@ -3127,11 +3139,11 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     'ln -sfn "$PERSIST_SRC_DIR" "$SRC_DIR"',
     'if [ ! -f "$SRC_DIR/openclaw.mjs" ] && [ -f "$SRC_DIR/dist/openclaw.mjs" ]; then ln -sf "$SRC_DIR/dist/openclaw.mjs" "$SRC_DIR/openclaw.mjs"; fi',
     'if [ ! -f "$SRC_DIR/openclaw.mjs" ]; then echo "[openclaw] 编译产物缺失: $SRC_DIR/openclaw.mjs"; exit 4; fi',
-    'if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ]; then',
+    'if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ] && [ ! -f "$SRC_DIR/dist/index.js" ] && [ ! -f "$SRC_DIR/dist/index.mjs" ]; then',
     '  if [ -f "$SRC_DIR/dist/index.js" ]; then ln -sfn index.js "$SRC_DIR/dist/entry.js"; fi',
     '  if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ] && [ -f "$SRC_DIR/dist/index.mjs" ]; then ln -sfn index.mjs "$SRC_DIR/dist/entry.mjs"; fi',
     'fi',
-    'if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ]; then echo "[openclaw] 编译产物缺失: $SRC_DIR/dist/entry.(m)js"; exit 4; fi',
+    'if [ ! -f "$SRC_DIR/dist/entry.js" ] && [ ! -f "$SRC_DIR/dist/entry.mjs" ] && [ ! -f "$SRC_DIR/dist/index.js" ] && [ ! -f "$SRC_DIR/dist/index.mjs" ]; then echo "[openclaw] 编译产物缺失: $SRC_DIR/dist/entry|index.(m)js"; exit 4; fi',
     'mkdir -p /root/.openclaw',
     'printf "{\\n  \\\"repo\\\": \\\"%s\\\",\\n  \\\"tag\\\": \\\"%s\\\",\\n  \\\"tarballUrl\\\": \\\"%s\\\",\\n  \\\"installedAt\\\": \\\"%s\\\"\\n}\\n" "$OPENCLAW_REPO" "$OPENCLAW_TAG" "$OPENCLAW_TARBALL_URL" "$(date -Iseconds)" > /root/.openclaw/openclaw-source-install.json',
     'echo "[openclaw] source build install completed: $OPENCLAW_REPO@$OPENCLAW_TAG"',
@@ -3221,12 +3233,12 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     '  exit 13',
     'fi',
     'echo "[openclaw] 编译包根目录: $ASSET_ROOT"',
-    'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ]; then',
+    'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ ! -f "$ASSET_ROOT/dist/index.js" ] && [ ! -f "$ASSET_ROOT/dist/index.mjs" ]; then',
     '  if [ -f "$ASSET_ROOT/dist/index.js" ]; then ln -sfn index.js "$ASSET_ROOT/dist/entry.js"; fi',
     '  if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ -f "$ASSET_ROOT/dist/index.mjs" ]; then ln -sfn index.mjs "$ASSET_ROOT/dist/entry.mjs"; fi',
     'fi',
-    'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ]; then',
-    '  echo "[openclaw][error] 编译包缺少 dist/entry.(m)js"',
+    'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ ! -f "$ASSET_ROOT/dist/index.js" ] && [ ! -f "$ASSET_ROOT/dist/index.mjs" ]; then',
+    '  echo "[openclaw][error] 编译包缺少 dist/entry|index.(m)js"',
     '  exit 13',
     'fi',
     'if [ ! -f "$ASSET_ROOT/dist/control-ui/index.html" ]; then',
@@ -3285,9 +3297,12 @@ function buildOpenClawPreferredInstallCommand(release) {
     'set -euo pipefail',
     githubPreferBlock,
     'verify_runtime_entry() {',
-    '  [ -f /root/.openclaw/openclaw-source/openclaw.mjs ] && { [ -f /root/.openclaw/openclaw-source/dist/entry.js ] || [ -f /root/.openclaw/openclaw-source/dist/entry.mjs ]; }',
+    '  if command -v openclaw >/dev/null 2>&1 || [ -x /root/.npm-global/bin/openclaw ] || [ -x /usr/local/bin/openclaw ]; then',
+    '    return 0',
+    '  fi',
+    '  [ -f /root/.openclaw/openclaw-source/openclaw.mjs ] && { [ -f /root/.openclaw/openclaw-source/dist/entry.js ] || [ -f /root/.openclaw/openclaw-source/dist/entry.mjs ] || [ -f /root/.openclaw/openclaw-source/dist/index.js ] || [ -f /root/.openclaw/openclaw-source/dist/index.mjs ]; }',
     '}',
-    'if [ ! -f /root/.openclaw/openclaw-source/openclaw.mjs ] || { [ ! -f /root/.openclaw/openclaw-source/dist/entry.js ] && [ ! -f /root/.openclaw/openclaw-source/dist/entry.mjs ]; }; then',
+    'if ! verify_runtime_entry; then',
     '  echo "[openclaw] 进入官方 npm 安装流程（npm install -g openclaw）..."',
     '  if (',
     npmCmd,
@@ -3736,12 +3751,12 @@ function buildOpenClawNpmInstallCommand() {
     '  if [ ! -f "$PERSIST_SRC_DIR/openclaw.mjs" ] && [ -f "$PERSIST_SRC_DIR/dist/openclaw.mjs" ]; then',
     '    ln -sfn "$PERSIST_SRC_DIR/dist/openclaw.mjs" "$PERSIST_SRC_DIR/openclaw.mjs"',
     '  fi',
-    '  if [ ! -f "$PERSIST_SRC_DIR/dist/entry.js" ] && [ ! -f "$PERSIST_SRC_DIR/dist/entry.mjs" ]; then',
+    '  if [ ! -f "$PERSIST_SRC_DIR/dist/entry.js" ] && [ ! -f "$PERSIST_SRC_DIR/dist/entry.mjs" ] && [ ! -f "$PERSIST_SRC_DIR/dist/index.js" ] && [ ! -f "$PERSIST_SRC_DIR/dist/index.mjs" ]; then',
     '    if [ -f "$PERSIST_SRC_DIR/dist/index.js" ]; then ln -sfn index.js "$PERSIST_SRC_DIR/dist/entry.js"; fi',
     '    if [ ! -f "$PERSIST_SRC_DIR/dist/entry.js" ] && [ ! -f "$PERSIST_SRC_DIR/dist/entry.mjs" ] && [ -f "$PERSIST_SRC_DIR/dist/index.mjs" ]; then ln -sfn index.mjs "$PERSIST_SRC_DIR/dist/entry.mjs"; fi',
     '  fi',
-    '  if [ ! -f "$PERSIST_SRC_DIR/openclaw.mjs" ] || { [ ! -f "$PERSIST_SRC_DIR/dist/entry.js" ] && [ ! -f "$PERSIST_SRC_DIR/dist/entry.mjs" ]; }; then',
-    '    echo "[openclaw] 预构建包关键产物不完整（缺少 openclaw.mjs 或 dist/entry.(m)js），回退源码构建"',
+    '  if [ ! -f "$PERSIST_SRC_DIR/openclaw.mjs" ] || { [ ! -f "$PERSIST_SRC_DIR/dist/entry.js" ] && [ ! -f "$PERSIST_SRC_DIR/dist/entry.mjs" ] && [ ! -f "$PERSIST_SRC_DIR/dist/index.js" ] && [ ! -f "$PERSIST_SRC_DIR/dist/index.mjs" ]; }; then',
+    '    echo "[openclaw] 预构建包关键产物不完整（缺少 openclaw.mjs 或 dist/entry|index.(m)js），回退源码构建"',
     '    return 15',
     '  fi',
     '  return 0',
