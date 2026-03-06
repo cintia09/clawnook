@@ -1089,8 +1089,8 @@ async function maybeTriggerOpenClawRuntimeRecovery(issue = '') {
   try {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
-    const command = buildOpenClawSourceInstallCommand(release);
-    const taskId = runOpenClawTask(command, `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行源码兜底重建(${release.tag})`, 'installing');
+    const command = buildOpenClawPreferredInstallCommand(release);
+    const taskId = runOpenClawTask(command, `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行安装恢复（GitHub Linux 包优先 → 官方 npm → 源码兜底）(${release.tag})`, 'installing');
     if (!taskId) return { triggered: false, reason: 'busy', taskId: '' };
     openClawRuntimeRecoveryState.lastTaskId = taskId;
     return { triggered: true, reason: 'started', taskId };
@@ -2599,6 +2599,9 @@ function runOpenClawTask(command, title, operationType = 'installing') {
     if (depAudit.missingFiles?.length) appendInstallLog(task, `[openclaw] preflight: missing files => ${depAudit.missingFiles.join(', ')}\n`);
     if (depAudit.missingDirs?.length) appendInstallLog(task, `[openclaw] preflight: missing dirs => ${depAudit.missingDirs.join(', ')}\n`);
   }
+  if (depAudit.advisoryMissingCommands?.length) {
+    appendInstallLog(task, `[openclaw] preflight: optional commands missing => ${depAudit.advisoryMissingCommands.join(', ')}\n`);
+  }
   appendInstallLog(task, `[openclaw] log file: ${task.logFile || OPENCLAW_INSTALL_LOG_FILE}\n`);
   appendInstallLog(task, `[openclaw] ${title}\n`);
   appendInstallLog(task, `[openclaw] command prepared (length=${String(command || '').length})\n`);
@@ -2917,6 +2920,7 @@ function auditOpenClawImageDependencies() {
   commands.push({
     name: 'pnpm',
     ok: pnpmReady,
+    required: false,
     path: pnpmReady
       ? runCommandText('command -v pnpm 2>/dev/null || echo "corepack pnpm"', 1200)
       : ''
@@ -2941,7 +2945,8 @@ function auditOpenClawImageDependencies() {
     ok: fs.existsSync(dirPath)
   }));
 
-  const missingCommands = commands.filter((item) => !item.ok).map((item) => item.name);
+  const missingCommands = commands.filter((item) => item.required !== false && !item.ok).map((item) => item.name);
+  const advisoryMissingCommands = commands.filter((item) => item.required === false && !item.ok).map((item) => item.name);
   const missingFiles = files.filter((item) => !item.ok).map((item) => item.path);
   const missingDirs = dirs.filter((item) => !item.ok).map((item) => item.path);
   const ok = missingCommands.length === 0 && missingFiles.length === 0 && missingDirs.length === 0;
@@ -2952,6 +2957,7 @@ function auditOpenClawImageDependencies() {
     files,
     dirs,
     missingCommands,
+    advisoryMissingCommands,
     missingFiles,
     missingDirs,
     checkedAt: new Date().toISOString()
@@ -3375,7 +3381,7 @@ app.get('/api/openclaw', async (req, res) => {
       if (recovery?.triggered && recovery.taskId) {
         runtimeRecoveryTriggered = true;
         runtimeRecoveryTaskId = recovery.taskId;
-        runtimeRecoveryReason = 'auto-source-rebuild';
+        runtimeRecoveryReason = 'auto-runtime-recovery';
         activeInstallTaskId = recovery.taskId;
         activeInstallTask = installLogs[recovery.taskId] || null;
         installTaskRunning = true;
