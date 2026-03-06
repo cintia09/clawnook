@@ -36,12 +36,36 @@ jobs:
       # 推送到 GHCR (可选，给有条件访问的用户)
       - name: Tag and push to GHCR
         run: |
+          set -euo pipefail
+
+          push_with_retry() {
+            local image_ref="$1"
+            local max_retry=4
+            local attempt=1
+            while [ "$attempt" -le "$max_retry" ]; do
+              echo "[push] attempt ${attempt}/${max_retry}: ${image_ref}"
+              if docker push "$image_ref"; then
+                echo "[push] success: ${image_ref}"
+                return 0
+              fi
+              if [ "$attempt" -lt "$max_retry" ]; then
+                local wait_sec=$((attempt * 5))
+                echo "[push] retry after ${wait_sec}s: ${image_ref}"
+                sleep "$wait_sec"
+              fi
+              attempt=$((attempt + 1))
+            done
+            echo "[push] failed after ${max_retry} attempts: ${image_ref}" >&2
+            return 1
+          }
+
           docker tag openclaw-pro:lite ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           docker tag openclaw-pro:lite ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:lite
           docker tag openclaw-pro:lite ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-lite
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:lite
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-lite
+
+          push_with_retry "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          push_with_retry "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:lite"
+          push_with_retry "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-lite"
 
       # 导出镜像为 tar.gz (用户直接下载，无需 Docker Hub/GHCR)
       - name: Export images as tar.gz
