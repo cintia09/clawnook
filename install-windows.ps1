@@ -1918,7 +1918,6 @@ function Write-LaunchAccessSummary {
     $httpsDomain = if ($Domain) { $Domain } else { "localhost" }
     $httpsUrl = if ($HttpsPort -eq 443) { "https://${httpsDomain}" } else { "https://${httpsDomain}:${HttpsPort}" }
     Write-Host "     🔗 主站:     $httpsUrl" -ForegroundColor Cyan
-    Write-Host "     🔗 管理面板: ${httpsUrl}/admin" -ForegroundColor Cyan
     Write-Host "" 
     Write-Host "  ⏳ 访问提示: 服务启动后通常需等待 30-120 秒；首次安装可能需要 3-5 分钟" -ForegroundColor Yellow
     Write-Host "     若暂时无法访问，请稍等后刷新页面" -ForegroundColor DarkGray
@@ -2016,13 +2015,11 @@ function Show-Completion {
         # 显示普通用户登录信息
         $sshUser = if ($script:hostUserForSSH) { $script:hostUserForSSH } else { $env:USERNAME }
         if ($sshUser -and $sshUser -ne "root" -and $sshUser -ne "administrator") {
-            Write-Host "     Root 登录: 已禁用" -ForegroundColor Green
             Write-Host "     登录用户: $sshUser" -ForegroundColor Green
             Write-Host "     登录命令: ssh ${sshUser}@<host> -p ${SshPort}" -ForegroundColor Cyan
             Write-Host "     容器内提权: 登录后执行 sudo -i" -ForegroundColor DarkGray
         } else {
-            Write-Host "     Root 登录: 临时允许（仅密钥）" -ForegroundColor Yellow
-            Write-Host "     登录用户: root（普通用户创建/注入失败）" -ForegroundColor Yellow
+            Write-Host "     登录用户: root（普通用户创建失败）" -ForegroundColor Yellow
             Write-Host "     登录命令: ssh root@<host> -p ${SshPort}" -ForegroundColor Cyan
             Write-Host "     建议: 修复后重新运行安装脚本恢复普通用户登录" -ForegroundColor DarkGray
         }
@@ -2030,7 +2027,9 @@ function Show-Completion {
         if ($script:sshInjectedKeyPath) {
             Write-Host "     公钥注入: 已自动注入 $script:sshInjectedKeyPath" -ForegroundColor Green
         } else {
-            Write-Host "     公钥注入: 未自动注入，请手动配置 authorized_keys" -ForegroundColor Yellow
+            Write-Host "     公钥注入: 未自动注入，请手动执行以下命令配置授权密钥：" -ForegroundColor Yellow
+            $currentSshUser = if ($script:hostUserForSSH) { $script:hostUserForSSH } else { "root" }
+            Write-Host "     cat ~/.ssh/id_rsa.pub | ssh -p ${SshPort} ${currentSshUser}@<host> `"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys`"" -ForegroundColor White
         }
         Write-Host ""
         Write-Host "  🔄 升级到新版本：" -ForegroundColor White
@@ -4112,7 +4111,7 @@ function Main {
             Write-Log "Final image check OK. ID=$finalImageId"
 
             # ── 获取宿主机用户信息（用于容器内创建同名用户）──
-            $rawHostUser = $env:USERNAME
+            $rawHostUser = if ($env:USERNAME) { $env:USERNAME } elseif ($env:USER) { $env:USER } else { whoami }
             $hostUser = Convert-ToContainerUserName $rawHostUser
             $hostUid = ""
             $hostGid = ""
@@ -4242,11 +4241,14 @@ function Main {
 
                     # ── SSH 安全配置：禁用密码登录，禁用 root 登录，仅密钥登录 ──
                     # 配置由 start-services.sh 自动完成，这里仅注入公钥到普通用户
-                    $pubKeyCandidates = @(
-                        (Join-Path $env:USERPROFILE ".ssh\id_ed25519.pub"),
-                        (Join-Path $env:USERPROFILE ".ssh\id_rsa.pub"),
-                        (Join-Path $env:USERPROFILE ".ssh\id_ecdsa.pub")
-                    )
+                    $pubKeyCandidates = @()
+                    if ($env:USERPROFILE) {
+                        $pubKeyCandidates += @(
+                            (Join-Path $env:USERPROFILE ".ssh\id_ed25519.pub"),
+                            (Join-Path $env:USERPROFILE ".ssh\id_rsa.pub"),
+                            (Join-Path $env:USERPROFILE ".ssh\id_ecdsa.pub")
+                        )
+                    }
 
                     if ($env:HOME -and $env:HOME -ne $env:USERPROFILE) {
                         $pubKeyCandidates += @(

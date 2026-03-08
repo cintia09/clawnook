@@ -748,15 +748,16 @@ show_install_summary() {
     echo -e "${GREEN}║${NC}  ${BOLD}访问地址：${NC}                                                    ${GREEN}║${NC}"
     if [ -n "$domain" ]; then
         echo -e "${GREEN}║${NC}    🌐 主站:     ${CYAN}https://${domain}:${https_port}${NC}"
-        echo -e "${GREEN}║${NC}    🔧 管理面板: ${CYAN}https://${domain}:${https_port}/admin${NC}"
     else
         echo -e "${GREEN}║${NC}    🌐 主站:     ${CYAN}http://<服务器IP>:${gw_port}${NC}"
         echo -e "${GREEN}║${NC}    🔧 管理面板: ${CYAN}http://<服务器IP>:${https_port}${NC}"
     fi
-    echo -e "${GREEN}║${NC}    🔑 SSH:      ${CYAN}ssh root@localhost -p ${ssh_port}${NC}"
+    local login_user="${HOST_USER_NAME:-root}"
+    echo -e "${GREEN}║${NC}    🔑 SSH:      ${CYAN}ssh ${login_user}@<host> -p ${ssh_port}${NC}"
     echo -e "${GREEN}║${NC}                                                                  ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}  ${BOLD}账号信息：${NC}                                                    ${GREEN}║${NC}"
-    echo -e "${GREEN}║${NC}    容器用户: ${YELLOW}root${NC}（密码为您刚才设置的密码）            ${GREEN}║${NC}"
+    local container_user="${HOST_USER_NAME:-root}"
+    echo -e "${GREEN}║${NC}    容器用户: ${YELLOW}${container_user}${NC}（密码为您刚才设置的密码）            ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}    时区: ${YELLOW}${tz}${NC}                                          ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}                                                                  ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}  ${BOLD}数据目录：${NC}                                                    ${GREEN}║${NC}"

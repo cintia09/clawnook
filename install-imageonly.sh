@@ -957,7 +957,7 @@ F2B
 
 create_and_start(){
   local host_user host_uid host_gid root_home_dir user_home_dir key_injected ssh_login_user user_ready ssh_hardened
-  host_user="$(id -un 2>/dev/null || true)"
+  host_user="${SUDO_USER:-$(id -un 2>/dev/null || true)}"
   host_uid="$(id -u 2>/dev/null || true)"
   host_gid="$(id -g 2>/dev/null || true)"
   key_injected="false"
@@ -1106,7 +1106,7 @@ create_and_start(){
   if [ "$HTTPS_ENABLED" = "true" ]; then
     local url_suffix=""
     [ "$HTTPS_PORT" != "443" ] && url_suffix=":${HTTPS_PORT}"
-    info "访问：主站 https://${DOMAIN}${url_suffix}  管理面板 https://${DOMAIN}${url_suffix}/admin"
+    info "访问：主站 https://${DOMAIN}${url_suffix}"
   else
     info "访问：Gateway http://<host>:${GW_PORT}  管理面板 http://<host>:${WEB_PORT}"
   fi
@@ -1120,24 +1120,25 @@ create_and_start(){
     warn "  - 密码登录：状态未知（请手动检查）"
   fi
   if [ "$ssh_login_user" = "root" ]; then
-    warn "  - Root 登录：仅密钥兜底（普通用户不可用时）"
-    info "  - 登录用户：root"
-    info "  - 登录命令：ssh root@<host> -p ${SSH_PORT}"
+    warn "  - 登录用户: root（普通用户创建失败）"
+    info "  - 登录命令: ssh root@<host> -p ${SSH_PORT}"
+    warn "  - 建议: 修复后重新运行安装脚本恢复普通用户登录"
   elif [ -n "$host_user" ] && [ "$host_user" != "root" ]; then
-    info "  - Root 登录：已禁用"
-    info "  - 登录用户：$host_user"
-    info "  - 登录命令：ssh ${host_user}@<host> -p ${SSH_PORT}"
-    info "  - 容器内提权：登录后执行 sudo -i"
-    info "  - 用户数据目录：$user_home_dir"
+    info "  - 登录用户: $host_user"
+    info "  - 登录命令: ssh ${host_user}@<host> -p ${SSH_PORT}"
+    info "  - 容器内提权: 登录后执行 sudo -i"
+    info "  - 用户数据目录: $user_home_dir"
   else
     warn "  - 当前为 root 用户运行，未创建普通用户"
     info "  - 如需普通用户登录，请以非 root 用户重新运行安装脚本"
   fi
 
   if [ "$key_injected" = "true" ]; then
-    success "  - SSH 公钥已注入"
+    success "  - SSH 公钥: 已自动注入"
   else
-    warn "  - 未检测到 SSH 公钥，请手动配置 ~/.ssh/authorized_keys"
+    warn "  - SSH 公钥: 未自动注入，请手动执行以下命令配置授权密钥："
+    local current_user="${host_user:-root}"
+    echo -e "    ${WHITE}cat ~/.ssh/id_rsa.pub | ssh -p ${SSH_PORT} ${current_user}@<host> \"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys\"${NC}"
   fi
 
   info "日志文件：$LOG_FILE"
