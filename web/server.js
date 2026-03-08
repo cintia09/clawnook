@@ -357,6 +357,115 @@ function writeJson(p, obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2), { mode: 0o600 });
 }
 
+// ============================================================
+// Helpers: API Key 加密/解密（AES-256-CBC + PBKDF2）
+// ============================================================
+const ENC_KEY_PATH = '/root/.openclaw/.enc_key';
+
+function getEncryptionKey() {
+  try {
+    return fs.readFileSync(ENC_KEY_PATH, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+function ensureEncryptionKey() {
+  if (fs.existsSync(ENC_KEY_PATH)) return;
+  try {
+    const key = crypto.randomBytes(32).toString('base64').slice(0, 32);
+    fs.mkdirSync(path.dirname(ENC_KEY_PATH), { recursive: true });
+    fs.writeFileSync(ENC_KEY_PATH, key, { mode: 0o400 });
+    console.log('[enc] 加密主密钥已自动生成:', ENC_KEY_PATH);
+  } catch (e) {
+    console.warn('[enc] 无法生成加密密钥:', e.message);
+  }
+}
+
+function encryptValue(plaintext) {
+  const key = getEncryptionKey();
+  if (!key || !plaintext) return plaintext;
+  try {
+    const salt = crypto.randomBytes(8);
+    const derived = crypto.pbkdf2Sync(key, salt, 10000, 48, 'sha256');
+    const aesKey = derived.subarray(0, 32);
+    const iv = derived.subarray(32, 48);
+    const cipher = crypto.createCipheriv('aes-256-cbc', aesKey, iv);
+    let enc = cipher.update(plaintext, 'utf8', 'base64');
+    enc += cipher.final('base64');
+    return 'ENC:' + salt.toString('base64') + ':' + enc;
+  } catch (e) {
+    console.warn('[enc] 加密失败:', e.message);
+    return plaintext;
+  }
+}
+
+function decryptValue(encrypted) {
+  const key = getEncryptionKey();
+  if (!key || !encrypted) return encrypted;
+  if (typeof encrypted !== 'string' || !encrypted.startsWith('ENC:')) return encrypted;
+  try {
+    const parts = encrypted.split(':');
+    if (parts.length < 3) return encrypted;
+    const saltB64 = parts[1];
+    const dataB64 = parts.slice(2).join(':');
+    const salt = Buffer.from(saltB64, 'base64');
+    const derived = crypto.pbkdf2Sync(key, salt, 10000, 48, 'sha256');
+    const aesKey = derived.subarray(0, 32);
+    const iv = derived.subarray(32, 48);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+    let dec = decipher.update(dataB64, 'base64', 'utf8');
+    dec += decipher.final('utf8');
+    return dec;
+  } catch (e) {
+    console.warn('[enc] 解密失败:', e.message);
+    return encrypted;
+  }
+}
+
+function maskApiKey(key) {
+  if (!key || typeof key !== 'string') return '';
+  const plain = key.startsWith('ENC:') ? decryptValue(key) : key;
+  if (!plain || plain.length < 8) return '••••••••';
+  return plain.slice(0, 5) + '•••' + plain.slice(-3);
+}
+
+function isEncrypted(value) {
+  return typeof value === 'string' && value.startsWith('ENC:');
+}
+
+// 启动时确保加密密钥存在
+ensureEncryptionKey();
+
+// 启动时自动修复：将 models.json 中被错误加密的 API key 解密回明文
+// （models.json 必须保留明文，因为 openclaw gateway 直接读取）
+function repairModelsJsonApiKeys() {
+  const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
+  try {
+    if (!fs.existsSync(modelsPath)) return;
+    const models = readJson(modelsPath, null);
+    if (!models?.providers) return;
+    let changed = false;
+    for (const [pName, prov] of Object.entries(models.providers)) {
+      if (prov?.apiKey && typeof prov.apiKey === 'string' && isEncrypted(prov.apiKey)) {
+        const decrypted = decryptValue(prov.apiKey);
+        if (decrypted && decrypted !== prov.apiKey) {
+          prov.apiKey = decrypted;
+          changed = true;
+          console.log(`[enc] 已将 ${pName} 的 API key 恢复为明文（openclaw 需要明文读取）`);
+        }
+      }
+    }
+    if (changed) {
+      writeJson(modelsPath, models);
+      console.log('[enc] models.json API key 修复完成');
+    }
+  } catch (e) {
+    console.warn('[enc] API key 修复失败:', e.message);
+  }
+}
+setTimeout(repairModelsJsonApiKeys, 3000);
+
 function ensureGatewayControlUiAccessForRequest(req) {
   let changed = false;
   try {
@@ -2548,29 +2657,109 @@ app.post('/api/docker-config', (req, res) => {
 // ============================================================
 // API: config (basic; keep legacy behavior)
 // ============================================================
-app.get('/api/config', (req, res) => {
-  repairOpenClawConfigProviders();
-  const config = readConfig();
-  const safe = JSON.parse(JSON.stringify(config));
-  if (safe.providers) {
-    for (const [key, val] of Object.entries(safe.providers)) {
-      if (val && val.apiKey) safe.providers[key].apiKey = '***';
-    }
-  }
-  res.json(safe);
-});
+// 消息平台敏感字段列表
+const MSG_SENSITIVE_FIELDS = ['apiKey', 'secret', 'token', 'encryptKey', 'password', 'appSecret'];
 
-app.post('/api/config', (req, res) => {
+function maskSensitiveFields(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const safe = JSON.parse(JSON.stringify(obj));
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return;
+    for (const [k, v] of Object.entries(node)) {
+      if (typeof v === 'string' && MSG_SENSITIVE_FIELDS.includes(k) && v && v !== '***') {
+        node[k] = maskApiKey(v);
+      } else if (typeof v === 'object') {
+        walk(v);
+      }
+    }
+  };
+  walk(safe);
+  return safe;
+}
+
+function encryptSensitiveFields(obj) {
+  if (!obj || typeof obj !== 'object') return;
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return;
+    for (const [k, v] of Object.entries(node)) {
+      if (typeof v === 'string' && MSG_SENSITIVE_FIELDS.includes(k) && v && !isEncrypted(v) && v !== '***') {
+        node[k] = encryptValue(v);
+      } else if (typeof v === 'object') {
+        walk(v);
+      }
+    }
+  };
+  walk(obj);
+}
+
+app.get('/api/config', async (req, res) => {
   try {
     repairOpenClawConfigProviders();
-    const config = readConfig();
+    const configPath = '/root/.openclaw/openclaw.json';
+
+    // 读取 openclaw.json
+    let config = {};
+    try {
+      const configData = await new Promise((resolve, reject) => {
+        exec(`sudo cat "${configPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
+          if (err) reject(err);
+          else resolve(String(stdout || ''));
+        });
+      });
+      config = JSON.parse(configData);
+    } catch {
+      config = {};
+    }
+
+    // 只返回 channels 字段（掩码敏感信息）
+    const result = { channels: config.channels || {} };
+    const safe = maskSensitiveFields(result);
+    res.json(safe);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/config', async (req, res) => {
+  try {
+    repairOpenClawConfigProviders();
+    const configPath = '/root/.openclaw/openclaw.json';
+
+    // 读取现有 openclaw.json
+    let config = {};
+    try {
+      const configData = await new Promise((resolve) => {
+        exec(`sudo cat "${configPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
+          resolve(String(stdout || '{}'));
+        });
+      });
+      config = JSON.parse(configData);
+    } catch {
+      config = {};
+    }
+
     const updates = req.body || {};
-    deepMerge(config, updates);
-    writeConfig(config);
+
+    // 合并 channels 配置到 openclaw.json（明文存储，openclaw 直接读取）
+    if (updates.channels) {
+      if (!config.channels) config.channels = {};
+      deepMerge(config.channels, updates.channels);
+    }
+
+    // 写回 openclaw.json
+    const configJson = JSON.stringify(config, null, 2);
+    await new Promise((resolve, reject) => {
+      exec(`sudo tee "${configPath}" > /dev/null << 'EOF'\n${configJson}\nEOF`, { timeout: 10000 }, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+
 });
 
 const aiAuthTasks = {};
@@ -2704,18 +2893,23 @@ app.get('/api/ai/config', async (req, res) => {
     const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
 
     // 读取主配置
-    const configData = await new Promise((resolve, reject) => {
-      exec(`sudo cat "${configPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
-        if (err) reject(err);
-        else resolve(String(stdout || ''));
+    let config = {};
+    try {
+      const configData = await new Promise((resolve, reject) => {
+        exec(`sudo cat "${configPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
+          if (err) reject(err);
+          else resolve(String(stdout || ''));
+        });
       });
-    });
-
-    const config = JSON.parse(configData);
+      config = JSON.parse(configData);
+    } catch {
+      config = {};
+    }
 
     // 读取 models.json 获取提供商列表
     let providers = [];
     let baseUrl = null;
+    let providerDetails = {};
     try {
       const modelsData = await new Promise((resolve) => {
         exec(`sudo cat "${modelsPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
@@ -2724,6 +2918,18 @@ app.get('/api/ai/config', async (req, res) => {
       });
       const models = JSON.parse(modelsData);
       providers = Object.keys(models?.providers || {});
+
+      // 获取每个 provider 的信息（含掩码后的 API key）
+      for (const pName of providers) {
+        const prov = models.providers[pName];
+        const rawKey = prov?.apiKey || '';
+        providerDetails[pName] = {
+          baseUrl: prov?.baseUrl || null,
+          hasApiKey: !!rawKey && rawKey !== 'YOUR_API_KEY',
+          apiKeyMasked: (rawKey && rawKey !== 'YOUR_API_KEY') ? maskApiKey(rawKey) : '',
+          modelCount: (prov?.models || []).length
+        };
+      }
 
       // 获取第一个提供商的 baseUrl
       if (providers.length > 0) {
@@ -2738,27 +2944,21 @@ app.get('/api/ai/config', async (req, res) => {
     const primaryModel = config?.agents?.defaults?.model?.primary || '';
     const provider = primaryModel.split('/')[0] || providers[0] || 'anthropic';
 
-    // 解析 aliases（反向查找）
-    const aliases = config?.models?.aliases || {};
-
-    // 解析 fallbacks（支持新格式 {primary, sub} 和旧格式数组）
-    let fallbacks = config?.agents?.defaults?.fallbacks || [];
-    let fallbackObj = { primary: [], sub: [] };
-
-    if (Array.isArray(fallbacks)) {
-      // 旧格式：数组中的模型作为主代理 fallback
-      fallbackObj.primary = fallbacks;
-    } else if (typeof fallbacks === 'object') {
-      // 新格式：{primary, sub}
-      fallbackObj.primary = fallbacks.primary || [];
-      fallbackObj.sub = fallbacks.sub || [];
+    // 解析 aliases（从 agents.defaults.models）
+    const modelsMap = config?.agents?.defaults?.models || {};
+    const aliases = {};
+    for (const [modelRef, modelCfg] of Object.entries(modelsMap)) {
+      if (modelCfg?.alias) aliases[modelRef] = modelCfg.alias;
     }
 
-    // 解析 sub model
-    const subModel = config?.agents?.defaults?.subModel || null;
+    // 解析 fallbacks（从 agents.defaults.model.fallbacks，是一个数组）
+    const modelFallbacks = config?.agents?.defaults?.model?.fallbacks || [];
+    const fallbackObj = { primary: Array.isArray(modelFallbacks) ? modelFallbacks : [] };
 
-    // 解析 image model
-    const imageModel = config?.agents?.defaults?.imageModel || null;
+    // 解析 imageModel（从 agents.defaults.imageModel，可以是字符串或 {primary, fallbacks}）
+    const rawImageModel = config?.agents?.defaults?.imageModel || null;
+    const imageModel = typeof rawImageModel === 'string' ? rawImageModel :
+      (rawImageModel?.primary || null);
 
     res.json({
       success: true,
@@ -2767,9 +2967,9 @@ app.get('/api/ai/config', async (req, res) => {
       baseUrl,
       aliases,
       fallbacks: fallbackObj,
-      subModel,
       imageModel,
       configuredProviders: providers,
+      providerDetails,
       rawConfig: config
     });
   } catch (err) {
@@ -2821,76 +3021,67 @@ app.post('/api/ai/config', async (req, res) => {
       models = { providers: {} };
     }
 
-    // 更新主配置
-    if (!config.agents) config.agents = { defaults: {} };
-    if (!config.agents.defaults) config.agents.defaults = { model: {} };
-    if (!config.agents.defaults.model) config.agents.defaults.model = {};
-    if (!config.agents.defaults.models) config.agents.defaults.models = {};
+    // ---- 更新 openclaw.json（严格按照 openclaw 官方 schema）----
+    // 参考: https://docs.openclaw.ai/gateway/configuration-reference#agents-defaults-model
+    if (!config.agents) config.agents = {};
+    if (!config.agents.defaults) config.agents.defaults = {};
 
-    config.agents.defaults.model.primary = primaryModel;
-    config.agents.defaults.models[primaryModel] = {};
-
-    // 更新 fallbacks（支持新的对象格式 {primary, sub}）
+    // agents.defaults.model: { primary, fallbacks }
+    // fallbacks 是一个数组，在 model 对象内部
+    const modelObj = { primary: primaryModel };
     if (fallbacks) {
-      if (typeof fallbacks === 'object' && !Array.isArray(fallbacks)) {
-        // 新格式：{primary, sub}
-        const newFallbacks = {};
-        if (fallbacks.primary && Array.isArray(fallbacks.primary) && fallbacks.primary.length > 0) {
-          newFallbacks.primary = fallbacks.primary;
-        }
-        if (fallbacks.sub && Array.isArray(fallbacks.sub) && fallbacks.sub.length > 0) {
-          newFallbacks.sub = fallbacks.sub;
-        }
-        if (Object.keys(newFallbacks).length > 0) {
-          config.agents.defaults.fallbacks = newFallbacks;
-        }
-      } else if (Array.isArray(fallbacks) && fallbacks.length > 0) {
-        // 旧格式：数组，作为主代理 fallback
-        config.agents.defaults.fallbacks = { primary: fallbacks };
+      // 前端传来的 fallbacks 可能是对象 {primary:[], sub:[]} 或数组
+      let fbArray = [];
+      if (Array.isArray(fallbacks)) {
+        fbArray = fallbacks;
+      } else if (typeof fallbacks === 'object' && Array.isArray(fallbacks.primary)) {
+        fbArray = fallbacks.primary;
+      }
+      if (fbArray.length > 0) {
+        modelObj.fallbacks = fbArray;
+      }
+    }
+    config.agents.defaults.model = modelObj;
+
+    // agents.defaults.imageModel: { primary, fallbacks } 或字符串
+    if (imageModel) {
+      if (typeof imageModel === 'string') {
+        config.agents.defaults.imageModel = { primary: imageModel };
+      } else if (typeof imageModel === 'object') {
+        config.agents.defaults.imageModel = imageModel;
       }
     }
 
-    // 更新 sub model
-    if (subModel !== undefined) {
-      config.agents.defaults.subModel = subModel || null;
+    // agents.defaults.models: 模型目录/别名（每个 key 是 provider/model）
+    if (aliases && typeof aliases === 'object' && Object.keys(aliases).length > 0) {
+      if (!config.agents.defaults.models) config.agents.defaults.models = {};
+      for (const [modelRef, alias] of Object.entries(aliases)) {
+        config.agents.defaults.models[modelRef] = { alias };
+      }
     }
 
-    // 更新 image model
-    if (imageModel) {
-      config.agents.defaults.imageModel = imageModel;
-    }
-
-    // 更新 aliases
-    if (aliases && typeof aliases === 'object') {
-      if (!config.models) config.models = {};
-      config.models.aliases = { ...config.models.aliases, ...aliases };
-    }
-
-    // 更新 models.json 中的提供商配置
+    // models.providers: 自定义 provider 配置（openclaw.json 中合法）
+    if (!config.models) config.models = {};
+    if (!config.models.providers) config.models.providers = {};
     const [providerName, modelId] = primaryModel.split('/');
-    if (!models.providers[providerName]) {
-      models.providers[providerName] = {
+    if (!config.models.providers[providerName]) {
+      config.models.providers[providerName] = {
         baseUrl: baseUrl || getDefaultBaseUrl(providerName),
-        apiKey: apiKey || 'YOUR_API_KEY',
         api: 'openai-completions',
         models: []
       };
     }
-
-    // 更新 baseUrl（如果提供了）
     if (baseUrl) {
-      models.providers[providerName].baseUrl = baseUrl;
+      config.models.providers[providerName].baseUrl = baseUrl;
     }
-
-    // 更新 API Key（如果提供了）
     if (apiKey) {
-      models.providers[providerName].apiKey = apiKey;
+      config.models.providers[providerName].apiKey = apiKey;
     }
-
-    // 添加模型到列表（如果不存在）
-    const existingModel = models.providers[providerName].models.find(m => m.id === modelId);
-    if (!existingModel) {
-      models.providers[providerName].models.push({
+    // 确保模型在 provider 的 models 列表中
+    if (!config.models.providers[providerName].models) config.models.providers[providerName].models = [];
+    const existingInConfig = config.models.providers[providerName].models.find(m => m.id === modelId);
+    if (!existingInConfig) {
+      config.models.providers[providerName].models.push({
         id: modelId,
         name: modelId,
         api: 'openai-completions',
@@ -2902,7 +3093,65 @@ app.post('/api/ai/config', async (req, res) => {
       });
     }
 
-    // 写入配置
+    // 清理非法顶级字段
+    if (config.agents?.defaults?.subModel) delete config.agents.defaults.subModel;
+    if (config.agents?.defaults?.fallbacks) delete config.agents.defaults.fallbacks;
+    if (config.models?.aliases) delete config.models.aliases;
+    if (config.providers) delete config.providers;
+
+    // ---- 同步 models.json 和 auth-profiles.json ----
+    if (!models.providers) models.providers = {};
+    if (!models.providers[providerName]) {
+      models.providers[providerName] = {
+        baseUrl: baseUrl || getDefaultBaseUrl(providerName),
+        apiKey: 'YOUR_API_KEY',
+        api: 'openai-completions',
+        models: []
+      };
+    }
+    if (baseUrl) models.providers[providerName].baseUrl = baseUrl;
+
+    // 更新 API Key 并同步 auth-profiles.json
+    if (apiKey) {
+      models.providers[providerName].apiKey = apiKey;
+      console.log(`[ai/config] API key for ${providerName} saved`);
+
+      // 同步 auth-profiles.json（openclaw 认证存储）
+      const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
+      try {
+        let authProfiles = {};
+        try {
+          const authData = await new Promise((resolve) => {
+            exec(`sudo cat "${authProfilesPath}" 2>&1`, { timeout: 3000 }, (err, stdout) => {
+              resolve(String(stdout || '{}'));
+            });
+          });
+          authProfiles = JSON.parse(authData);
+        } catch { authProfiles = {}; }
+
+        authProfiles[providerName] = { type: 'apikey', key: apiKey };
+        const authJson = JSON.stringify(authProfiles, null, 2);
+        await new Promise((resolve) => {
+          exec(`sudo tee "${authProfilesPath}" > /dev/null << 'AUTHEOF'\n${authJson}\nAUTHEOF\nsudo chmod 600 "${authProfilesPath}"`, { timeout: 5000 }, () => resolve());
+        });
+        console.log(`[ai/config] auth-profiles.json updated for ${providerName}`);
+      } catch (e) {
+        console.warn('[ai/config] auth-profiles.json update failed:', e.message);
+      }
+    }
+
+    // 确保模型在 models.json 的 provider models 列表中
+    if (!models.providers[providerName].models) models.providers[providerName].models = [];
+    if (!models.providers[providerName].models.find(m => m.id === modelId)) {
+      models.providers[providerName].models.push({
+        id: modelId, name: modelId, api: 'openai-completions',
+        reasoning: false, input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000, maxTokens: 4096
+      });
+    }
+
+    // 写入配置文件
     const configJson = JSON.stringify(config, null, 2);
     const modelsJson = JSON.stringify(models, null, 2);
 
@@ -4883,6 +5132,11 @@ app.get('/api/openclaw/gateway/logs', (req, res) => {
 // Logs: sanitize + tail
 // ============================================================
 function sanitizeLogLine(line) {
+  if (typeof line !== 'string') return null;
+  // 过滤掉频繁的 webchat connected/disconnected 日志
+  if (/\[ws\]\s+webchat\s+(connected|disconnected)/i.test(line)) {
+    return null;
+  }
   const keyRegexes = [
     /"(apiKey|token|secret|password)"\s*:\s*"[^"]*"/gi,
     /\b(apiKey|token|secret|password)\b\s*[:=]\s*([^\s,;]+)/gi
@@ -4900,7 +5154,8 @@ function tailLogLines(lines = 200) {
   return output
     .split('\n')
     .filter(Boolean)
-    .map(sanitizeLogLine);
+    .map(sanitizeLogLine)
+    .filter(Boolean);
 }
 
 function getLatestTaskLog(taskMap) {
@@ -4919,7 +5174,7 @@ function formatTaskLogBlock(title, task, lines = 200) {
   const text = String(task.log || '').trim();
   if (!text) return '';
   const safeLines = Math.max(20, Math.min(lines, TASK_LOG_BLOCK_MAX_LINES));
-  const tail = text.split('\n').slice(-safeLines).map(sanitizeLogLine).join('\n').trim();
+  const tail = text.split('\n').slice(-safeLines).map(sanitizeLogLine).filter(Boolean).join('\n').trim();
   if (!tail) return '';
   const status = String(task.status || 'unknown');
   const startedAt = task.startedAt ? formatLocalTimeWithOffset(task.startedAt) : '';
@@ -4946,6 +5201,7 @@ app.get('/api/logs', (req, res) => {
         const sanitizedInstallFallback = String(installTailFallback)
           .split('\n')
           .map(sanitizeLogLine)
+          .filter(Boolean)
           .join('\n')
           .trim();
         if (sanitizedInstallFallback) {
@@ -5220,7 +5476,7 @@ if (WebSocketServer) {
         fs.readSync(fd, buf, 0, buf.length, lastSize);
         fs.closeSync(fd);
         lastSize = stat.size;
-        const newLines = buf.toString('utf8').split('\n').filter(Boolean).map(sanitizeLogLine);
+        const newLines = buf.toString('utf8').split('\n').filter(Boolean).map(sanitizeLogLine).filter(Boolean);
         if (newLines.length > 0) {
           ws.send(JSON.stringify({ type: 'append', lines: newLines }));
         }

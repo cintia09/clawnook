@@ -2234,12 +2234,23 @@ async function loadAIConfig(){
       $('ai-baseurl').value = d.baseUrl;
     }
 
-    if ($('ai-apikey')) $('ai-apikey').value = '';
+    // API Key 显示掌码信息
+    if ($('ai-apikey')) {
+      $('ai-apikey').value = '';
+      const details = d.providerDetails?.[provider];
+      if (details?.hasApiKey) {
+        $('ai-apikey').placeholder = `已配置: ${details.apiKeyMasked || '••••••••'}，留空保持不变`;
+      } else {
+        $('ai-apikey').placeholder = 'sk-...';
+      }
+    }
 
     updateAiProviderUI();
 
     const providers = (d.configuredProviders || []).join(', ') || provider;
-    $('ai-status').textContent = `状态：已读取（主模型：${primaryModel || '未设置'}；提供商：${providers}）`;
+    const details = d.providerDetails?.[provider];
+    const keyStatus = details?.hasApiKey ? '✅ 已配置' : '⚠️ 未配置';
+    $('ai-status').textContent = `状态：已读取（主模型：${primaryModel || '未设置'}；提供商：${providers}；API Key：${keyStatus}）`;
     appendAiAuthLog(`[load] 配置读取成功`, 'success');
 
   } catch (e) {
@@ -2643,8 +2654,15 @@ function initTerminalEmulator(){
     termEmulator.open(terminalContainer);
     if (termFitAddon) termFitAddon.fit();
 
-    termOutputCache = '';
-    saveTerminalCache();
+    if (termFitAddon) {
+      setTimeout(() => termFitAddon.fit(), 50);
+    }
+    
+    // Restore cache if it exists
+    loadTerminalCache();
+    if (termOutputCache) {
+      termEmulator.write(termOutputCache);
+    }
 
     termEmulator.onData((data) => {
       if (termWs && termWs.readyState === WebSocket.OPEN) {
@@ -2745,6 +2763,25 @@ function bindTerminalInteraction(){
   const useXterm = initTerminalEmulator();
 
   terminalEl.addEventListener('click', () => focusTerminalInput());
+
+  // Hook into tab visibility to ensure xterm redraws and fits its container
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((m) => {
+      if (m.attributeName === 'class') {
+        const isActive = $('page-terminal').classList.contains('active');
+        if (isActive && termEmulator && termFitAddon) {
+          // Tab just became visible, force a redraw/fit
+          setTimeout(() => {
+            termFitAddon.fit();
+            sendTerminalResize();
+            focusTerminalInput();
+          }, 50);
+          setTimeout(() => termFitAddon.fit(), 300);
+        }
+      }
+    });
+  });
+  observer.observe($('page-terminal'), { attributes: true });
 
   window.addEventListener('resize', () => {
     if (termResizeTimer) clearTimeout(termResizeTimer);

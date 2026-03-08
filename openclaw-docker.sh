@@ -29,6 +29,7 @@ else
     USER_HOME_DIR="$HOME_DIR/$HOST_USER_NAME"
 fi
 CONFIG_FILE="$ROOT_HOME_DIR/.openclaw/docker-config.json"
+MASTER_KEY_FILE="$ROOT_HOME_DIR/.openclaw/.enc_key"
 
 # ---- 工具函数 ----
 info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
@@ -595,6 +596,21 @@ _load_and_tag_image() {
     return 1
 }
 
+# 确保加密主密钥存在（用于加密保存 API Key）
+ensure_encryption_key() {
+    if [ ! -f "$MASTER_KEY_FILE" ]; then
+        info "生成随机加密主密钥..."
+        # 生成 32 字符的随机强密钥
+        LC_ALL=C tr -dc 'A-Za-z0-9!#%^&*+=' </dev/urandom | head -c 32 > "$MASTER_KEY_FILE"
+        chmod 400 "$MASTER_KEY_FILE"
+        success "加密主密钥已生成并设置 400 权限: $MASTER_KEY_FILE"
+    fi
+    # 再次确保权限正确
+    if [ "$(stat -c %a "$MASTER_KEY_FILE" 2>/dev/null || stat -f %Lp "$MASTER_KEY_FILE" 2>/dev/null)" != "400" ]; then
+        chmod 400 "$MASTER_KEY_FILE"
+    fi
+}
+
 # 确保home目录存在
 ensure_home() {
     if [ ! -d "$HOME_DIR" ]; then
@@ -608,6 +624,7 @@ ensure_home() {
         mkdir -p "$USER_HOME_DIR"
         chmod 700 "$USER_HOME_DIR" 2>/dev/null || true
     fi
+    ensure_encryption_key
 }
 
 # ---- 端口工具 ----
@@ -1032,6 +1049,7 @@ F2B
     build_proxy_args
     build_user_mount_args
     build_host_user_env_args
+
     info "创建容器..."
     docker create \
         --name "$CONTAINER_NAME" \
