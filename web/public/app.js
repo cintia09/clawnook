@@ -680,7 +680,7 @@ async function refreshStatus(){
   if (statusEl) {
     const online = !!s.gateway;
     const cls = online ? 'online' : 'offline';
-    statusEl.innerHTML = `<span class="gw-label ${cls}">Gateway ${online ? 'Online' : 'Offline'}</span>`;
+    statusEl.innerHTML = `Gateway <span class="gw-label ${cls}">${online ? 'Online' : 'Offline'}</span>`;
   }
     const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - startedAt;
     dlog('refreshStatus ok', 'elapsedMs=', Math.round(elapsed), 'gateway=', !!s.gateway, 'caddy=', !!s.caddy);
@@ -2399,6 +2399,9 @@ function onConfiguredKeySelected() {
   if (key.baseUrl) infoText += `\nURL: ${key.baseUrl}`;
   if (modelCount > 0) infoText += `\n已注册 ${modelCount} 个模型`;
   if (info) info.textContent = infoText;
+
+  // 自动获取可用模型
+  fetchConfiguredKeyModels();
 }
 
 async function fetchConfiguredKeyModels() {
@@ -2716,8 +2719,26 @@ async function pollAiAuthTask(taskId){
         if (urlMatch) {
           const url = urlMatch[0].replace(/[,.;:]+$/, '');
           oauthUrlOpened = true;
-          appendAiAuthLog(`[auth] 正在打开授权页面: ${url}`);
-          window.open(url, '_blank', 'noopener');
+          // 提取 user_code
+          const codeMatch = st.delta.match(/(?:授权码|Code)[:：]\s*([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})?)/i);
+          const userCode = codeMatch ? codeMatch[1] : '';
+          appendAiAuthLog(`[auth] 请在新窗口中完成授权`);
+          // 尝试打开弹出窗口
+          const win = window.open(url, '_blank', 'noopener');
+          if (!win) {
+            // 弹出窗口被浏览器阻止，显示可点击链接
+            appendAiAuthLog(`[auth] ⚠️ 弹出窗口被阻止，请手动点击下方链接完成授权`);
+            const linkHtml = `<a href="${url}" target="_blank" rel="noopener" style="color:#58a6ff;text-decoration:underline;font-weight:bold;font-size:14px">👉 点击此处打开 GitHub 授权页面</a>`;
+            const codeHtml = userCode ? `<div style="margin-top:6px;font-size:16px;font-weight:bold;color:#f5f5f7;letter-spacing:2px">授权码: ${userCode}</div>` : '';
+            const logEl = $('ai-auth-log');
+            if (logEl) {
+              const div = document.createElement('div');
+              div.style.cssText = 'padding:10px 12px;margin:6px 0;background:#1a2332;border:1px solid #30363d;border-radius:8px';
+              div.innerHTML = linkHtml + codeHtml;
+              logEl.appendChild(div);
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+          }
         }
       }
     }

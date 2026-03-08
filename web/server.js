@@ -3713,18 +3713,18 @@ app.post('/api/ai/models', async (req, res) => {
     const builtInModels = {
       // 常用
       'anthropic': [
-        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
-        { id: 'claude-opus-4-20250514', name: 'Claude Opus 4' },
-        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
-        { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' }
+        { id: 'anthropic/claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
+        { id: 'anthropic/claude-opus-4-20250514', name: 'Claude Opus 4' },
+        { id: 'anthropic/claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
+        { id: 'anthropic/claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' }
       ],
       'openai': [
-        { id: 'gpt-4o', name: 'GPT-4o' },
-        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-        { id: 'gpt-4', name: 'GPT-4' },
-        { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
-        { id: 'o1', name: 'o1' },
-        { id: 'o1-mini', name: 'o1-mini' }
+        { id: 'openai/gpt-4o', name: 'GPT-4o' },
+        { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo' },
+        { id: 'openai/gpt-4', name: 'GPT-4' },
+        { id: 'openai/gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
+        { id: 'openai/o1', name: 'o1' },
+        { id: 'openai/o1-mini', name: 'o1-mini' }
       ],
       'github-copilot': [
         { id: 'copilot/gpt-4o', name: 'Copilot GPT-4o' },
@@ -3736,109 +3736,109 @@ app.post('/api/ai/models', async (req, res) => {
         { id: 'copilot/gemini-2.0-flash', name: 'Copilot Gemini 2.0 Flash' }
       ],
       'gemini': [
-        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
-        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' }
+        { id: 'gemini/gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+        { id: 'gemini/gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+        { id: 'gemini/gemini-1.5-flash', name: 'Gemini 1.5 Flash' }
       ],
       'deepseek': [
-        { id: 'deepseek-chat', name: 'DeepSeek Chat' },
-        { id: 'deepseek-coder', name: 'DeepSeek Coder' },
-        { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' }
+        { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
+        { id: 'deepseek/deepseek-coder', name: 'DeepSeek Coder' },
+        { id: 'deepseek/deepseek-reasoner', name: 'DeepSeek Reasoner' }
       ],
       // 国际
       'mistral': [
-        { id: 'mistral-large-latest', name: 'Mistral Large' },
-        { id: 'mistral-medium-latest', name: 'Mistral Medium' },
-        { id: 'codestral-latest', name: 'Codestral' }
+        { id: 'mistral/mistral-large-latest', name: 'Mistral Large' },
+        { id: 'mistral/mistral-medium-latest', name: 'Mistral Medium' },
+        { id: 'mistral/codestral-latest', name: 'Codestral' }
       ],
       'xai': [
-        { id: 'grok-4', name: 'Grok 4' },
-        { id: 'grok-3', name: 'Grok 3' },
-        { id: 'grok-3-fast', name: 'Grok 3 Fast' }
+        { id: 'xai/grok-4', name: 'Grok 4' },
+        { id: 'xai/grok-3', name: 'Grok 3' },
+        { id: 'xai/grok-3-fast', name: 'Grok 3 Fast' }
       ],
       'groq': [
-        { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B' },
-        { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B' },
-        { id: 'gemma2-9b-it', name: 'Gemma2 9B' }
+        { id: 'groq/llama-3.3-70b-versatile', name: 'Llama 3.3 70B' },
+        { id: 'groq/mixtral-8x7b-32768', name: 'Mixtral 8x7B' },
+        { id: 'groq/gemma2-9b-it', name: 'Gemma2 9B' }
       ],
       'together': [
-        { id: 'moonshotai/Kimi-K2.5', name: 'Kimi K2.5' },
-        { id: 'deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1' },
-        { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B' }
+        { id: 'together/moonshotai/Kimi-K2.5', name: 'Kimi K2.5' },
+        { id: 'together/deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1' },
+        { id: 'together/meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B' }
       ],
       'huggingface': [
-        { id: 'deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1' },
-        { id: 'deepseek-ai/DeepSeek-V3.1', name: 'DeepSeek V3.1' },
-        { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B' }
+        { id: 'huggingface/deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1' },
+        { id: 'huggingface/deepseek-ai/DeepSeek-V3.1', name: 'DeepSeek V3.1' },
+        { id: 'huggingface/meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B' }
       ],
       'perplexity': [
-        { id: 'sonar-pro', name: 'Sonar Pro' },
-        { id: 'sonar', name: 'Sonar' },
-        { id: 'sonar-reasoning-pro', name: 'Sonar Reasoning Pro' }
+        { id: 'perplexity/sonar-pro', name: 'Sonar Pro' },
+        { id: 'perplexity/sonar', name: 'Sonar' },
+        { id: 'perplexity/sonar-reasoning-pro', name: 'Sonar Reasoning Pro' }
       ],
       'nvidia': [
-        { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B' },
-        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B' }
+        { id: 'nvidia/meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B' },
+        { id: 'nvidia/nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B' }
       ],
       'cerebras': [
-        { id: 'llama-3.3-70b', name: 'Llama 3.3 70B' },
-        { id: 'llama-3.1-8b', name: 'Llama 3.1 8B' }
+        { id: 'cerebras/llama-3.3-70b', name: 'Llama 3.3 70B' },
+        { id: 'cerebras/llama-3.1-8b', name: 'Llama 3.1 8B' }
       ],
       'venice': [
-        { id: 'llama-3.3-70b', name: 'Llama 3.3 70B' },
-        { id: 'deepseek-r1-671b', name: 'DeepSeek R1 671B' }
+        { id: 'venice/llama-3.3-70b', name: 'Llama 3.3 70B' },
+        { id: 'venice/deepseek-r1-671b', name: 'DeepSeek R1 671B' }
       ],
       // 中国
       'bailian': [
-        { id: 'qwen3.5-plus', name: 'Qwen 3.5 Plus' },
-        { id: 'qwen3-max-2026-01-23', name: 'Qwen 3 Max' },
-        { id: 'qwen3-coder-next', name: 'Qwen 3 Coder Next' },
-        { id: 'qwen3-coder-plus', name: 'Qwen 3 Coder Plus' },
-        { id: 'MiniMax-M2.5', name: 'MiniMax M2.5' },
-        { id: 'glm-5', name: 'GLM-5' },
-        { id: 'glm-4.7', name: 'GLM-4.7' },
-        { id: 'kimi-k2.5', name: 'Kimi K2.5' }
+        { id: 'bailian/qwen3.5-plus', name: 'Qwen 3.5 Plus' },
+        { id: 'bailian/qwen3-max-2026-01-23', name: 'Qwen 3 Max' },
+        { id: 'bailian/qwen3-coder-next', name: 'Qwen 3 Coder Next' },
+        { id: 'bailian/qwen3-coder-plus', name: 'Qwen 3 Coder Plus' },
+        { id: 'bailian/MiniMax-M2.5', name: 'MiniMax M2.5' },
+        { id: 'bailian/glm-5', name: 'GLM-5' },
+        { id: 'bailian/glm-4.7', name: 'GLM-4.7' },
+        { id: 'bailian/kimi-k2.5', name: 'Kimi K2.5' }
       ],
       'zai': [
-        { id: 'glm-5', name: 'GLM-5' },
-        { id: 'glm-4.7', name: 'GLM-4.7' }
+        { id: 'zai/glm-5', name: 'GLM-5' },
+        { id: 'zai/glm-4.7', name: 'GLM-4.7' }
       ],
       'moonshot': [
-        { id: 'kimi-k2.5', name: 'Kimi K2.5' },
-        { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K' },
-        { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K' }
+        { id: 'moonshot/kimi-k2.5', name: 'Kimi K2.5' },
+        { id: 'moonshot/moonshot-v1-128k', name: 'Moonshot v1 128K' },
+        { id: 'moonshot/moonshot-v1-32k', name: 'Moonshot v1 32K' }
       ],
       'kimi-coding': [
-        { id: 'k2p5', name: 'Kimi K2.5 Coding' }
+        { id: 'kimi-coding/k2p5', name: 'Kimi K2.5 Coding' }
       ],
       'minimax': [
-        { id: 'MiniMax-M2.5', name: 'MiniMax M2.5' },
-        { id: 'MiniMax-M1', name: 'MiniMax M1' }
+        { id: 'minimax/MiniMax-M2.5', name: 'MiniMax M2.5' },
+        { id: 'minimax/MiniMax-M1', name: 'MiniMax M1' }
       ],
       'xiaomi': [
-        { id: 'mimo-v2-flash', name: 'MiMo V2 Flash' }
+        { id: 'xiaomi/mimo-v2-flash', name: 'MiMo V2 Flash' }
       ],
       'qianfan': [
-        { id: 'deepseek-v3.2', name: 'DeepSeek V3.2' },
-        { id: 'ernie-4.5-8k', name: 'ERNIE 4.5 8K' }
+        { id: 'qianfan/deepseek-v3.2', name: 'DeepSeek V3.2' },
+        { id: 'qianfan/ernie-4.5-8k', name: 'ERNIE 4.5 8K' }
       ],
       'volcengine': [
-        { id: 'ark-code-latest', name: 'Ark Code Latest' }
+        { id: 'volcengine/ark-code-latest', name: 'Ark Code Latest' }
       ],
       'byteplus': [
-        { id: 'ark-code-latest', name: 'Ark Code Latest' }
+        { id: 'byteplus/ark-code-latest', name: 'Ark Code Latest' }
       ],
       // 网关
       'litellm': [
-        { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
-        { id: 'gpt-4o', name: 'GPT-4o' }
+        { id: 'litellm/claude-opus-4-6', name: 'Claude Opus 4.6' },
+        { id: 'litellm/gpt-4o', name: 'GPT-4o' }
       ],
       'opencode': [
-        { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
-        { id: 'gpt-4o', name: 'GPT-4o' }
+        { id: 'opencode/claude-opus-4-6', name: 'Claude Opus 4.6' },
+        { id: 'opencode/gpt-4o', name: 'GPT-4o' }
       ],
       'kilocode': [
-        { id: 'anthropic/claude-opus-4.6', name: 'Claude Opus 4.6' }
+        { id: 'kilocode/anthropic/claude-opus-4.6', name: 'Claude Opus 4.6' }
       ]
     };
 
@@ -3943,6 +3943,14 @@ app.post('/api/ai/models', async (req, res) => {
                   name: m.name || m.id
                 }));
               }
+              // 确保所有模型 ID 都有 provider/ 前缀
+              models = models.map(m => {
+                const prefix = provider + '/';
+                if (!m.id.startsWith(prefix)) {
+                  return { ...m, id: prefix + m.id };
+                }
+                return m;
+              });
               if (models.length > 0) {
                 return res.json({ success: true, models, source: 'api' });
               }
