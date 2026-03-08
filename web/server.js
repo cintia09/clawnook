@@ -2987,6 +2987,24 @@ app.post('/api/ai/auth/copilot/login', (req, res) => {
   res.json({ success: true, taskId });
 });
 
+// 通用 OAuth 登录入口
+app.post('/api/ai/auth/oauth/login', (req, res) => {
+  const provider = String(req.body?.provider || '').trim();
+  if (!provider || !/^[a-zA-Z0-9\-]+$/.test(provider)) {
+    return res.status(400).json({ error: 'provider 不合法' });
+  }
+
+  let command;
+  if (provider === 'github-copilot') {
+    command = 'openclaw models auth login-github-copilot';
+  } else {
+    command = `openclaw models auth login --provider ${provider}`;
+  }
+
+  const taskId = runAiAuthTask(command, `${provider} OAuth 登录`);
+  res.json({ success: true, taskId });
+});
+
 app.get('/api/ai/auth/task/:taskId', (req, res) => {
   const task = aiAuthTasks[req.params.taskId];
   if (!task) return res.status(404).json({ error: 'not found' });
@@ -3006,8 +3024,9 @@ app.get('/api/ai/config', async (req, res) => {
   try {
     const configPath = '/root/.openclaw/openclaw.json';
     const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
+    const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
 
-    // 读取主配置 (尝试使用原生的 fs 读取，减少因为 spawn/sudo 导致的卡死风险)
+    // 读取主配置
     let config = {};
     try {
       const configData = fs.readFileSync(configPath, 'utf8');
@@ -3017,101 +3036,7 @@ app.get('/api/ai/config', async (req, res) => {
     }
 
     // 读取 models.json 获取提供商列表
-    let providers = [];
-    let baseUrl = null;
-    let providerDetails = {};
-    try {
-      const modelsData = fs.readFileSync(modelsPath, 'utf8');
-      const models = JSON.parse(modelsData);
-      providers = Object.keys(models?.providers || {});
-
-      // 获取每个 provider 的信息（含掩码后的 API key）
-      for (const pName of providers) {
-        const prov = models.providers[pName];
-        const rawKey = prov?.apiKey || '';
-        providerDetails[pName] = {
-          baseUrl: prov?.baseUrl || null,
-          hasApiKey: !!rawKey && rawKey !== 'YOUR_API_KEY',
-          apiKeyMasked: (rawKey && rawKey !== 'YOUR_API_KEY') ? maskApiKey(rawKey) : '',
-          modelCount: (prov?.models || []).length
-        };
-      }
-
-      // 获取第一个提供商的 baseUrl
-      if (providers.length > 0) {
-        const firstProvider = models.providers[providers[0]];
-        baseUrl = firstProvider?.baseUrl || null;
-      }
-    } catch {
-      // 忽略错误
-    }
-
-    // 解析默认模型
-    const primaryModel = config?.agents?.defaults?.model?.primary || '';
-    const provider = primaryModel.split('/')[0] || providers[0] || 'anthropic';
-
-    // 解析 aliases（从 agents.defaults.models）
-    const modelsMap = config?.agents?.defaults?.models || {};
-    const aliases = {};
-    for (const [modelRef, modelCfg] of Object.entries(modelsMap)) {
-      if (modelCfg?.alias) aliases[modelRef] = modelCfg.alias;
-    }
-
-    // 解析 fallbacks（从 agents.defaults.model.fallbacks，是一个数组）
-    const modelFallbacks = config?.agents?.defaults?.model?.fallbacks || [];
-    const fallbackObj = { primary: Array.isArray(modelFallbacks) ? modelFallbacks : [] };
-
-    // 解析 imageModel（从 agents.defaults.imageModel，可以是字符串或 {primary, fallbacks}）
-    const rawImageModel = config?.agents?.defaults?.imageModel || null;
-    const imageModel = typeof rawImageModel === 'string' ? rawImageModel :
-      (rawImageModel?.primary || null);
-
-    res.json({
-      success: true,
-      provider,
-      defaultModel: primaryModel,
-      baseUrl,
-      aliases,
-      fallbacks: fallbackObj,
-      imageModel,
-      configuredProviders: providers,
-      providerDetails,
-      rawConfig: config
-    });
-  } catch (err) {
-    console.error('[ai/config] Error reading config:', err);
-    res.status(500).json({ error: '读取配置失败: ' + (err?.message || '未知错误') });
-  }
-});
-
-// 保存 AI 配置
-app.post('/api/ai/config', async (req, res) => {
-  try {
-    const { provider, primaryModel, aliases, fallbacks, imageModel, baseUrl, apiKey, subModel } = req.body || {};
-
-    if (!primaryModel) {
-      return res.status(400).json({ error: '主模型不能为空' });
-    }
-
-    // 验证模型格式
-    if (!primaryModel.includes('/')) {
-      return res.status(400).json({ error: '模型名称格式应为 provider/model-id' });
-    }
-
-    const configPath = '/root/.openclaw/openclaw.json';
-    const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
-
-    // 读取现有配置
-    let config = {};
     let models = { providers: {} };
-
-    try {
-      const configData = fs.readFileSync(configPath, 'utf8');
-      config = JSON.parse(configData);
-    } catch {
-      config = {};
-    }
-
     try {
       const modelsData = fs.readFileSync(modelsPath, 'utf8');
       models = JSON.parse(modelsData);
@@ -3119,16 +3044,102 @@ app.post('/api/ai/config', async (req, res) => {
       models = { providers: {} };
     }
 
-    // ---- 更新 openclaw.json（严格按照 openclaw 官方 schema）----
-    // 参考: https://docs.openclaw.ai/gateway/configuration-reference#agents-defaults-model
+    // 读取 auth-profiles.json
+    let authProfiles = {};
+    try {
+      const authData = fs.readFileSync(authProfilesPath, 'utf8');
+      authProfiles = JSON.parse(authData);
+    } catch {
+      authProfiles = {};
+    }
+
+    const providers = Object.keys(models?.providers || {});
+
+    // 构建 configuredKeys 数组（每个 provider 的每个 key 对应一项）
+    const configuredKeys = [];
+    for (const pName of providers) {
+      const prov = models.providers[pName];
+      const rawKey = prov?.apiKey || '';
+      const hasKey = !!rawKey && rawKey !== 'YOUR_API_KEY';
+      const authProfile = authProfiles[pName];
+      const isOAuth = authProfile?.mode === 'oauth' || authProfile?.mode === 'device';
+
+      if (hasKey || isOAuth) {
+        configuredKeys.push({
+          id: pName,
+          provider: pName,
+          keyMasked: hasKey ? maskApiKey(rawKey) : (isOAuth ? 'OAuth 已授权' : ''),
+          baseUrl: prov?.baseUrl || '',
+          authType: isOAuth ? 'oauth' : 'apikey',
+          models: (prov?.models || []).map(m => m.id || m)
+        });
+      }
+    }
+
+    // 解析默认模型
+    const primaryModel = config?.agents?.defaults?.model?.primary || '';
+    const provider = primaryModel.split('/')[0] || (providers.length > 0 ? providers[0] : 'anthropic');
+
+    // 解析 fallbacks
+    const modelFallbacks = config?.agents?.defaults?.model?.fallbacks || [];
+    const fallbackObj = { primary: Array.isArray(modelFallbacks) ? modelFallbacks : [] };
+
+    // 解析 subModel（从 openclaw.json 或 models.json 推断）
+    const subModel = config?.agents?.defaults?.subModel || '';
+
+    // 解析 subModel fallbacks
+    const subFallbacks = config?.agents?.defaults?.subModelFallbacks || [];
+    fallbackObj.sub = Array.isArray(subFallbacks) ? subFallbacks : [];
+
+    res.json({
+      success: true,
+      provider,
+      defaultModel: primaryModel,
+      subModel,
+      fallbacks: fallbackObj,
+      configuredKeys,
+      configuredProviders: providers
+    });
+  } catch (err) {
+    console.error('[ai/config] Error reading config:', err);
+    res.status(500).json({ error: '读取配置失败: ' + (err?.message || '未知错误') });
+  }
+});
+
+// 保存 AI 模型配置（仅模型相关，API Key 通过 /api/ai/keys 管理）
+app.post('/api/ai/config', async (req, res) => {
+  try {
+    const { primaryModel, fallbacks, subModel } = req.body || {};
+
+    if (!primaryModel) {
+      return res.status(400).json({ error: '主模型不能为空' });
+    }
+
+    if (!primaryModel.includes('/')) {
+      return res.status(400).json({ error: '模型名称格式应为 provider/model-id' });
+    }
+
+    const configPath = '/root/.openclaw/openclaw.json';
+    const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
+
+    let config = {};
+    let models = { providers: {} };
+
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch { config = {}; }
+
+    try {
+      models = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
+    } catch { models = { providers: {} }; }
+
+    // ---- 更新 openclaw.json ----
     if (!config.agents) config.agents = {};
     if (!config.agents.defaults) config.agents.defaults = {};
 
     // agents.defaults.model: { primary, fallbacks }
-    // fallbacks 是一个数组，在 model 对象内部
     const modelObj = { primary: primaryModel };
     if (fallbacks) {
-      // 前端传来的 fallbacks 可能是对象 {primary:[], sub:[]} 或数组
       let fbArray = [];
       if (Array.isArray(fallbacks)) {
         fbArray = fallbacks;
@@ -3141,102 +3152,25 @@ app.post('/api/ai/config', async (req, res) => {
     }
     config.agents.defaults.model = modelObj;
 
-    // agents.defaults.imageModel: { primary, fallbacks } 或字符串
-    if (imageModel) {
-      if (typeof imageModel === 'string') {
-        config.agents.defaults.imageModel = { primary: imageModel };
-      } else if (typeof imageModel === 'object') {
-        config.agents.defaults.imageModel = imageModel;
+    // subModel
+    if (subModel) {
+      config.agents.defaults.subModel = subModel;
+      if (fallbacks?.sub && Array.isArray(fallbacks.sub) && fallbacks.sub.length > 0) {
+        config.agents.defaults.subModelFallbacks = fallbacks.sub;
       }
     }
 
-    // agents.defaults.models: 模型目录/别名（每个 key 是 provider/model）
-    if (aliases && typeof aliases === 'object' && Object.keys(aliases).length > 0) {
-      if (!config.agents.defaults.models) config.agents.defaults.models = {};
-      for (const [modelRef, alias] of Object.entries(aliases)) {
-        config.agents.defaults.models[modelRef] = { alias };
-      }
-    }
-
-    // models.providers: 自定义 provider 配置（openclaw.json 中合法）
-    if (!config.models) config.models = {};
-    if (!config.models.providers) config.models.providers = {};
+    // 确保主模型的 provider 在 models.json 中存在
     const [providerName, modelId] = primaryModel.split('/');
-    if (!config.models.providers[providerName]) {
-      config.models.providers[providerName] = {
-        baseUrl: baseUrl || getDefaultBaseUrl(providerName),
-        api: 'openai-completions',
-        models: []
-      };
-    }
-    if (baseUrl) {
-      config.models.providers[providerName].baseUrl = baseUrl;
-    }
-    if (apiKey) {
-      config.models.providers[providerName].apiKey = apiKey;
-    }
-    // 确保模型在 provider 的 models 列表中
-    if (!config.models.providers[providerName].models) config.models.providers[providerName].models = [];
-    const existingInConfig = config.models.providers[providerName].models.find(m => m.id === modelId);
-    if (!existingInConfig) {
-      config.models.providers[providerName].models.push({
-        id: modelId,
-        name: modelId,
-        api: 'openai-completions',
-        reasoning: false,
-        input: ['text'],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 128000,
-        maxTokens: 4096
-      });
-    }
-
-    // 清理非法顶级字段
-    if (config.agents?.defaults?.subModel) delete config.agents.defaults.subModel;
-    if (config.agents?.defaults?.fallbacks) delete config.agents.defaults.fallbacks;
-    if (config.models?.aliases) delete config.models.aliases;
-    if (config.providers) delete config.providers;
-
-    // ---- 同步 models.json 和 auth-profiles.json ----
     if (!models.providers) models.providers = {};
     if (!models.providers[providerName]) {
       models.providers[providerName] = {
-        baseUrl: baseUrl || getDefaultBaseUrl(providerName),
+        baseUrl: getDefaultBaseUrl(providerName),
         apiKey: 'YOUR_API_KEY',
         api: 'openai-completions',
         models: []
       };
     }
-    if (baseUrl) models.providers[providerName].baseUrl = baseUrl;
-
-    // 更新 API Key 并同步 auth-profiles.json
-    if (apiKey) {
-      models.providers[providerName].apiKey = apiKey;
-      console.log(`[ai/config] API key for ${providerName} saved`);
-
-      // 同步 auth-profiles.json（openclaw 认证存储）
-      const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
-      try {
-        let authProfiles = {};
-        try {
-          const authData = fs.readFileSync(authProfilesPath, 'utf8');
-          authProfiles = JSON.parse(authData);
-        } catch { authProfiles = {}; }
-
-        authProfiles[providerName] = { 
-          provider: providerName, 
-          mode: 'api_key', 
-          apiKey: apiKey 
-        };
-        const authJson = JSON.stringify(authProfiles, null, 2);
-        fs.writeFileSync(authProfilesPath, authJson, { encoding: 'utf8', mode: 0o600 });
-        console.log(`[ai/config] auth-profiles.json updated for ${providerName}`);
-      } catch (e) {
-        console.warn('[ai/config] auth-profiles.json update failed:', e.message);
-      }
-    }
-
-    // 确保模型在 models.json 的 provider models 列表中
     if (!models.providers[providerName].models) models.providers[providerName].models = [];
     if (!models.providers[providerName].models.find(m => m.id === modelId)) {
       models.providers[providerName].models.push({
@@ -3247,26 +3181,179 @@ app.post('/api/ai/config', async (req, res) => {
       });
     }
 
-    // 写入配置文件
-    const configJson = JSON.stringify(config, null, 2);
-    const modelsJson = JSON.stringify(models, null, 2);
-
-    try {
-      fs.writeFileSync(configPath, configJson, { encoding: 'utf8', mode: 0o644 });
-    } catch (err) {
-      throw new Error(`Failed to write openclaw.json: ${err.message}`);
+    // 同样处理 subModel
+    if (subModel && subModel.includes('/')) {
+      const [subProvider, subModelId] = subModel.split('/');
+      if (!models.providers[subProvider]) {
+        models.providers[subProvider] = {
+          baseUrl: getDefaultBaseUrl(subProvider),
+          apiKey: 'YOUR_API_KEY',
+          api: 'openai-completions',
+          models: []
+        };
+      }
+      if (!models.providers[subProvider].models) models.providers[subProvider].models = [];
+      if (!models.providers[subProvider].models.find(m => m.id === subModelId)) {
+        models.providers[subProvider].models.push({
+          id: subModelId, name: subModelId, api: 'openai-completions',
+          reasoning: false, input: ['text'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000, maxTokens: 4096
+        });
+      }
     }
 
-    try {
-      fs.writeFileSync(modelsPath, modelsJson, { encoding: 'utf8', mode: 0o600 });
-    } catch (err) {
-      throw new Error(`Failed to write models.json: ${err.message}`);
-    }
+    // 清理非法顶级字段
+    if (config.agents?.defaults?.fallbacks) delete config.agents.defaults.fallbacks;
+    if (config.models?.aliases) delete config.models.aliases;
+    if (config.providers) delete config.providers;
 
-    res.json({ success: true, message: '配置已保存' });
+    // 写入文件
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o644 });
+    fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
+
+    res.json({ success: true, message: '模型配置已保存' });
   } catch (err) {
     console.error('[ai/config] Error saving config:', err);
     res.status(500).json({ error: '保存配置失败: ' + (err?.message || '未知错误') });
+  }
+});
+
+// 添加 API Key
+app.post('/api/ai/keys', async (req, res) => {
+  try {
+    const { provider, apiKey, baseUrl } = req.body || {};
+
+    if (!provider) {
+      return res.status(400).json({ error: 'provider 不能为空' });
+    }
+
+    const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
+    const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
+
+    let models = { providers: {} };
+    try {
+      models = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
+    } catch { models = { providers: {} }; }
+
+    if (!models.providers) models.providers = {};
+
+    const provBaseUrl = baseUrl || getDefaultBaseUrl(provider);
+
+    if (!models.providers[provider]) {
+      models.providers[provider] = {
+        baseUrl: provBaseUrl,
+        apiKey: 'YOUR_API_KEY',
+        api: 'openai-completions',
+        models: []
+      };
+    }
+
+    if (baseUrl) {
+      models.providers[provider].baseUrl = baseUrl;
+    }
+
+    if (apiKey) {
+      models.providers[provider].apiKey = apiKey;
+      console.log(`[ai/keys] API key for ${provider} saved`);
+
+      // 同步 auth-profiles.json
+      let authProfiles = {};
+      try {
+        authProfiles = JSON.parse(fs.readFileSync(authProfilesPath, 'utf8'));
+      } catch { authProfiles = {}; }
+
+      authProfiles[provider] = {
+        provider,
+        mode: 'api_key',
+        apiKey
+      };
+      fs.writeFileSync(authProfilesPath, JSON.stringify(authProfiles, null, 2), { encoding: 'utf8', mode: 0o600 });
+    }
+
+    // 同步 openclaw.json 中的 models.providers
+    const configPath = '/root/.openclaw/openclaw.json';
+    let config = {};
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch { config = {}; }
+
+    if (!config.models) config.models = {};
+    if (!config.models.providers) config.models.providers = {};
+    if (!config.models.providers[provider]) {
+      config.models.providers[provider] = {
+        baseUrl: provBaseUrl,
+        api: 'openai-completions',
+        models: []
+      };
+    }
+    if (baseUrl) config.models.providers[provider].baseUrl = baseUrl;
+    if (apiKey) config.models.providers[provider].apiKey = apiKey;
+
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o644 });
+    fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
+
+    res.json({ success: true, message: `${provider} API Key 已保存` });
+  } catch (err) {
+    console.error('[ai/keys] Error adding key:', err);
+    res.status(500).json({ error: '添加失败: ' + (err?.message || '未知错误') });
+  }
+});
+
+// 删除 API Key
+app.delete('/api/ai/keys', async (req, res) => {
+  try {
+    const { provider, keyId } = req.body || {};
+
+    if (!provider) {
+      return res.status(400).json({ error: 'provider 不能为空' });
+    }
+
+    const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
+    const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
+    const configPath = '/root/.openclaw/openclaw.json';
+
+    // 从 models.json 中移除 provider
+    let models = { providers: {} };
+    try {
+      models = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
+    } catch { models = { providers: {} }; }
+
+    if (models.providers?.[provider]) {
+      delete models.providers[provider];
+      console.log(`[ai/keys] Removed provider ${provider} from models.json`);
+    }
+
+    // 从 auth-profiles.json 中移除
+    let authProfiles = {};
+    try {
+      authProfiles = JSON.parse(fs.readFileSync(authProfilesPath, 'utf8'));
+    } catch { authProfiles = {}; }
+
+    if (authProfiles[provider]) {
+      delete authProfiles[provider];
+      console.log(`[ai/keys] Removed provider ${provider} from auth-profiles.json`);
+    }
+
+    // 从 openclaw.json 中移除 models.providers[provider]
+    let config = {};
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch { config = {}; }
+
+    if (config.models?.providers?.[provider]) {
+      delete config.models.providers[provider];
+    }
+
+    // 写回所有文件
+    fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.writeFileSync(authProfilesPath, JSON.stringify(authProfiles, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o644 });
+
+    res.json({ success: true, message: `${provider} 已删除` });
+  } catch (err) {
+    console.error('[ai/keys] Error deleting key:', err);
+    res.status(500).json({ error: '删除失败: ' + (err?.message || '未知错误') });
   }
 });
 
@@ -3397,7 +3484,7 @@ app.post('/api/restart', (req, res) => {
     res.json({
       success: true,
       message: '重启请求已提交，watchdog 将在 10 秒内执行',
-      operationState: getOpenClawOperationState()
+      operationState: { ...openClawOperationState }
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3912,6 +3999,10 @@ function getOpenClawOperationState() {
   const reconcileRestartingGatewayState = (state) => {
     const current = state && typeof state === 'object' ? { ...state } : { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
     if (current.type !== 'restarting_gateway') return current;
+
+    // Grace period: don't reconcile within the first 30s — the watchdog needs time to pick up the lock
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(current.startedAt || 0)) / 1000));
+    if (elapsedSec < 30) return current;
 
     const gatewayHealthCode = Number.parseInt(String(runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000) || '').trim(), 10) || 0;
     const gatewayRunning = gatewayHealthCode === 200;
@@ -5208,7 +5299,7 @@ app.post('/api/openclaw/start', (req, res) => {
   res.json({
     success: true,
     message: '重启请求已提交，watchdog 将在 10 秒内执行',
-    operationState: getOpenClawOperationState()
+    operationState: { ...openClawOperationState }
   });
 });
 

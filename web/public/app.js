@@ -1952,8 +1952,6 @@ $('btn-oc-uninstall')?.addEventListener('click', async ()=>{
 
 // ------------------------
 // AI config - Refactored
-let aiAuthTaskTimer = null;
-let aiAvailableModels = [];
 
 // Provider 配置信息
 const AI_PROVIDERS = {
@@ -2040,6 +2038,11 @@ const AI_PROVIDERS = {
   }
 };
 
+// --- 多 API Key 管理 ---
+let aiConfiguredKeys = []; // [{id, provider, keyMasked, baseUrl, authType, models:[]}]
+let aiAvailableModels = [];
+let aiAuthTaskTimer = null;
+
 function providerFromModel(modelId = '') {
   const text = String(modelId || '').trim();
   if (!text.includes('/')) return '';
@@ -2053,11 +2056,23 @@ function appendAiAuthLog(line, type = 'info'){
   appendColored(logEl, `[${timestamp}] ${line}\n`, 5000, true);
 }
 
+// AI key tab switching
+document.querySelectorAll('#ai-key-tabs .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#ai-key-tabs .tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const target = tab.dataset.aiTab;
+    const newKeyPanel = $('ai-tab-new-key');
+    const configPanel = $('ai-tab-configured-keys');
+    if (newKeyPanel) newKeyPanel.hidden = target !== 'new-key';
+    if (configPanel) configPanel.hidden = target !== 'configured-keys';
+  });
+});
+
 function updateAiProviderUI() {
   const provider = $('ai-provider')?.value || 'anthropic';
   const config = AI_PROVIDERS[provider] || AI_PROVIDERS.anthropic;
 
-  // API Key 字段
   const apikeyWrap = $('ai-apikey-wrap');
   if (apikeyWrap) {
     if (config.authType === 'oauth') {
@@ -2071,34 +2086,24 @@ function updateAiProviderUI() {
     }
   }
 
-  // OAuth 区域
   const oauthWrap = $('ai-oauth-wrap');
   if (oauthWrap) {
     if (config.authType === 'oauth') {
       oauthWrap.hidden = false;
       const guideEl = $('ai-oauth-guide');
-      if (guideEl && config.oauthGuide) {
-        guideEl.innerHTML = config.oauthGuide;
-      }
+      if (guideEl && config.oauthGuide) guideEl.innerHTML = config.oauthGuide;
     } else {
       oauthWrap.hidden = true;
     }
   }
 
-  // Base URL 字段（仅自定义端点显示）
   const baseurlWrap = $('ai-baseurl-wrap');
   if (baseurlWrap) {
     baseurlWrap.hidden = !config.needsBaseUrl;
     if (config.needsBaseUrl) {
       const baseurlInput = $('ai-baseurl');
-      if (baseurlInput) baseurlInput.value = config.baseUrl || '';
+      if (baseurlInput && !baseurlInput.value) baseurlInput.value = config.baseUrl || '';
     }
-  }
-
-  // 预填充默认 baseUrl 到隐藏字段（用于保存）
-  if (!config.needsBaseUrl && config.baseUrl) {
-    const baseurlInput = $('ai-baseurl');
-    if (baseurlInput) baseurlInput.value = config.baseUrl;
   }
 
   updateFetchModelsButton();
@@ -2113,7 +2118,6 @@ function updateFetchModelsButton() {
 
   if (!btn) return;
 
-  // OAuth 类型不需要 API Key
   if (config.authType === 'oauth') {
     btn.disabled = false;
     if (hint) hint.textContent = '点击获取可用模型列表';
@@ -2122,7 +2126,7 @@ function updateFetchModelsButton() {
 
   if (!apiKey) {
     btn.disabled = true;
-    if (hint) hint.textContent = '请输入 API Key 后可获取模型列表';
+    if (hint) hint.textContent = '请输入 API Key 后可获取';
   } else {
     btn.disabled = false;
     if (hint) hint.textContent = '点击获取可用模型列表';
@@ -2135,10 +2139,14 @@ async function fetchAvailableModels() {
   const baseUrl = $('ai-baseurl')?.value?.trim() || '';
   const config = AI_PROVIDERS[provider] || {};
 
-  appendAiAuthLog(`[fetch] 正在获取 ${config.name} 的模型列表...`);
+  if (config.authType !== 'oauth' && !apiKey) {
+    appendAiAuthLog('[fetch] 请先输入 API Key', 'error');
+    return;
+  }
+
+  appendAiAuthLog(`[fetch] 正在获取 ${config.name || provider} 的模型列表...`);
 
   try {
-    // 内置模型列表
     if (config.models && config.models.length > 0) {
       aiAvailableModels = config.models.map(m => ({
         id: m.includes('/') ? m : `${provider}/${m}`,
@@ -2149,17 +2157,14 @@ async function fetchAvailableModels() {
       return;
     }
 
-    // API 获取
     const res = await api('/api/ai/models', {
       method: 'POST',
       body: { provider, apiKey, baseUrl }
     });
-
     if (res.error) {
       appendAiAuthLog(`[fetch] 获取失败: ${res.error}`, 'error');
       return;
     }
-
     aiAvailableModels = res.models || [];
     renderModelsList();
     appendAiAuthLog(`[fetch] 成功获取 ${aiAvailableModels.length} 个模型`, 'success');
@@ -2182,9 +2187,11 @@ function renderModelsList() {
   list.innerHTML = aiAvailableModels.map(m => {
     const id = m.id || m;
     const name = m.name || m.id || m;
-    return `<div class="model-item" data-model="${id}" style="padding:8px 12px;margin:4px 0;background:#232326;border-radius:6px;cursor:pointer" onmouseover="this.style.background='#3a3a3e'" onmouseout="this.style.background='#232326'">
-      <div style="font-weight:600;font-size:14px">${name}</div>
-      <div style="font-size:12px;color:#86868b;font-family:var(--mono)">${id}</div>
+    return `<div class="model-item" data-model="${id}" style="padding:6px 12px;margin:3px 0;background:#232326;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onmouseover="this.style.background='#3a3a3e'" onmouseout="this.style.background='#232326'">
+      <div>
+        <span style="font-weight:600;font-size:13px">${name}</span>
+        <span style="font-size:11px;color:#86868b;margin-left:8px;font-family:var(--mono)">${id}</span>
+      </div>
     </div>`;
   }).join('');
 
@@ -2200,6 +2207,106 @@ function renderModelsList() {
   });
 }
 
+function renderConfiguredKeys() {
+  const container = $('ai-configured-list');
+  if (!container) return;
+
+  if (aiConfiguredKeys.length === 0) {
+    container.innerHTML = '<div class="muted small" style="padding:20px;text-align:center">暂无已配置的 API Key</div>';
+    return;
+  }
+
+  container.innerHTML = aiConfiguredKeys.map((k, idx) => {
+    const pConfig = AI_PROVIDERS[k.provider] || {};
+    const providerName = pConfig.name || k.provider;
+    const authLabel = k.authType === 'oauth' ? 'OAuth' : 'API Key';
+    const keyDisplay = k.keyMasked || (k.authType === 'oauth' ? 'OAuth 已授权' : '—');
+    const modelCount = (k.models || []).length;
+    return `<div class="card" style="padding:12px 16px;margin:0" data-key-idx="${idx}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-weight:800;font-size:14px">${providerName}</span>
+            <span class="badge" style="font-size:11px">${authLabel}</span>
+            ${modelCount > 0 ? `<span class="muted small">${modelCount} 个模型</span>` : ''}
+          </div>
+          <div style="margin-top:4px;font-family:var(--mono);font-size:12px;color:#86868b">${keyDisplay}</div>
+          ${k.baseUrl ? `<div style="margin-top:2px;font-size:11px;color:#64748b">${k.baseUrl}</div>` : ''}
+        </div>
+        <button class="btn btn-danger" style="font-size:12px;padding:4px 10px" onclick="deleteAiKey(${idx})">删除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addAiKey() {
+  const provider = $('ai-provider')?.value || '';
+  const apiKey = $('ai-apikey')?.value?.trim() || '';
+  const baseUrl = $('ai-baseurl')?.value?.trim() || '';
+  const config = AI_PROVIDERS[provider] || {};
+
+  if (config.authType !== 'oauth' && !apiKey) {
+    toast('参数错误', '请输入 API Key');
+    appendAiAuthLog('[add] 请输入 API Key', 'error');
+    return;
+  }
+
+  appendAiAuthLog(`[add] 正在添加 ${config.name || provider} 的 API Key...`);
+
+  try {
+    const res = await api('/api/ai/keys', {
+      method: 'POST',
+      body: { provider, apiKey: apiKey || null, baseUrl: baseUrl || null }
+    });
+
+    if (res.error) {
+      toast('添加失败', res.error);
+      appendAiAuthLog(`[add] 失败: ${res.error}`, 'error');
+      return;
+    }
+
+    toast('添加成功', `${config.name || provider} API Key 已保存`);
+    appendAiAuthLog(`[add] ${config.name || provider} API Key 添加成功`, 'success');
+    if ($('ai-apikey')) $('ai-apikey').value = '';
+    await loadAIConfig();
+    // Switch to configured keys tab
+    document.querySelector('#ai-key-tabs .tab[data-ai-tab="configured-keys"]')?.click();
+  } catch (e) {
+    toast('添加失败', e.message);
+    appendAiAuthLog(`[add] 错误: ${e.message}`, 'error');
+  }
+}
+
+async function deleteAiKey(idx) {
+  const key = aiConfiguredKeys[idx];
+  if (!key) return;
+  const pConfig = AI_PROVIDERS[key.provider] || {};
+  const label = `${pConfig.name || key.provider} (${key.keyMasked || 'OAuth'})`;
+  if (!confirm(`确认删除 ${label}？\n关联的模型配置也会被清除。`)) return;
+
+  appendAiAuthLog(`[delete] 正在删除 ${label}...`);
+
+  try {
+    const res = await api('/api/ai/keys', {
+      method: 'DELETE',
+      body: { provider: key.provider, keyId: key.id }
+    });
+
+    if (res.error) {
+      toast('删除失败', res.error);
+      appendAiAuthLog(`[delete] 失败: ${res.error}`, 'error');
+      return;
+    }
+
+    toast('已删除', `${label} 已移除`);
+    appendAiAuthLog(`[delete] ${label} 已删除`, 'success');
+    await loadAIConfig();
+  } catch (e) {
+    toast('删除失败', e.message);
+    appendAiAuthLog(`[delete] 错误: ${e.message}`, 'error');
+  }
+}
+
 async function loadAIConfig(){
   appendAiAuthLog('[load] 正在读取配置...');
 
@@ -2212,46 +2319,39 @@ async function loadAIConfig(){
       return;
     }
 
-    const provider = d.provider || 'anthropic';
-    if ($('ai-provider')) $('ai-provider').value = provider;
-
+    // Populate model configuration
     const primaryModel = d.defaultModel || '';
     if ($('ai-model-primary')) $('ai-model-primary').value = primaryModel;
-
     if (d.fallbacks?.primary && $('ai-model-primary-fallback')) {
       $('ai-model-primary-fallback').value = d.fallbacks.primary.join(', ');
     }
-
-    if (d.subModel && $('ai-model-sub')) {
-      $('ai-model-sub').value = d.subModel;
-    }
-
+    if (d.subModel && $('ai-model-sub')) $('ai-model-sub').value = d.subModel;
     if (d.fallbacks?.sub && $('ai-model-sub-fallback')) {
       $('ai-model-sub-fallback').value = d.fallbacks.sub.join(', ');
     }
 
-    if (d.baseUrl && $('ai-baseurl')) {
-      $('ai-baseurl').value = d.baseUrl;
-    }
+    // Build configured keys list
+    aiConfiguredKeys = (d.configuredKeys || []).map(k => ({
+      id: k.id || k.provider,
+      provider: k.provider,
+      keyMasked: k.keyMasked || '',
+      baseUrl: k.baseUrl || '',
+      authType: k.authType || 'apikey',
+      models: k.models || []
+    }));
+    renderConfiguredKeys();
 
-    // API Key 显示掌码信息
-    if ($('ai-apikey')) {
-      $('ai-apikey').value = '';
-      const details = d.providerDetails?.[provider];
-      if (details?.hasApiKey) {
-        $('ai-apikey').placeholder = `已配置: ${details.apiKeyMasked || '••••••••'}，留空保持不变`;
-      } else {
-        $('ai-apikey').placeholder = 'sk-...';
-      }
-    }
+    // Set provider dropdown to first configured or default
+    const provider = d.provider || (aiConfiguredKeys.length > 0 ? aiConfiguredKeys[0].provider : 'anthropic');
+    if ($('ai-provider')) $('ai-provider').value = provider;
+    if (d.baseUrl && $('ai-baseurl')) $('ai-baseurl').value = d.baseUrl;
 
     updateAiProviderUI();
 
-    const providers = (d.configuredProviders || []).join(', ') || provider;
-    const details = d.providerDetails?.[provider];
-    const keyStatus = details?.hasApiKey ? '✅ 已配置' : '⚠️ 未配置';
-    $('ai-status').textContent = `状态：已读取（主模型：${primaryModel || '未设置'}；提供商：${providers}；API Key：${keyStatus}）`;
-    appendAiAuthLog(`[load] 配置读取成功`, 'success');
+    const keyCount = aiConfiguredKeys.length;
+    const keyStatus = keyCount > 0 ? `✅ ${keyCount} 个 Key` : '⚠️ 未配置';
+    $('ai-status').textContent = `状态：已读取（主模型：${primaryModel || '未设置'}；API Key：${keyStatus}）`;
+    appendAiAuthLog(`[load] 配置读取成功，${keyCount} 个已配置 Key`, 'success');
 
   } catch (e) {
     $('ai-status').textContent = `状态：读取失败（${e.message}）`;
@@ -2260,13 +2360,10 @@ async function loadAIConfig(){
 }
 
 async function saveAIConfig() {
-  const provider = $('ai-provider')?.value || '';
   const primaryModel = $('ai-model-primary')?.value?.trim() || '';
   const primaryFallback = $('ai-model-primary-fallback')?.value?.trim() || '';
   const subModel = $('ai-model-sub')?.value?.trim() || '';
   const subFallback = $('ai-model-sub-fallback')?.value?.trim() || '';
-  const apiKey = $('ai-apikey')?.value?.trim() || '';
-  const baseUrl = $('ai-baseurl')?.value?.trim() || '';
 
   if (!primaryModel) {
     toast('参数错误', '请设置主代理模型');
@@ -2274,40 +2371,32 @@ async function saveAIConfig() {
     return;
   }
 
-  appendAiAuthLog('[save] 开始保存配置...');
+  appendAiAuthLog('[save] 开始保存模型配置...');
 
   try {
-    const config = {
-      provider,
+    const body = {
       primaryModel,
       fallbacks: {
         primary: primaryFallback ? primaryFallback.split(',').map(s => s.trim()).filter(Boolean) : [],
         sub: subFallback ? subFallback.split(',').map(s => s.trim()).filter(Boolean) : []
       },
-      subModel: subModel || null,
-      baseUrl: baseUrl || null,
-      apiKey: apiKey || null
+      subModel: subModel || null
     };
 
     appendAiAuthLog(`[save] 主模型: ${primaryModel}`);
-    if (config.fallbacks.primary.length) appendAiAuthLog(`[save] 主代理 Fallbacks: ${config.fallbacks.primary.join(', ')}`);
+    if (body.fallbacks.primary.length) appendAiAuthLog(`[save] 主代理 Fallbacks: ${body.fallbacks.primary.join(', ')}`);
     if (subModel) appendAiAuthLog(`[save] 子代理模型: ${subModel}`);
-    if (config.fallbacks.sub.length) appendAiAuthLog(`[save] 子代理 Fallbacks: ${config.fallbacks.sub.join(', ')}`);
 
-    const res = await api('/api/ai/config', { method:'POST', body: config });
-
+    const res = await api('/api/ai/config', { method:'POST', body });
     if (res.error) {
       toast('保存失败', res.error);
       appendAiAuthLog(`[save] 保存失败: ${res.error}`, 'error');
       return;
     }
 
-    toast('保存成功', 'AI 模型配置已保存');
-    appendAiAuthLog('[save] 配置保存成功', 'success');
-
-    if ($('ai-apikey')) $('ai-apikey').value = '';
+    toast('保存成功', '模型配置已保存');
+    appendAiAuthLog('[save] 模型配置保存成功', 'success');
     await loadAIConfig();
-
   } catch (e) {
     toast('保存失败', e.message);
     appendAiAuthLog(`[save] 错误: ${e.message}`, 'error');
@@ -2360,6 +2449,7 @@ $('btn-ai-load')?.addEventListener('click', loadAIConfig);
 $('btn-ai-fetch-models')?.addEventListener('click', fetchAvailableModels);
 $('btn-ai-oauth-login')?.addEventListener('click', startOAuthLogin);
 $('btn-ai-save')?.addEventListener('click', saveAIConfig);
+$('btn-ai-add-key')?.addEventListener('click', addAiKey);
 
 // 初始化
 updateAiProviderUI();
