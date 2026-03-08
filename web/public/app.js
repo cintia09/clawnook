@@ -2545,6 +2545,8 @@ let termFailureCount = 0;
 let termConnectTimeoutTimer = null;
 let termEmulator = null;
 let termFitAddon = null;
+let termSseSource = null;
+let termSseMode = false;
 const TERM_CACHE_KEY = 'oc_terminal_cache_v2';
 const TERM_CACHE_MAX = 2000000;
 let termOutputCache = '';
@@ -2665,9 +2667,7 @@ function initTerminalEmulator(){
     }
 
     termEmulator.onData((data) => {
-      if (termWs && termWs.readyState === WebSocket.OPEN) {
-        sendTerminalData(data);
-      }
+      sendTerminalData(data);
     });
 
     return true;
@@ -2706,6 +2706,7 @@ function terminalDisconnect(){
     clearInterval(termFallbackTimer);
     termFallbackTimer = null;
   }
+  closeSseTerminal();
   if (termWs){
     try{ termWs.close(); }catch{}
     termWs = null;
@@ -2715,6 +2716,7 @@ function terminalDisconnect(){
 
 async function pullTerminalFallbackLogs(){
   if (termWs && termWs.readyState === WebSocket.OPEN) return;
+  if (termSseMode) return;
   const d = await api(`/api/logs?lines=${UI_TERMINAL_FALLBACK_FETCH_LINES}`);
   if (d.error) return;
   const logs = String(d.logs || '').trimEnd();
@@ -2725,38 +2727,100 @@ async function pullTerminalFallbackLogs(){
   }
 }
 
+function closeSseTerminal() {
+  if (termSseSource) {
+    try { termSseSource.close(); } catch {}
+    termSseSource = null;
+  }
+  termSseMode = false;
+}
+
+function startSseTerminal() {
+  if (termSseSource) return;
+  closeSseTerminal();
+  termSseMode = true;
+  $('term-state').textContent = 'SSE 模式连接中...';
+  termAppendText('\n[terminal] WebSocket 不可用，正在切换 SSE 交互模式...\n');
+
+  const es = new EventSource('/api/terminal/stream');
+  termSseSource = es;
+
+  es.onopen = () => {
+    $('term-state').textContent = 'SSE 已连接';
+  };
+
+  es.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'connected') {
+        $('term-state').textContent = 'SSE 已连接';
+        termAppendText('[terminal] SSE 交互终端已连接。\n');
+        if (termEmulator) {
+          try { termEmulator.clear(); } catch {}
+        }
+        termOutputCache = '';
+        saveTerminalCache();
+        focusTerminalInput();
+        sendTerminalResize();
+        return;
+      }
+      if (msg.type === 'output' && msg.data) {
+        termAppendText(msg.data);
+      }
+    } catch {
+      termAppendText(String(ev.data || ''));
+    }
+  };
+
+  es.onerror = () => {
+    $('term-state').textContent = 'SSE 断开';
+    closeSseTerminal();
+    termAppendText('\n[terminal] SSE 连接断开，3秒后重试...\n');
+    setTimeout(() => {
+      if (!termSseMode && !termWs && $('page-terminal').classList.contains('active')) {
+        startSseTerminal();
+      }
+    }, 3000);
+  };
+}
+
 function startTerminalFallback(reason = ''){
   if (termFallbackTimer) return;
-  if (termEmulator) {
-    try { termEmulator.dispose(); } catch {}
-    termEmulator = null;
-    termFitAddon = null;
-  }
-  $('term-state').textContent = '只读日志模式';
-  termAppendText(`\n[terminal] 交互连接不可用，已切换只读日志模式${reason ? ` (${reason})` : ''}。\n`);
-  pullTerminalFallbackLogs().catch(()=>{});
-  termFallbackTimer = setInterval(() => pullTerminalFallbackLogs().catch(()=>{}), 2500);
+  if (termSseMode || termSseSource) return;
+
+  // Try SSE interactive mode first
+  termAppendText(`\n[terminal] WebSocket 交互连接不可用${reason ? ` (${reason})` : ''}，尝试 SSE 模式...\n`);
+  startSseTerminal();
 }
 
 function sendTerminalData(data){
+  if (termSseMode || termSseSource) {
+    api('/api/terminal/input', { method: 'POST', body: { data } }).catch(() => {});
+    return true;
+  }
   if (!termWs || termWs.readyState !== WebSocket.OPEN) return false;
   termWs.send(JSON.stringify({ type: 'input', data }));
   return true;
 }
 
 function sendTerminalResize(){
-  if (!termWs || termWs.readyState !== WebSocket.OPEN) return;
+  let cols, rows;
   if (termEmulator) {
     if (termFitAddon) termFitAddon.fit();
-    const cols = Math.max(40, Number(termEmulator.cols) || 80);
-    const rows = Math.max(12, Number(termEmulator.rows) || 24);
-    termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+    cols = Math.max(40, Number(termEmulator.cols) || 80);
+    rows = Math.max(12, Number(termEmulator.rows) || 24);
+  } else {
+    const el = $('terminal');
+    if (!el) return;
+    cols = Math.max(40, Math.floor(el.clientWidth / 8));
+    rows = Math.max(12, Math.floor(el.clientHeight / 18));
+  }
+
+  if (termSseMode || termSseSource) {
+    api('/api/terminal/resize', { method: 'POST', body: { cols, rows } }).catch(() => {});
     return;
   }
-  const el = $('terminal');
-  if (!el) return;
-  const cols = Math.max(40, Math.floor(el.clientWidth / 8));
-  const rows = Math.max(12, Math.floor(el.clientHeight / 18));
+  if (!termWs || termWs.readyState !== WebSocket.OPEN) return;
   termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
 }
 
@@ -2806,7 +2870,8 @@ function bindTerminalInteraction(){
   }
 
   terminalEl.addEventListener('keydown', (e) => {
-    if (!termWs || termWs.readyState !== WebSocket.OPEN) {
+    const canSend = (termWs && termWs.readyState === WebSocket.OPEN) || (termSseMode && termSseSource);
+    if (!canSend) {
       if (e.key.length === 1 || e.key === 'Enter' || e.key === 'Backspace') {
         e.preventDefault();
       }
@@ -2839,7 +2904,8 @@ function bindTerminalInteraction(){
   });
 
   terminalEl.addEventListener('paste', (e) => {
-    if (!termWs || termWs.readyState !== WebSocket.OPEN) return;
+    const canSend = (termWs && termWs.readyState === WebSocket.OPEN) || (termSseMode && termSseSource);
+    if (!canSend) return;
     const text = e.clipboardData?.getData('text/plain') || '';
     if (!text) return;
     e.preventDefault();
@@ -2862,6 +2928,7 @@ async function ensureTerminalWsToken(force = false){
 async function terminalConnect(){
   if (!$('page-terminal').classList.contains('active')) return;
   if (termConnectInFlight) return;
+  if (termSseMode || termSseSource) return;
   ensureTerminalViewportFitted();
   if (termWs && (termWs.readyState === WebSocket.OPEN || termWs.readyState === WebSocket.CONNECTING)) return;
 
@@ -2966,10 +3033,12 @@ async function terminalConnect(){
 
       if (code === 1006 || termFailureCount >= 2) {
         startTerminalFallback(`code=${code}`);
+        termWs = null;
+        return;
       }
 
       termWs = null;
-      if ($('page-terminal').classList.contains('active')) {
+      if ($('page-terminal').classList.contains('active') && !termSseMode) {
         if (termReconnectTimer) clearTimeout(termReconnectTimer);
         termReconnectTimer = setTimeout(() => {
           termReconnectTimer = null;
@@ -2992,12 +3061,6 @@ async function terminalConnect(){
       if (termFailureCount >= 2) {
         startTerminalFallback('网络或代理异常');
       }
-      api('/api/status').then((s) => {
-        const reason = s?.terminal?.reason;
-        if (reason) {
-          termAppendText(`[terminal] 后端状态: ${reason}\n`);
-        }
-      }).catch(() => {});
     };
 
     socket.onmessage = (ev)=>{

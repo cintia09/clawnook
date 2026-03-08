@@ -1888,8 +1888,13 @@ function isAuthenticated(req) {
   const secret = dockerConfig.webAuth?.secret;
   if (!secret) return false;
   const sess = getSession(req, secret);
-  if (!sess) return false;
-  return !!dockerConfig.webAuth?.users?.[sess.u];
+  if (!sess) {
+    // We don't log too much here to avoid spamming for public assets
+    return false;
+  }
+  const user = dockerConfig.webAuth?.users?.[sess.u];
+  if (!user) return false;
+  return true;
 }
 
 function requireAuthApi(req, res, next) {
@@ -2040,15 +2045,131 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', requireAuthApi);
 
 app.get('/api/terminal/ws-token', (req, res) => {
-  if (req.socket.remoteAddress === '127.0.0.1' || req.socket.remoteAddress === '::ffff:127.0.0.1') {
-    const token = issueTerminalWsToken('testadmin');
-    return res.json({ token, expiresInSec: 120 });
-  }
   const secret = readDockerConfig().webAuth?.secret;
   const sess = secret ? getSession(req, secret) : null;
   const username = sess?.u || 'admin';
   const token = issueTerminalWsToken(username);
   res.json({ token, expiresInSec: 120 });
+});
+
+// ============================================================
+// SSE-based terminal transport (fallback when WebSocket fails)
+// ============================================================
+let sseTerminalSession = null;
+
+function ensureSseTerminalShell() {
+  if (sseTerminalSession && sseTerminalSession.shell && !sseTerminalSession.shell.killed) {
+    return sseTerminalSession;
+  }
+  closeActiveTerminalSession('sse-new-session');
+  try {
+    const res = createTerminalShell();
+    if (!res.shell || !res.shell.stdin || !res.shell.stdout) {
+      return null;
+    }
+    const outputListeners = new Set();
+    const session = { shell: res.shell, mode: res.mode, outputListeners };
+
+    res.shell.stdout.on('data', (chunk) => {
+      const text = chunk.toString('utf8');
+      for (const fn of outputListeners) {
+        try { fn(text); } catch {}
+      }
+    });
+    res.shell.stdout.on('error', () => {});
+    if (res.mode !== 'pty' && res.shell.stderr) {
+      res.shell.stderr.on('data', (chunk) => {
+        const text = chunk.toString('utf8');
+        for (const fn of outputListeners) {
+          try { fn(text); } catch {}
+        }
+      });
+      res.shell.stderr.on('error', () => {});
+    }
+    res.shell.stdin.on('error', () => {});
+    res.shell.on('close', (code) => {
+      console.log(`[terminal-sse] shell closed code=${code ?? 0}`);
+      for (const fn of outputListeners) {
+        try { fn(`\n[terminal] shell exited (code=${code ?? 0})\n`); } catch {}
+      }
+      if (sseTerminalSession === session) sseTerminalSession = null;
+    });
+    res.shell.on('error', (err) => {
+      console.warn(`[terminal-sse] shell error: ${err.message}`);
+      for (const fn of outputListeners) {
+        try { fn(`\n[terminal] shell error: ${err.message}\n`); } catch {}
+      }
+      if (sseTerminalSession === session) sseTerminalSession = null;
+    });
+    sseTerminalSession = session;
+    setTerminalBackendState({ wsEnabled: true, ready: true, mode: res.mode, reason: 'sse-transport' });
+    console.log(`[terminal-sse] session created mode=${res.mode}`);
+    return session;
+  } catch (err) {
+    console.error('[terminal-sse] createTerminalShell failed:', err);
+    return null;
+  }
+}
+
+app.get('/api/terminal/stream', (req, res) => {
+  const session = ensureSseTerminalShell();
+  if (!session) {
+    return res.status(503).json({ error: 'terminal shell unavailable' });
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-store',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write('data: {"type":"connected"}\n\n');
+
+  const onOutput = (text) => {
+    const escaped = JSON.stringify({ type: 'output', data: text });
+    res.write(`data: ${escaped}\n\n`);
+  };
+  session.outputListeners.add(onOutput);
+
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch {}
+  }, 15000);
+
+  const cleanup = () => {
+    session.outputListeners.delete(onOutput);
+    clearInterval(heartbeat);
+  };
+  req.on('close', cleanup);
+  req.on('error', cleanup);
+});
+
+app.post('/api/terminal/input', (req, res) => {
+  const session = sseTerminalSession;
+  if (!session || !session.shell || session.shell.killed) {
+    return res.status(503).json({ error: 'no active terminal session' });
+  }
+  const data = req.body?.data;
+  if (typeof data !== 'string') {
+    return res.status(400).json({ error: 'missing data field' });
+  }
+  try {
+    if (session.shell.stdin && !session.shell.stdin.destroyed) {
+      session.shell.stdin.write(data);
+    }
+  } catch {}
+  res.json({ ok: true });
+});
+
+app.post('/api/terminal/resize', (req, res) => {
+  const session = sseTerminalSession;
+  if (!session || !session.shell || session.shell.killed) {
+    return res.status(503).json({ error: 'no active terminal session' });
+  }
+  const cols = Number(req.body?.cols) || 80;
+  const rows = Number(req.body?.rows) || 24;
+  if (session.mode === 'pty') {
+    tryResizePtyShell(session.shell, cols, rows);
+  }
+  res.json({ ok: true });
 });
 
 // ============================================================
@@ -5412,7 +5533,11 @@ let termWss = null;
 
 if (WebSocketServer) {
   wss = new WebSocketServer({ noServer: true });
-  termWss = new WebSocketServer({ noServer: true });
+  // Disable perMessageDeflate for terminal to avoid potential 1006 on some proxies/browsers
+  termWss = new WebSocketServer({ 
+    noServer: true,
+    perMessageDeflate: false
+  });
 
   wss.on('connection', (ws, req) => {
     if (!isAuthenticated(req)) {
@@ -5483,7 +5608,8 @@ if (WebSocketServer) {
         const reqUrl = new URL(String(req.url || ''), 'http://localhost');
         const token = reqUrl.searchParams.get('token');
         authenticated = consumeTerminalWsToken(token);
-      } catch {}
+      } catch {
+      }
     }
 
     if (!authenticated) {
@@ -5607,11 +5733,12 @@ if (WebSocketServer) {
 }
 
 server.on('upgrade', (req, socket, head) => {
+  const rawUrl = String(req.url || '');
   let pathname = '';
   try {
-    pathname = new URL(String(req.url || ''), 'http://localhost').pathname;
+    pathname = new URL(rawUrl, 'http://localhost').pathname;
   } catch {
-    pathname = String(req.url || '').split('?')[0] || '';
+    pathname = rawUrl.split('?')[0] || '';
   }
 
   if (WebSocketServer && pathname === '/api/ws/logs') {
@@ -5620,14 +5747,12 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   if (WebSocketServer && pathname === '/api/ws/terminal') {
-    console.log(`[upgrade] Handing over /api/ws/terminal connection... req.url=${req.url}`);
     try {
       termWss.handleUpgrade(req, socket, head, (ws) => {
-        console.log('[upgrade] handleUpgrade success, emitting connection');
         termWss.emit('connection', ws, req);
       });
     } catch (e) {
-      console.error(`[upgrade] handleUpgrade for terminal failed:`, e);
+      console.error(`[terminal-ws] handleUpgrade error:`, e.message);
       socket.destroy();
     }
     return;
@@ -5674,6 +5799,10 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => {
     try { upstreamSocket.destroy(); } catch {}
   });
+});
+
+server.on('connection', (socket) => {
+  socket.on('error', () => {});
 });
 
 server.listen(PORT, '0.0.0.0', () => {
