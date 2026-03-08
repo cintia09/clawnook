@@ -3049,20 +3049,146 @@ app.post('/api/ai/auth/copilot/login', (req, res) => {
   res.json({ success: true, taskId });
 });
 
-// 通用 OAuth 登录入口
-app.post('/api/ai/auth/oauth/login', (req, res) => {
+// 通用 OAuth 登录入口（直接实现 GitHub Device Flow，不依赖 CLI TTY）
+app.post('/api/ai/auth/oauth/login', async (req, res) => {
   const provider = String(req.body?.provider || '').trim();
   if (!provider || !/^[a-zA-Z0-9\-]+$/.test(provider)) {
     return res.status(400).json({ error: 'provider 不合法' });
   }
 
-  let command;
   if (provider === 'github-copilot') {
-    command = 'openclaw models auth login-github-copilot';
-  } else {
-    command = `openclaw models auth login --provider ${provider}`;
+    // 直接实现 GitHub Device Flow
+    const taskId = Date.now().toString();
+    aiAuthTasks[taskId] = { status: 'running', log: '', startedAt: Date.now(), seq: 0, chunks: [] };
+    const task = aiAuthTasks[taskId];
+    appendAiTaskLog(task, `[ai] GitHub Copilot 设备授权\n`);
+
+    // 异步执行 device flow
+    (async () => {
+      try {
+        const CLIENT_ID = 'Iv1.b507a08c87ecfe98';
+        const DEVICE_CODE_URL = 'https://github.com/login/device/code';
+        const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
+
+        // Step 1: 请求 device code
+        appendAiTaskLog(task, '[ai] 正在请求 GitHub 设备码...\n');
+        const dcRes = await fetch(DEVICE_CODE_URL, {
+          method: 'POST',
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: CLIENT_ID, scope: 'read:user' }),
+          signal: AbortSignal.timeout(15000)
+        });
+        if (!dcRes.ok) throw new Error(`GitHub device code 请求失败: HTTP ${dcRes.status}`);
+        const dcData = await dcRes.json();
+        if (!dcData.device_code || !dcData.user_code || !dcData.verification_uri) {
+          throw new Error('GitHub device code 响应缺少必要字段');
+        }
+
+        appendAiTaskLog(task, `\n请在浏览器中打开: ${dcData.verification_uri}\n`);
+        appendAiTaskLog(task, `输入授权码: ${dcData.user_code}\n\n`);
+        appendAiTaskLog(task, `[ai] 等待用户完成 GitHub 授权...\n`);
+
+        // Step 2: 轮询等待授权
+        const expiresAt = Date.now() + (dcData.expires_in || 900) * 1000;
+        const intervalMs = Math.max(5000, (dcData.interval || 5) * 1000);
+        let accessToken = null;
+
+        while (Date.now() < expiresAt) {
+          await new Promise(r => setTimeout(r, intervalMs));
+          try {
+            const tokenRes = await fetch(ACCESS_TOKEN_URL, {
+              method: 'POST',
+              headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: CLIENT_ID,
+                device_code: dcData.device_code,
+                grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
+              }),
+              signal: AbortSignal.timeout(15000)
+            });
+            const tokenData = await tokenRes.json();
+            if (tokenData.access_token) {
+              accessToken = tokenData.access_token;
+              break;
+            }
+            if (tokenData.error === 'authorization_pending') continue;
+            if (tokenData.error === 'slow_down') {
+              await new Promise(r => setTimeout(r, 5000));
+              continue;
+            }
+            if (tokenData.error === 'expired_token') {
+              throw new Error('设备码已过期，请重新启动授权');
+            }
+            if (tokenData.error === 'access_denied') {
+              throw new Error('用户取消了授权');
+            }
+            if (tokenData.error) {
+              throw new Error(`GitHub OAuth 错误: ${tokenData.error}`);
+            }
+          } catch (pollErr) {
+            if (pollErr.message?.includes('设备码已过期') || pollErr.message?.includes('取消')) throw pollErr;
+            appendAiTaskLog(task, `[ai] 轮询出错: ${pollErr.message}, 继续等待...\n`);
+          }
+        }
+
+        if (!accessToken) throw new Error('授权超时，设备码已过期');
+
+        appendAiTaskLog(task, '[ai] GitHub 访问令牌获取成功!\n');
+
+        // Step 3: 保存到 auth-profiles.json（兼容 openclaw 格式）
+        const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
+        let authProfiles = {};
+        try { authProfiles = JSON.parse(fs.readFileSync(authProfilesPath, 'utf8')); } catch {}
+        // openclaw 使用 { profiles: { "profileId": { type, provider, token } }, version: 1 } 格式
+        if (!authProfiles.profiles) {
+          // 旧格式或空文件，迁移
+          const oldEntries = Object.entries(authProfiles).filter(([k]) => k !== 'version' && k !== 'profiles' && k !== 'lastGood');
+          authProfiles = { version: 1, profiles: {} };
+          // 迁移旧条目
+          for (const [k, v] of oldEntries) {
+            if (v && typeof v === 'object') authProfiles.profiles[k] = v;
+          }
+        }
+        authProfiles.profiles['github-copilot:github'] = {
+          type: 'token',
+          provider: 'github-copilot',
+          token: accessToken
+        };
+        fs.writeFileSync(authProfilesPath, JSON.stringify(authProfiles, null, 2), { encoding: 'utf8', mode: 0o600 });
+
+        // 同时写入以 provider key 为索引的条目（兼容我们的 /api/ai/models 读取逻辑）
+        authProfiles.profiles['github-copilot'] = {
+          type: 'token',
+          provider: 'github-copilot',
+          token: accessToken
+        };
+        // 也在旧格式位置写一份
+        authProfiles['github-copilot'] = {
+          provider: 'github-copilot',
+          mode: 'token',
+          token: accessToken
+        };
+        fs.writeFileSync(authProfilesPath, JSON.stringify(authProfiles, null, 2), { encoding: 'utf8', mode: 0o600 });
+        appendAiTaskLog(task, '[ai] 认证信息已保存到 auth-profiles.json\n');
+
+        task.status = 'success';
+        task.exitCode = 0;
+        appendAiTaskLog(task, '[ai] GitHub Copilot 授权完成 ✓\n');
+      } catch (err) {
+        appendAiTaskLog(task, `[ai] 授权失败: ${err.message}\n`);
+        task.status = 'failed';
+        task.exitCode = 1;
+      }
+      // 清理旧任务
+      const keys = Object.keys(aiAuthTasks).sort();
+      while (keys.length > 8) delete aiAuthTasks[keys.shift()];
+    })();
+
+    return res.json({ success: true, taskId });
   }
 
+  // 非 copilot 的其他 OAuth provider 仍使用 CLI
+  const command = `openclaw models auth login --provider ${provider}`;
   const taskId = runAiAuthTask(command, `${provider} OAuth 登录`);
   res.json({ success: true, taskId });
 });
@@ -3344,6 +3470,71 @@ app.post('/api/ai/config', async (req, res) => {
   } catch (err) {
     console.error('[ai/config] Error saving config:', err);
     res.status(500).json({ error: '保存配置失败: ' + (err?.message || '未知错误') });
+  }
+});
+
+// 验证 API Key 有效性
+app.post('/api/ai/keys/validate', async (req, res) => {
+  try {
+    const { provider, apiKey, baseUrl } = req.body || {};
+    if (!provider) return res.status(400).json({ error: 'provider 不能为空' });
+    if (!apiKey) return res.status(400).json({ error: 'API Key 不能为空' });
+
+    const endpoint = baseUrl || getDefaultBaseUrl(provider);
+    if (!endpoint) return res.json({ valid: false, error: '无法确定 API 端点' });
+
+    // 尝试调用 /models 端点来验证 key 可用性
+    const modelsUrl = provider === 'ollama'
+      ? `${endpoint}/api/tags`
+      : `${endpoint}/models`;
+
+    const headers = {};
+    if (provider === 'anthropic') {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else if (provider === 'gemini') {
+      // Gemini uses query param
+    } else {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    let fetchUrl = modelsUrl;
+    if (provider === 'gemini') {
+      fetchUrl = `${endpoint}/models?key=${apiKey}`;
+    }
+
+    const response = await fetch(fetchUrl, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (response.ok) {
+      return res.json({ valid: true });
+    }
+
+    // 某些 provider 返回 401/403 表示 key 无效
+    const status = response.status;
+    let errMsg = `HTTP ${status}`;
+    try {
+      const body = await response.json();
+      errMsg = body.error?.message || body.message || body.error || errMsg;
+    } catch {}
+
+    if (status === 401 || status === 403) {
+      return res.json({ valid: false, error: `API Key 无效: ${errMsg}` });
+    }
+
+    // 其他状态码（如 429 rate limit）认为 key 本身有效
+    if (status === 429 || status === 200 || status === 201) {
+      return res.json({ valid: true });
+    }
+
+    return res.json({ valid: false, error: errMsg });
+  } catch (err) {
+    console.error('[ai/keys/validate] Error:', err);
+    // 网络超时等错误 — 不确定 key 是否有效，允许继续
+    return res.json({ valid: true, warning: '无法连接到 API 验证: ' + (err?.message || '未知错误') });
   }
 });
 
@@ -3657,7 +3848,10 @@ app.post('/api/ai/models', async (req, res) => {
         const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
         let authProfiles = {};
         try { authProfiles = JSON.parse(fs.readFileSync(authProfilesPath, 'utf8')); } catch {}
-        const copilotAuth = authProfiles['github-copilot'];
+        // 兼容 openclaw 格式 (profiles sub-key) 和旧格式 (直接 top-level)
+        const copilotAuth = authProfiles?.profiles?.['github-copilot:github']
+          || authProfiles?.profiles?.['github-copilot']
+          || authProfiles['github-copilot'];
         const copilotToken = copilotAuth?.token || copilotAuth?.apiKey || '';
         if (copilotToken) {
           const modelsUrl = 'https://api.githubcopilot.com/models';
@@ -3687,47 +3881,82 @@ app.post('/api/ai/models', async (req, res) => {
       return res.json({ success: true, models: builtInModels['github-copilot'], source: 'builtin' });
     }
 
-    if (builtInModels[provider]) {
-      return res.json({ success: true, models: builtInModels[provider] });
+    // 尝试从存储中获取 API key（如果请求中没有提供）
+    let effectiveApiKey = apiKey;
+    if (!effectiveApiKey) {
+      try {
+        const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
+        const models = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
+        effectiveApiKey = models?.providers?.[provider]?.apiKey || '';
+      } catch {}
     }
 
     // 对于支持 /models 端点的 provider，尝试动态获取模型列表
     const dynamicProviders = new Set([
       'openrouter', 'custom', 'ollama', 'lmstudio', 'vllm', 'litellm',
       'groq', 'together', 'nvidia', 'cerebras', 'perplexity', 'mistral',
-      'opencode', 'kilocode', 'deepseek', 'openai', 'xai', 'venice'
+      'opencode', 'kilocode', 'deepseek', 'openai', 'xai', 'venice',
+      'anthropic', 'gemini', 'huggingface', 'moonshot', 'bailian', 'zai',
+      'kimi-coding', 'minimax', 'xiaomi', 'qianfan', 'volcengine', 'byteplus'
     ]);
-    if (dynamicProviders.has(provider) && (apiKey || ['ollama', 'lmstudio', 'vllm'].includes(provider))) {
+    if (dynamicProviders.has(provider) && (effectiveApiKey || ['ollama', 'lmstudio', 'vllm'].includes(provider))) {
       const endpoint = baseUrl || getDefaultBaseUrl(provider);
       if (endpoint) {
         try {
           // ollama 使用不同的 API 路径
           const modelsUrl = provider === 'ollama'
             ? `${endpoint}/api/tags`
-            : `${endpoint}/models`;
-          const headers = {};
-          if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-          const response = await fetch(modelsUrl, { headers });
-          if (response.ok) {
-            const data = await response.json();
-            let models;
-            if (provider === 'ollama') {
-              models = (data.models || []).map(m => ({
-                id: m.name || m.model,
-                name: m.name || m.model
-              }));
+            : provider === 'anthropic'
+              ? null  // Anthropic 不支持 /models 端点
+              : `${endpoint}/models`;
+
+          if (modelsUrl) {
+            const headers = {};
+            if (provider === 'anthropic') {
+              headers['x-api-key'] = effectiveApiKey;
+              headers['anthropic-version'] = '2023-06-01';
+            } else if (provider === 'gemini') {
+              // Gemini uses query param
             } else {
-              models = (data.data || []).map(m => ({
-                id: m.id,
-                name: m.name || m.id
-              }));
+              if (effectiveApiKey) headers['Authorization'] = `Bearer ${effectiveApiKey}`;
             }
-            return res.json({ success: true, models });
+            let fetchUrl = modelsUrl;
+            if (provider === 'gemini') fetchUrl = `${modelsUrl}?key=${effectiveApiKey}`;
+
+            const response = await fetch(fetchUrl, { headers, signal: AbortSignal.timeout(15000) });
+            if (response.ok) {
+              const data = await response.json();
+              let models;
+              if (provider === 'ollama') {
+                models = (data.models || []).map(m => ({
+                  id: m.name || m.model,
+                  name: m.name || m.model
+                }));
+              } else if (provider === 'gemini') {
+                models = (data.models || []).map(m => ({
+                  id: (m.name || '').replace('models/', ''),
+                  name: m.displayName || m.name || ''
+                }));
+              } else {
+                models = (data.data || []).map(m => ({
+                  id: m.id,
+                  name: m.name || m.id
+                }));
+              }
+              if (models.length > 0) {
+                return res.json({ success: true, models, source: 'api' });
+              }
+            }
           }
         } catch (e) {
-          console.error('[ai/models] Error fetching models:', e);
+          console.log(`[ai/models] dynamic fetch for ${provider} failed: ${e.message}`);
         }
       }
+    }
+
+    // fallback 到内置列表
+    if (builtInModels[provider]) {
+      return res.json({ success: true, models: builtInModels[provider], source: 'builtin' });
     }
 
     // 默认返回空列表

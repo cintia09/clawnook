@@ -680,7 +680,7 @@ async function refreshStatus(){
   if (statusEl) {
     const online = !!s.gateway;
     const cls = online ? 'online' : 'offline';
-    statusEl.innerHTML = `<span class="gw-dot ${cls}">●</span> Gateway <span class="gw-label ${cls}">${online ? 'Online' : 'Offline'}</span>`;
+    statusEl.innerHTML = `<span class="gw-label ${cls}">Gateway ${online ? 'Online' : 'Offline'}</span>`;
   }
     const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - startedAt;
     dlog('refreshStatus ok', 'elapsedMs=', Math.round(elapsed), 'gateway=', !!s.gateway, 'caddy=', !!s.caddy);
@@ -2267,25 +2267,9 @@ function updateAiProviderUI() {
 function updateFetchModelsButton() {
   const btn = $('btn-ai-fetch-models');
   const hint = $('ai-fetch-hint');
-  const provider = $('ai-provider')?.value || '';
-  const apiKey = $('ai-apikey')?.value?.trim() || '';
-  const config = AI_PROVIDERS[provider] || {};
-
-  if (!btn) return;
-
-  if (config.authType === 'oauth') {
-    btn.disabled = false;
-    if (hint) hint.textContent = '点击获取可用模型列表';
-    return;
-  }
-
-  if (!apiKey) {
-    btn.disabled = true;
-    if (hint) hint.textContent = '请输入 API Key 后可获取';
-  } else {
-    btn.disabled = false;
-    if (hint) hint.textContent = '点击获取可用模型列表';
-  }
+  // 新增 key 面板的获取模型按钮始终隐藏（用户需先添加 key 验证通过后自动获取）
+  if (btn) btn.hidden = true;
+  if (hint) hint.hidden = true;
 }
 
 async function fetchAvailableModels() {
@@ -2302,18 +2286,7 @@ async function fetchAvailableModels() {
   appendAiAuthLog(`[fetch] 正在获取 ${config.name || provider} 的模型列表...`);
 
   try {
-    // OAuth 类型（如 copilot）总是通过后端 API 获取（需要 auth token）
-    // 其他类型如果有内置列表则直接使用
-    if (config.authType !== 'oauth' && config.models && config.models.length > 0) {
-      aiAvailableModels = config.models.map(m => ({
-        id: m.includes('/') ? m : `${provider}/${m}`,
-        name: m
-      }));
-      renderModelsList();
-      appendAiAuthLog(`[fetch] 成功获取 ${aiAvailableModels.length} 个模型`, 'success');
-      return;
-    }
-
+    // 所有 provider 都通过后端 API 获取真实模型列表
     const res = await api('/api/ai/models', {
       method: 'POST',
       body: { provider, apiKey, baseUrl }
@@ -2324,7 +2297,8 @@ async function fetchAvailableModels() {
     }
     aiAvailableModels = res.models || [];
     renderModelsList();
-    appendAiAuthLog(`[fetch] 成功获取 ${aiAvailableModels.length} 个模型`, 'success');
+    const srcLabel = res.source === 'api' ? '(来自 API)' : res.source === 'builtin' ? '(内置列表)' : '';
+    appendAiAuthLog(`[fetch] 成功获取 ${aiAvailableModels.length} 个模型 ${srcLabel}`, 'success');
   } catch (e) {
     appendAiAuthLog(`[fetch] 错误: ${e.message}`, 'error');
   }
@@ -2440,17 +2414,7 @@ async function fetchConfiguredKeyModels() {
   appendAiAuthLog(`[fetch] 正在获取 ${pConfig.name || key.provider} 的模型列表...`);
 
   try {
-    // OAuth 类型总是通过后端 API 获取（需要真实 auth token 查询可用模型）
-    if (pConfig.authType !== 'oauth' && pConfig.models && pConfig.models.length > 0) {
-      const models = pConfig.models.map(m => ({
-        id: m.includes('/') ? m : `${key.provider}/${m}`,
-        name: m
-      }));
-      renderConfiguredModelsList(models);
-      appendAiAuthLog(`[fetch] 成功获取 ${models.length} 个模型`, 'success');
-      return;
-    }
-
+    // 所有 provider 都通过后端 API 获取真实模型列表
     const res = await api('/api/ai/models', {
       method: 'POST',
       body: { provider: key.provider }
@@ -2460,7 +2424,8 @@ async function fetchConfiguredKeyModels() {
       return;
     }
     renderConfiguredModelsList(res.models || []);
-    appendAiAuthLog(`[fetch] 成功获取 ${(res.models || []).length} 个模型`, 'success');
+    const srcLabel = res.source === 'api' ? '(来自 API)' : res.source === 'builtin' ? '(内置列表)' : '';
+    appendAiAuthLog(`[fetch] 成功获取 ${(res.models || []).length} 个模型 ${srcLabel}`, 'success');
   } catch (e) {
     appendAiAuthLog(`[fetch] 错误: ${e.message}`, 'error');
   }
@@ -2561,7 +2526,6 @@ async function addAiKey() {
   // 检查是否已存在相同 provider 的 key
   const existing = aiConfiguredKeys.find(k => k.provider === provider);
   if (existing) {
-    // apikey 类型：provider 当前只支持一个 key（后端按 provider 覆盖），提醒用户
     const ok = window.confirm(`${config.name || provider} 已有一个 API Key (${existing.keyMasked})。\n继续将覆盖旧 Key，确认？`);
     if (!ok) {
       toast('已取消', '未添加');
@@ -2569,6 +2533,32 @@ async function addAiKey() {
     }
   }
 
+  // 先验证 API Key 有效性
+  appendAiAuthLog(`[validate] 正在验证 ${config.name || provider} API Key...`);
+  const addBtn = $('btn-ai-add-key');
+  if (addBtn) { addBtn.disabled = true; addBtn.textContent = '验证中…'; }
+
+  try {
+    const vRes = await api('/api/ai/keys/validate', {
+      method: 'POST',
+      body: { provider, apiKey, baseUrl: baseUrl || null }
+    });
+    if (vRes.valid === false) {
+      toast('Key 无效', vRes.error || 'API Key 验证失败');
+      appendAiAuthLog(`[validate] API Key 验证失败: ${vRes.error || '无效'}`, 'error');
+      if (addBtn) { addBtn.disabled = false; addBtn.textContent = '添加此 API Key'; }
+      return;
+    }
+    if (vRes.warning) {
+      appendAiAuthLog(`[validate] ⚠️ ${vRes.warning}`);
+    } else {
+      appendAiAuthLog(`[validate] API Key 验证通过 ✓`, 'success');
+    }
+  } catch (e) {
+    appendAiAuthLog(`[validate] 验证请求失败: ${e.message}，继续添加`);
+  }
+
+  if (addBtn) { addBtn.disabled = true; addBtn.textContent = '保存中…'; }
   appendAiAuthLog(`[add] 正在添加 ${config.name || provider} 的 API Key...`);
 
   try {
@@ -2580,6 +2570,7 @@ async function addAiKey() {
     if (res.error) {
       toast('添加失败', res.error);
       appendAiAuthLog(`[add] 失败: ${res.error}`, 'error');
+      if (addBtn) { addBtn.disabled = false; addBtn.textContent = '添加此 API Key'; }
       return;
     }
 
@@ -2587,12 +2578,22 @@ async function addAiKey() {
     appendAiAuthLog(`[add] ${config.name || provider} API Key 添加成功`, 'success');
     if ($('ai-apikey')) $('ai-apikey').value = '';
     await loadAIConfig();
-    // Switch to configured keys tab
+    // 自动切到已配置 Key 页面
     document.querySelector('#ai-key-tabs .tab[data-ai-tab="configured-keys"]')?.click();
+    // 自动选中刚添加的 key
+    const sel = $('ai-configured-select');
+    if (sel) {
+      const newIdx = aiConfiguredKeys.findIndex(k => k.provider === provider);
+      if (newIdx >= 0) { sel.value = String(newIdx); onConfiguredKeySelected(); }
+    }
+    // 自动获取可用模型
+    appendAiAuthLog(`[add] 正在获取可用模型列表...`);
+    try { await fetchConfiguredKeyModels(); } catch {}
   } catch (e) {
     toast('添加失败', e.message);
     appendAiAuthLog(`[add] 错误: ${e.message}`, 'error');
   }
+  if (addBtn) { addBtn.disabled = false; addBtn.textContent = '添加此 API Key'; }
 }
 
 async function loadAIConfig(){
@@ -2736,9 +2737,19 @@ async function pollAiAuthTask(taskId){
             appendAiAuthLog(`[auth] 已自动添加 ${provider} 配置条目`, 'success');
           } catch {}
         }
+        await loadAIConfig();
+        // 自动切到已配置 Key 页面
+        document.querySelector('#ai-key-tabs .tab[data-ai-tab="configured-keys"]')?.click();
+        // 自动选中刚授权的 provider
+        const sel = $('ai-configured-select');
+        if (sel) {
+          const newIdx = aiConfiguredKeys.findIndex(k => k.provider === provider);
+          if (newIdx >= 0) { sel.value = String(newIdx); onConfiguredKeySelected(); }
+        }
         // OAuth 成功后自动获取可用模型
         appendAiAuthLog(`[auth] 正在获取可用模型列表...`);
-        try { await fetchAvailableModels(); } catch {}
+        try { await fetchConfiguredKeyModels(); } catch {}
+        return;
       }
       await loadAIConfig();
     }

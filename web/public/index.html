@@ -41,7 +41,7 @@
       <div class="sidebar-footer">
         <div class="dim" id="sidebar-version">面板 v-</div>
         <div class="dim" id="sidebar-oc-version">OpenClaw -</div>
-        <div id="sidebar-status"><span class="gw-dot offline">●</span> Gateway <span class="gw-label">Offline</span></div>
+        <div id="sidebar-status"><span class="gw-label offline">Gateway Offline</span></div>
       </div>
     </aside>
 
@@ -228,8 +228,8 @@
 
             <!-- API Key 配置区 - 子标签切换 -->
             <div class="tabs" id="ai-key-tabs" style="margin-bottom:14px">
-              <div class="tab oc-inner-tab active" data-ai-tab="new-key">新增 API Key</div>
-              <div class="tab oc-inner-tab" data-ai-tab="configured-keys">已配置 API Key</div>
+              <div class="tab oc-inner-tab active" data-ai-tab="new-key">新增 API Key / 设备授权</div>
+              <div class="tab oc-inner-tab" data-ai-tab="configured-keys">已配置 API Key / 授权</div>
             </div>
 
             <!-- 新增 API Key 面板 -->
@@ -312,10 +312,10 @@
                 <div style="grid-column: span 12;">
                   <div class="row" style="gap:12px;margin:8px 0">
                     <button class="btn btn-primary" id="btn-ai-add-key">添加此 API Key</button>
-                    <button class="btn btn-secondary" id="btn-ai-fetch-models" disabled>
+                    <button class="btn btn-secondary" id="btn-ai-fetch-models" disabled hidden>
                       <span class="ico">↻</span> 获取可用模型
                     </button>
-                    <span class="muted small" id="ai-fetch-hint">选择 Provider 并输入 API Key 后可获取</span>
+                    <span class="muted small" id="ai-fetch-hint" hidden></span>
                   </div>
                 </div>
                 <div style="grid-column: span 12;" id="ai-models-list-wrap" hidden>
