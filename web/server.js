@@ -3104,19 +3104,25 @@ app.get('/api/ai/config', async (req, res) => {
       }
     }
 
-    // 清理 subModel
-    if (defaults.subModel && isOrphan(defaults.subModel)) {
-      console.log(`[ai/config] Auto-clean orphaned sub model: ${defaults.subModel}`);
-      defaults.subModel = '';
+    // 清理非法的 subModel/subModelFallbacks 键（openclaw schema 不支持）
+    if ('subModel' in defaults) {
+      console.log(`[ai/config] Removing invalid key agents.defaults.subModel: ${defaults.subModel}`);
+      delete defaults.subModel;
+      configDirty = true;
+    }
+    if ('subModelFallbacks' in defaults) {
+      console.log(`[ai/config] Removing invalid key agents.defaults.subModelFallbacks`);
+      delete defaults.subModelFallbacks;
       configDirty = true;
     }
 
-    // 清理 subModel fallbacks
-    if (Array.isArray(defaults.subModelFallbacks)) {
-      const before = defaults.subModelFallbacks.length;
-      defaults.subModelFallbacks = defaults.subModelFallbacks.filter(m => !isOrphan(m));
-      if (defaults.subModelFallbacks.length < before) {
-        console.log(`[ai/config] Auto-clean ${before - defaults.subModelFallbacks.length} orphaned sub fallback(s)`);
+    // 清理 subagents.model（正确路径）
+    const subagentModel = defaults.subagents?.model;
+    if (subagentModel) {
+      const subModelStr = typeof subagentModel === 'string' ? subagentModel : subagentModel?.primary;
+      if (subModelStr && isOrphan(subModelStr)) {
+        console.log(`[ai/config] Auto-clean orphaned subagent model: ${subModelStr}`);
+        delete defaults.subagents.model;
         configDirty = true;
       }
     }
@@ -3139,12 +3145,9 @@ app.get('/api/ai/config', async (req, res) => {
     const modelFallbacks = defaults.model?.fallbacks || [];
     const fallbackObj = { primary: Array.isArray(modelFallbacks) ? modelFallbacks : [] };
 
-    // 解析 subModel（清理后的值）
-    const subModel = defaults.subModel || '';
-
-    // 解析 subModel fallbacks（清理后的值）
-    const subFallbacks = defaults.subModelFallbacks || [];
-    fallbackObj.sub = Array.isArray(subFallbacks) ? subFallbacks : [];
+    // 解析 subagents.model（正确路径）
+    const rawSubModel = defaults.subagents?.model;
+    const subModel = typeof rawSubModel === 'string' ? rawSubModel : (rawSubModel?.primary || '');
 
     res.json({
       success: true,
@@ -3207,13 +3210,14 @@ app.post('/api/ai/config', async (req, res) => {
     }
     config.agents.defaults.model = modelObj;
 
-    // subModel
+    // subagents.model（正确路径：agents.defaults.subagents.model）
     if (subModel) {
-      config.agents.defaults.subModel = subModel;
-      if (fallbacks?.sub && Array.isArray(fallbacks.sub) && fallbacks.sub.length > 0) {
-        config.agents.defaults.subModelFallbacks = fallbacks.sub;
-      }
+      if (!config.agents.defaults.subagents) config.agents.defaults.subagents = {};
+      config.agents.defaults.subagents.model = subModel;
     }
+    // 清理非法的顶级 subModel/subModelFallbacks
+    if (config.agents?.defaults?.subModel) delete config.agents.defaults.subModel;
+    if (config.agents?.defaults?.subModelFallbacks) delete config.agents.defaults.subModelFallbacks;
 
     // 确保主模型的 provider 在 models.json 中存在
     const [providerName, modelId] = primaryModel.split('/');
@@ -3415,15 +3419,18 @@ app.delete('/api/ai/keys', async (req, res) => {
       defaults.model.fallbacks = defaults.model.fallbacks.filter(m => !clearIfProvider(m));
       if (defaults.model.fallbacks.length < before) console.log(`[ai/keys] Removed ${before - defaults.model.fallbacks.length} primary fallback(s) for ${provider}`);
     }
-    if (defaults.subModel && clearIfProvider(defaults.subModel)) {
-      defaults.subModel = '';
-      console.log(`[ai/keys] Cleared sub model (was using ${provider})`);
+    // 清理 subagents.model（正确路径）
+    const subagentModelVal = defaults.subagents?.model;
+    if (subagentModelVal) {
+      const subStr = typeof subagentModelVal === 'string' ? subagentModelVal : subagentModelVal?.primary;
+      if (subStr && clearIfProvider(subStr)) {
+        delete defaults.subagents.model;
+        console.log(`[ai/keys] Cleared subagent model (was using ${provider})`);
+      }
     }
-    if (Array.isArray(defaults.subModelFallbacks)) {
-      const before = defaults.subModelFallbacks.length;
-      defaults.subModelFallbacks = defaults.subModelFallbacks.filter(m => !clearIfProvider(m));
-      if (defaults.subModelFallbacks.length < before) console.log(`[ai/keys] Removed ${before - defaults.subModelFallbacks.length} sub fallback(s) for ${provider}`);
-    }
+    // 清理非法的旧 subModel/subModelFallbacks 键
+    if ('subModel' in defaults) delete defaults.subModel;
+    if ('subModelFallbacks' in defaults) delete defaults.subModelFallbacks;
 
     // 写回所有文件
     fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });

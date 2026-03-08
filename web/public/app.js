@@ -1478,11 +1478,12 @@ async function pollTask(taskId){
               ocLastGatewaySnapshot = String(rr.logs || '').trim() || ocLastGatewaySnapshot;
             }
             scheduleGatewayStartupLogPulls(220);
-            // 轮询等待 Gateway 真正启动
+            // 轮询等待 Gateway 真正启动（最多 5 分钟）
             const pollStart = Date.now();
             let gwUp = false;
-            while (Date.now() - pollStart < 60000) {
-              await new Promise(r => setTimeout(r, 2500));
+            appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 5 分钟）...');
+            while (Date.now() - pollStart < 5 * 60 * 1000) {
+              await new Promise(r => setTimeout(r, 3000));
               try {
                 const ps = await api('/api/openclaw', { timeoutMs: 8000 });
                 if (ps.gatewayRunning && !ps.gatewayRestartRunning && String(ps.operationType || '') !== 'restarting_gateway') {
@@ -1491,7 +1492,7 @@ async function pollTask(taskId){
                 }
               } catch {}
             }
-            appendOcLogLine(gwUp ? '✅ Gateway 重启成功' : '⚠️ Gateway 重启超时，请检查状态');
+            appendOcLogLine(gwUp ? '✅ Gateway 重启成功' : '⚠️ Gateway 重启超时（5 分钟），请检查状态');
           } else {
             appendOcLogLine(`❌ Gateway 重启失败: ${rr.error || '请查看日志'}`);
             if (rr.logs) {
@@ -1875,23 +1876,21 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     syncOpenClawButtons();
   }
   if (restartAccepted) {
-    // 轮询等待 Gateway 真正启动完成（最多 60 秒）
+    // 轮询等待 Gateway 真正启动完成（最多 5 分钟）
     const pollStart = Date.now();
-    const pollTimeout = 60000;
-    const pollInterval = 2500;
+    const pollTimeout = 5 * 60 * 1000;
+    const pollInterval = 3000;
     let gwUp = false;
-    appendOcLogLine('⏳ 等待 Gateway 启动完成...');
+    appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 5 分钟）...');
     while (Date.now() - pollStart < pollTimeout) {
       await new Promise(r => setTimeout(r, pollInterval));
       try {
         const st = await api('/api/openclaw', { timeoutMs: 8000 });
-        const elapsed = Math.ceil((Date.now() - pollStart) / 1000);
         const stillRestarting = !!st.gatewayRestartRunning || String(st.operationType || '') === 'restarting_gateway';
         if (st.gatewayRunning && !stillRestarting) {
           gwUp = true;
           break;
         }
-        appendOcLogLine(`⏳ Gateway 启动中... 已等待 ${elapsed}s`);
       } catch {
         // 网络错误（Gateway 重启中导致），继续等待
       }
@@ -1900,7 +1899,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
       appendOcLogLine('✅ Gateway 重启成功');
       toast('重启成功', 'Gateway 已恢复运行');
     } else {
-      appendOcLogLine('⚠️ Gateway 重启超时，请检查状态');
+      appendOcLogLine('⚠️ Gateway 重启超时（5 分钟），请检查状态');
       toast('重启超时', 'Gateway 未在预期时间内恢复，请手动检查');
     }
     ocGatewayRestartRunningRemote = false;
