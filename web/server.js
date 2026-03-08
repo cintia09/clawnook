@@ -518,7 +518,7 @@ function ensureGatewayControlUiAccessForRequest(req) {
     if (changed) {
       const backupPath = `${CONFIG_PATH}.bak.gateway-control-ui-${Date.now()}`;
       try { fs.copyFileSync(CONFIG_PATH, backupPath); } catch {}
-      writeJson(CONFIG_PATH, cfg);
+      writeOpenClawConfig(cfg);
     }
 
     return { changed, host: hostHeader || hostname };
@@ -538,7 +538,7 @@ function repairOpenClawConfigProviders() {
   } catch {}
 
   delete cfg.providers;
-  writeJson(CONFIG_PATH, cfg);
+  writeOpenClawConfig(cfg);
   console.log('[config] removed legacy providers from openclaw.json to keep gateway schema valid');
   return true;
 }
@@ -913,9 +913,70 @@ function repairOpenClawConfigInvalidKeys(candidates = []) {
   if (result.changed) {
     const backupPath = `${CONFIG_PATH}.bak.invalid-${Date.now()}`;
     try { fs.copyFileSync(CONFIG_PATH, backupPath); result.backupPath = backupPath; } catch {}
-    writeJson(CONFIG_PATH, cfg);
+    writeOpenClawConfig(cfg);
   }
 
+  return result;
+}
+
+/**
+ * Sanitize openclaw.json config object in-place before writing.
+ * Uses a blacklist approach: removes known-invalid keys that cause gateway startup failures.
+ * Conservative to avoid breaking legitimate config keys added by OpenClaw updates.
+ * Returns object with { changed, removed } for logging.
+ */
+function sanitizeOpenClawConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object') return { changed: false, removed: [] };
+  const removed = [];
+
+  // Top-level: remove known-bad keys
+  const BLACKLISTED_TOP_KEYS = ['providers']; // legacy / misplaced
+  for (const k of BLACKLISTED_TOP_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(cfg, k)) {
+      delete cfg[k];
+      removed.push(k);
+    }
+  }
+
+  // agents.defaults: remove known-bad keys that break .strict() validation
+  const BLACKLISTED_DEFAULTS_KEYS = [
+    'subModel', 'subModelFallbacks', 'fallbacks'
+  ];
+  const defaults = cfg?.agents?.defaults;
+  if (defaults && typeof defaults === 'object') {
+    for (const k of BLACKLISTED_DEFAULTS_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(defaults, k)) {
+        delete defaults[k];
+        removed.push(`agents.defaults.${k}`);
+      }
+    }
+  }
+
+  // models: remove known-bad keys
+  const BLACKLISTED_MODELS_KEYS = ['aliases'];
+  const models = cfg?.models;
+  if (models && typeof models === 'object') {
+    for (const k of BLACKLISTED_MODELS_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(models, k)) {
+        delete models[k];
+        removed.push(`models.${k}`);
+      }
+    }
+  }
+
+  return { changed: removed.length > 0, removed };
+}
+
+/**
+ * Write openclaw.json with pre-save sanitization.
+ * Strips unrecognized keys to prevent gateway startup failures.
+ */
+function writeOpenClawConfig(cfg) {
+  const result = sanitizeOpenClawConfig(cfg);
+  if (result.changed) {
+    console.log(`[config] sanitize: removed ${result.removed.length} invalid key(s): ${result.removed.join(', ')}`);
+  }
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 });
   return result;
 }
 
@@ -2862,10 +2923,9 @@ app.post('/api/config', async (req, res) => {
       deepMerge(config.channels, updates.channels);
     }
 
-    // 写回 openclaw.json
-    const configJson = JSON.stringify(config, null, 2);
+    // 写回 openclaw.json（自动清理非法 key）
     try {
-      fs.writeFileSync(configPath, configJson, { encoding: 'utf8', mode: 0o600 });
+      writeOpenClawConfig(config);
     } catch (err) {
       throw new Error(`Failed to write config: ${err.message}`);
     }
@@ -2911,7 +2971,7 @@ function runAiAuthTask(command, title) {
   appendAiTaskLog(task, `[ai] command: ${command}\n\n`);
 
   (async () => {
-    const result = await runOpenClawCliWithPtyInput(command, '', 180000);
+    const result = await runOpenClawCliWithPtyInput(command, '', 300000);
     appendAiTaskLog(task, result.output || '');
     task.status = result.ok ? 'success' : 'failed';
     task.exitCode = result.code;
@@ -3127,10 +3187,10 @@ app.get('/api/ai/config', async (req, res) => {
       }
     }
 
-    // 写回清理后的配置
+    // 写回清理后的配置（自动清理非法 key）
     if (configDirty) {
       try {
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 });
+        writeOpenClawConfig(config);
         console.log('[ai/config] Wrote back cleaned config to openclaw.json');
       } catch (writeErr) {
         console.error('[ai/config] Failed to write cleaned config:', writeErr.message);
@@ -3262,13 +3322,8 @@ app.post('/api/ai/config', async (req, res) => {
       }
     }
 
-    // 清理非法顶级字段
-    if (config.agents?.defaults?.fallbacks) delete config.agents.defaults.fallbacks;
-    if (config.models?.aliases) delete config.models.aliases;
-    if (config.providers) delete config.providers;
-
-    // 写入文件
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 });
+    // 写入文件（自动清理非法 key）
+    writeOpenClawConfig(config);
     fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
 
     res.json({ success: true, message: '模型配置已保存' });
@@ -3349,7 +3404,7 @@ app.post('/api/ai/keys', async (req, res) => {
     if (baseUrl) config.models.providers[provider].baseUrl = baseUrl;
     if (apiKey) config.models.providers[provider].apiKey = apiKey;
 
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 });
+    writeOpenClawConfig(config);
     fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
 
     res.json({ success: true, message: `${provider} API Key 已保存` });
@@ -3428,14 +3483,10 @@ app.delete('/api/ai/keys', async (req, res) => {
         console.log(`[ai/keys] Cleared subagent model (was using ${provider})`);
       }
     }
-    // 清理非法的旧 subModel/subModelFallbacks 键
-    if ('subModel' in defaults) delete defaults.subModel;
-    if ('subModelFallbacks' in defaults) delete defaults.subModelFallbacks;
-
-    // 写回所有文件
+    // 写回所有文件（自动清理非法 key）
     fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
     fs.writeFileSync(authProfilesPath, JSON.stringify(authProfiles, null, 2), { encoding: 'utf8', mode: 0o600 });
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 });
+    writeOpenClawConfig(config);
 
     res.json({ success: true, message: `${provider} 已删除` });
   } catch (err) {
@@ -3474,7 +3525,10 @@ app.post('/api/ai/models', async (req, res) => {
         { id: 'copilot/gpt-4o', name: 'Copilot GPT-4o' },
         { id: 'copilot/gpt-4', name: 'Copilot GPT-4' },
         { id: 'copilot/claude-3.5-sonnet', name: 'Copilot Claude 3.5 Sonnet' },
-        { id: 'copilot/o1', name: 'Copilot o1' }
+        { id: 'copilot/claude-sonnet-4', name: 'Copilot Claude Sonnet 4' },
+        { id: 'copilot/o1', name: 'Copilot o1' },
+        { id: 'copilot/o3-mini', name: 'Copilot o3-mini' },
+        { id: 'copilot/gemini-2.0-flash', name: 'Copilot Gemini 2.0 Flash' }
       ],
       'gemini': [
         { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
@@ -4071,6 +4125,33 @@ function listOpenClawConfigBackups() {
   } catch {
     return [];
   }
+}
+
+/**
+ * Sanitize ALL config backup files at startup.
+ * Removes invalid keys from each backup JSON so that rollback doesn't restore bad config.
+ */
+function sanitizeAllConfigBackups() {
+  try {
+    const backups = listOpenClawConfigBackups();
+    let cleaned = 0;
+    for (const backup of backups) {
+      try {
+        const raw = fs.readFileSync(backup.path, 'utf8');
+        const cfg = JSON.parse(raw);
+        if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) continue;
+        const result = sanitizeOpenClawConfig(cfg);
+        if (result.changed) {
+          fs.writeFileSync(backup.path, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 });
+          cleaned++;
+          console.log(`[config] sanitized backup ${backup.name}: removed ${result.removed.join(', ')}`);
+        }
+      } catch {}
+    }
+    if (cleaned > 0) {
+      console.log(`[config] sanitized ${cleaned} config backup(s) at startup`);
+    }
+  } catch {}
 }
 
 function sanitizeBackupFileName(input) {
@@ -6116,6 +6197,7 @@ server.on('connection', (socket) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   repairOpenClawConfigProviders();
+  sanitizeAllConfigBackups();
   console.log(`[web] OpenClaw Web 管理面板启动: http://0.0.0.0:${PORT}`);
 });
 

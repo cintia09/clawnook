@@ -1482,11 +1482,14 @@ async function pollTask(taskId){
             const pollStart = Date.now();
             let gwUp = false;
             appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 5 分钟）...');
+            // 初始等待：给旧进程退出、新进程启动留时间
+            await new Promise(r => setTimeout(r, 8000));
             while (Date.now() - pollStart < 5 * 60 * 1000) {
               await new Promise(r => setTimeout(r, 3000));
               try {
                 const ps = await api('/api/openclaw', { timeoutMs: 8000 });
-                if (ps.gatewayRunning && !ps.gatewayRestartRunning && String(ps.operationType || '') !== 'restarting_gateway') {
+                const stillStarting = !!(ps.gatewayStarting) || ps.operationState?.type === 'restarting_gateway';
+                if (ps.gatewayRunning && !stillStarting) {
                   gwUp = true;
                   break;
                 }
@@ -1880,13 +1883,16 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     const pollStart = Date.now();
     const pollTimeout = 5 * 60 * 1000;
     const pollInterval = 3000;
+    // 初始等待：给旧进程退出、新进程启动留时间，避免误判旧进程为"已成功"
+    const initialDelay = 8000;
     let gwUp = false;
     appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 5 分钟）...');
+    await new Promise(r => setTimeout(r, initialDelay));
     while (Date.now() - pollStart < pollTimeout) {
       await new Promise(r => setTimeout(r, pollInterval));
       try {
         const st = await api('/api/openclaw', { timeoutMs: 8000 });
-        const stillRestarting = !!st.gatewayRestartRunning || String(st.operationType || '') === 'restarting_gateway';
+        const stillRestarting = !!(st.gatewayStarting) || st.operationState?.type === 'restarting_gateway';
         if (st.gatewayRunning && !stillRestarting) {
           gwUp = true;
           break;
@@ -1979,7 +1985,7 @@ const AI_PROVIDERS = {
     apiKeyLabel: 'OAuth Token', apiKeyPlaceholder: '使用设备授权登录',
     authType: 'oauth', oauthType: 'device',
     baseUrl: 'https://api.githubcopilot.com',
-    models: ['copilot/gpt-4o', 'copilot/gpt-4', 'copilot/claude-3.5-sonnet', 'copilot/o1'],
+    models: ['copilot/gpt-4o', 'copilot/gpt-4', 'copilot/claude-3.5-sonnet', 'copilot/claude-sonnet-4', 'copilot/o1', 'copilot/o3-mini', 'copilot/gemini-2.0-flash'],
     oauthGuide: `<div style="color:#98989d;line-height:1.6">
       <p style="margin:4px 0"><b>GitHub Copilot 设备授权流程：</b></p>
       <p style="margin:4px 0">1. 确保你有 GitHub Copilot 订阅（个人版或企业版）</p>
@@ -2537,20 +2543,22 @@ async function addAiKey() {
   const baseUrl = $('ai-baseurl')?.value?.trim() || '';
   const config = AI_PROVIDERS[provider] || {};
 
-  if (config.authType !== 'oauth' && !apiKey) {
+  // OAuth 类型不能通过"添加"按钮直接添加，必须先完成 OAuth 授权流程
+  if (config.authType === 'oauth') {
+    toast('请先授权', `${config.name || provider} 需要先点击"启动设备授权"完成 OAuth 登录`);
+    appendAiAuthLog(`[add] ${config.name || provider} 是 OAuth 类型，请先完成设备授权`, 'error');
+    return;
+  }
+
+  if (!apiKey) {
     toast('参数错误', '请输入 API Key');
     appendAiAuthLog('[add] 请输入 API Key', 'error');
     return;
   }
 
-  // 检查是否已存在相同 provider 的 key（对 apikey 类型检查 key 重复，对 oauth 类型检查 provider 重复）
+  // 检查是否已存在相同 provider 的 key
   const existing = aiConfiguredKeys.find(k => k.provider === provider);
   if (existing) {
-    if (config.authType === 'oauth') {
-      toast('已存在', `${config.name || provider} 已经配置了 OAuth 授权`);
-      appendAiAuthLog(`[add] ${config.name || provider} 已存在 OAuth 授权，请先删除旧的再添加`, 'error');
-      return;
-    }
     // apikey 类型：provider 当前只支持一个 key（后端按 provider 覆盖），提醒用户
     const ok = window.confirm(`${config.name || provider} 已有一个 API Key (${existing.keyMasked})。\n继续将覆盖旧 Key，确认？`);
     if (!ok) {
