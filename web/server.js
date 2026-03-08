@@ -2785,6 +2785,7 @@ function normalizeVersionTag(v) {
 }
 
 let updateCache = { data: null, checkedAt: 0 };
+let _dockerfileChangeLogged = false;   // 只打印一次 Dockerfile 变更日志
 
 app.get('/api/update/check', async (req, res) => {
   const currentVersion = getCurrentVersion();
@@ -2931,8 +2932,9 @@ app.get('/api/update/check', async (req, res) => {
         result.requiresFullUpdate = false;
       }
 
-      if (checkedRef) {
-        console.log(`[update] Dockerfile hash checked against ref: ${checkedRef}`);
+      if (checkedRef && result.dockerfileChanged && !_dockerfileChangeLogged) {
+        console.log(`[update] Dockerfile changed: local hash differs from ref ${checkedRef}`);
+        _dockerfileChangeLogged = true;
       }
     } catch {}
 
