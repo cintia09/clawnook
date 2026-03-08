@@ -2697,15 +2697,10 @@ app.get('/api/config', async (req, res) => {
     repairOpenClawConfigProviders();
     const configPath = '/root/.openclaw/openclaw.json';
 
-    // 读取 openclaw.json
+    // 读取 openclaw.json (原生读取避免超时)
     let config = {};
     try {
-      const configData = await new Promise((resolve, reject) => {
-        exec(`sudo cat "${configPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
-          if (err) reject(err);
-          else resolve(String(stdout || ''));
-        });
-      });
+      const configData = fs.readFileSync(configPath, 'utf8');
       config = JSON.parse(configData);
     } catch {
       config = {};
@@ -2728,11 +2723,7 @@ app.post('/api/config', async (req, res) => {
     // 读取现有 openclaw.json
     let config = {};
     try {
-      const configData = await new Promise((resolve) => {
-        exec(`sudo cat "${configPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
-          resolve(String(stdout || '{}'));
-        });
-      });
+      const configData = fs.readFileSync(configPath, 'utf8');
       config = JSON.parse(configData);
     } catch {
       config = {};
@@ -2892,15 +2883,10 @@ app.get('/api/ai/config', async (req, res) => {
     const configPath = '/root/.openclaw/openclaw.json';
     const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
 
-    // 读取主配置
+    // 读取主配置 (尝试使用原生的 fs 读取，减少因为 spawn/sudo 导致的卡死风险)
     let config = {};
     try {
-      const configData = await new Promise((resolve, reject) => {
-        exec(`sudo cat "${configPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
-          if (err) reject(err);
-          else resolve(String(stdout || ''));
-        });
-      });
+      const configData = fs.readFileSync(configPath, 'utf8');
       config = JSON.parse(configData);
     } catch {
       config = {};
@@ -2911,11 +2897,7 @@ app.get('/api/ai/config', async (req, res) => {
     let baseUrl = null;
     let providerDetails = {};
     try {
-      const modelsData = await new Promise((resolve) => {
-        exec(`sudo cat "${modelsPath}" 2>&1`, { timeout: 5000 }, (err, stdout) => {
-          resolve(String(stdout || ''));
-        });
-      });
+      const modelsData = fs.readFileSync(modelsPath, 'utf8');
       const models = JSON.parse(modelsData);
       providers = Object.keys(models?.providers || {});
 
