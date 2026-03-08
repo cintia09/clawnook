@@ -570,6 +570,36 @@ function loadOpenClawModelCatalog() {
 }
 setTimeout(loadOpenClawModelCatalog, 1000);
 
+// Gateway 支持的 api 枚举值（写入 openclaw.json 时必须校验）
+const VALID_GATEWAY_API_VALUES = new Set([
+  'openai-completions', 'openai-responses', 'openai-codex-responses',
+  'anthropic-messages', 'google-generative-ai', 'github-copilot',
+  'bedrock-converse-stream', 'ollama'
+]);
+
+/**
+ * 将模型目录中的 api 值映射为 gateway 合法值
+ * 如果值不在 gateway 支持列表中，返回对应 provider 的安全默认值
+ */
+function sanitizeApiValue(api, providerName) {
+  if (!api || VALID_GATEWAY_API_VALUES.has(api)) return api;
+  // 常见映射：azure-openai-responses → openai-responses
+  const FALLBACK_MAP = {
+    'azure-openai-responses': 'openai-responses',
+    'azure-openai-completions': 'openai-completions',
+  };
+  if (FALLBACK_MAP[api]) return FALLBACK_MAP[api];
+  // 按 provider 给默认值
+  const PROVIDER_DEFAULT_API = {
+    'github-copilot': 'github-copilot',
+    'gemini': 'google-generative-ai',
+    'anthropic': 'anthropic-messages',
+    'ollama': 'ollama',
+    'bedrock': 'bedrock-converse-stream',
+  };
+  return PROVIDER_DEFAULT_API[providerName] || 'openai-completions';
+}
+
 /**
  * 从 OpenClaw 内置目录查询模型能力
  * @param {string} providerName - 我们的 provider 名称 (如 'gemini', 'bailian')
@@ -616,11 +646,15 @@ function buildModelEntry(providerName, modelId) {
   const catalogEntry = lookupModelCapabilities(providerName, modelId);
 
   if (catalogEntry) {
-    console.log(`[catalog] 模型 ${providerName}/${modelId} 命中内置目录: reasoning=${catalogEntry.reasoning}, api=${catalogEntry.api}, ctx=${catalogEntry.contextWindow}`);
+    const safeApi = sanitizeApiValue(catalogEntry.api, providerName) || 'openai-completions';
+    if (safeApi !== catalogEntry.api) {
+      console.log(`[catalog] 模型 ${providerName}/${modelId} api 值 "${catalogEntry.api}" 不被 gateway 支持，映射为 "${safeApi}"`);
+    }
+    console.log(`[catalog] 模型 ${providerName}/${modelId} 命中内置目录: reasoning=${catalogEntry.reasoning}, api=${safeApi}, ctx=${catalogEntry.contextWindow}`);
     return {
       id: modelId,
       name: catalogEntry.name || modelId,
-      api: catalogEntry.api || 'openai-completions',
+      api: safeApi,
       reasoning: catalogEntry.reasoning ?? false,
       input: catalogEntry.input || ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -3914,10 +3948,13 @@ app.post('/api/ai/config', async (req, res) => {
           if (entry[field] !== undefined) existing[field] = entry[field];
         }
       }
-      // 同步 provider 级别的 api
+      // 同步 provider 级别的 api（仅当新值是 gateway 合法值时才更新）
       if (entry.api && target[provName].api && entry.api !== target[provName].api) {
-        console.log(`[ensureModelEntry] 更新 provider ${provName}.api: ${target[provName].api} → ${entry.api}`);
-        target[provName].api = entry.api;
+        const safeProvApi = sanitizeApiValue(entry.api, provName);
+        if (safeProvApi && safeProvApi !== target[provName].api) {
+          console.log(`[ensureModelEntry] 更新 provider ${provName}.api: ${target[provName].api} → ${safeProvApi}`);
+          target[provName].api = safeProvApi;
+        }
       }
     };
 
