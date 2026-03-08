@@ -5522,9 +5522,20 @@ if (WebSocketServer) {
 
     closeActiveTerminalSession('new-connection');
 
-    const { shell, mode, reason } = createTerminalShell();
+    let shell, mode, reason;
+    try {
+      const res = createTerminalShell();
+      shell = res.shell;
+      mode = res.mode;
+      reason = res.reason;
+    } catch (err) {
+      console.error('[terminal-ws] createTerminalShell failed:', err);
+      setTerminalBackendState({ ready: false, reason: 'createTerminalShell error' });
+      try { ws.close(1011, 'terminal-error'); } catch {}
+      return;
+    }
 
-    if (!shell) {
+    if (!shell || !shell.stdin || !shell.stdout) {
       console.warn(`[terminal-ws] shell unavailable mode=${mode || 'unknown'} reason=${reason || 'unknown'}`);
       setTerminalBackendState({ wsEnabled: true, ready: false, mode: mode || 'unavailable', reason: reason || 'terminal shell unavailable' });
       try {
@@ -5549,9 +5560,17 @@ if (WebSocketServer) {
       sendOutput('[terminal] 当前环境未检测到 script，已使用兼容模式。\n');
     }
 
+    // 捕获 stdin 错误避免崩溃
+    shell.stdin.on('error', (err) => {
+      // 忽略 EPIPE
+    });
+
     shell.stdout.on('data', (chunk) => sendOutput(chunk.toString('utf8')));
-    if (mode !== 'pty') {
+    shell.stdout.on('error', () => {}); // 防崩溃
+    
+    if (mode !== 'pty' && shell.stderr) {
       shell.stderr.on('data', (chunk) => sendOutput(chunk.toString('utf8')));
+      shell.stderr.on('error', () => {}); // 防崩溃
     }
 
     shell.on('close', (code) => {
@@ -5574,7 +5593,9 @@ if (WebSocketServer) {
       try {
         const msg = JSON.parse(String(raw || '{}'));
         if (msg.type === 'input' && typeof msg.data === 'string') {
-          shell.stdin.write(msg.data);
+          if (shell.stdin && !shell.stdin.destroyed) {
+            shell.stdin.write(msg.data);
+          }
         } else if (msg.type === 'resize') {
           if (mode === 'pty') {
             tryResizePtyShell(shell, msg.cols, msg.rows);
@@ -5589,7 +5610,7 @@ if (WebSocketServer) {
       if (activeTerminalSession && activeTerminalSession.ws === ws) {
         activeTerminalSession = null;
       }
-      try { shell.stdin.end(); } catch {}
+      try { if (shell.stdin && !shell.stdin.destroyed) shell.stdin.end(); } catch {}
       try { shell.kill('SIGTERM'); } catch {}
       setTimeout(() => {
         try { shell.kill('SIGKILL'); } catch {}
