@@ -214,6 +214,15 @@ select.input option{font-weight:400;color:var(--text);padding:4px 8px}
   position:relative;
   transition: background .12s, color .12s;
 }
+.nav-update-dot{
+  display:none;
+  margin-left:auto;
+  color:var(--bad);
+  font-size:16px;
+  line-height:1;
+  flex:0 0 auto;
+  text-shadow:0 0 10px rgba(255,69,58,.45);
+}
 .nav-group-label + a{margin-top:2px}
 .nav a:hover{background:rgba(255,255,255,.14); color:#fff}
 .nav a.active{

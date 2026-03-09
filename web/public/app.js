@@ -327,6 +327,11 @@ function toast(title, detail=''){
   toastTimer = setTimeout(()=> el.remove(), 3200);
 }
 
+function setNavUpdateDotVisible(id, visible){
+  const dot = $(id);
+  if (dot) dot.style.display = visible ? 'inline-block' : 'none';
+}
+
 // ------------------------
 // Router / navigation
 // ------------------------
@@ -683,11 +688,8 @@ async function checkForUpdate(force = false) {
     banner.style.display = 'none';
   }
 
-  // Sidebar red dot
-  ['update-dot', 'openclaw-update-dot'].forEach((id) => {
-    const dot = $(id);
-    if (dot) dot.style.display = u.hasUpdate ? '' : 'none';
-  });
+  // Sidebar red dot (system/container update only)
+  setNavUpdateDotVisible('update-dot', !!u.hasUpdate);
 
   // Settings page
   if ($('settings-current-ver')) {
@@ -1256,8 +1258,8 @@ async function refreshOpenClaw(opts = {}){
   } else {
     $('oc-version').textContent = '—';
   }
-  if (installBusyNow && (installPhaseNow === 'install' || installPhaseNow === 'update')) {
-    const gwLabel = installPhaseNow === 'update' ? '更新中' : '安装中';
+  if (installBusyNow && installPhaseNow === 'install') {
+    const gwLabel = '安装中';
     setStatusBadge('oc-gateway', 'pending', gwLabel, true);
   } else if (!d.installed && !d.gatewayRunning && !restartBusyNow) {
     setStatusBadge('oc-gateway', 'offline', '未安装', false);
@@ -1284,6 +1286,7 @@ async function refreshOpenClaw(opts = {}){
   ocInstalled = !!d.installed;
   ocGatewayRunning = !!d.gatewayRunning;
   ocHasUpdate = !!d.hasUpdate;
+  setNavUpdateDotVisible('openclaw-update-dot', !!d.hasUpdate);
   ocLatestKnown = !!displayLatestVersion;
   ocInstallTaskRunningRemote = !!d.installTaskRunning;
   ocRepairTaskRunningRemote = !!d.repairTaskRunning;
@@ -1410,9 +1413,7 @@ async function pollTask(taskId){
     const now = Date.now();
     if (now - lastHeartbeatAt >= 5000) {
       lastHeartbeatAt = now;
-      const elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1000));
-      const quick = await refreshOpenClaw({ retries: 0 });
-      appendOcLogLine(`⏳ 执行中... 已耗时 ${formatRemainingTime(elapsedSec)}`);
+      await refreshOpenClaw({ retries: 0 });
     }
 
     if (st.status && st.status !== 'running'){
@@ -1869,14 +1870,14 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     syncOpenClawButtons();
   }
   if (restartAccepted) {
-    // 轮询等待 Gateway 真正启动完成（最多 5 分钟）
+    // 轮询等待 Gateway 真正启动完成（最多 2 分钟）
     const pollStart = Date.now();
-    const pollTimeout = 5 * 60 * 1000;
-    const pollInterval = 3000;
+    const pollTimeout = 2 * 60 * 1000;
+    const pollInterval = 2000;
     // 初始等待：给旧进程退出、新进程启动留时间，避免误判旧进程为"已成功"
-    const initialDelay = 8000;
+    const initialDelay = 2500;
     let gwUp = false;
-    appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 5 分钟）...');
+    appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 2 分钟）...');
     await new Promise(r => setTimeout(r, initialDelay));
     while (Date.now() - pollStart < pollTimeout) {
       await new Promise(r => setTimeout(r, pollInterval));
@@ -1895,7 +1896,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
       appendOcLogLine('✅ Gateway 重启成功');
       toast('重启成功', 'Gateway 已恢复运行');
     } else {
-      appendOcLogLine('⚠️ Gateway 重启超时（5 分钟），请检查状态');
+      appendOcLogLine('⚠️ Gateway 重启超时（2 分钟），请检查状态');
       toast('重启超时', 'Gateway 未在预期时间内恢复，请手动检查');
     }
     ocGatewayRestartRunningRemote = false;
@@ -3595,6 +3596,11 @@ setInterval(() => {
 
 // Auto check for updates on page load (non-blocking)
 setTimeout(() => checkForUpdate(), 3000);
+setTimeout(() => refreshOpenClaw({ retries: 0 }), 4000);
 
 // Periodic update check every 30 minutes
 setInterval(() => checkForUpdate(), 30 * 60 * 1000);
+setInterval(() => {
+  const route = getRouteFromHash();
+  if (route !== 'openclaw-engine') refreshOpenClaw({ retries: 0 });
+}, 5 * 60 * 1000);

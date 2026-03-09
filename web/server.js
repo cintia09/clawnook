@@ -975,7 +975,15 @@ function ensureGatewayControlUiAccessForRequest(req) {
       ? cfg.gateway.trustedProxies.map((x) => String(x || '').trim()).filter(Boolean)
       : [];
 
-    const requiredTrusted = ['127.0.0.1', '::1', '::ffff:127.0.0.1', '172.17.0.1'];
+    const requiredTrusted = [
+      '127.0.0.1',
+      '127.0.0.0/8',
+      '::1',
+      '::ffff:127.0.0.1',
+      '::ffff:127.0.0.0/104',
+      '172.17.0.1',
+      '172.17.0.0/16'
+    ];
     for (const proxyIp of requiredTrusted) {
       if (currentTrusted.includes(proxyIp)) continue;
       currentTrusted.push(proxyIp);
@@ -2017,7 +2025,12 @@ async function maybeTriggerOpenClawRuntimeRecovery(issue = '') {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release);
-    const taskId = runOpenClawTask(command, `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行安装恢复（官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`, 'installing');
+    const taskId = runOpenClawTask(
+      command,
+      `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行安装恢复（官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`,
+      'installing',
+      { release }
+    );
     if (!taskId) return { triggered: false, reason: 'busy', taskId: '' };
     openClawRuntimeRecoveryState.lastTaskId = taskId;
     return { triggered: true, reason: 'started', taskId };
@@ -2062,6 +2075,91 @@ function compareSemver(a, b) {
   if (va.pre && !vb.pre) return -1;
   if (va.pre === vb.pre) return 0;
   return va.pre > vb.pre ? 1 : -1;
+}
+
+function writeJsonFileAtomic(filePath, data, mode = 0o600) {
+  const dirPath = path.dirname(filePath);
+  fs.mkdirSync(dirPath, { recursive: true });
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode });
+  fs.renameSync(tmpPath, filePath);
+  try { fs.chmodSync(filePath, mode); } catch {}
+}
+
+function syncOpenClawPostInstallMetadata({ operationType = 'installing', release = null } = {}) {
+  const touchedAt = new Date().toISOString();
+  const snapshot = getOpenClawInstallationSnapshot(true);
+  const sourceMeta = getOpenClawSourceInstallMeta();
+  const releaseTag = String(release?.tag || '').trim();
+  const version = String(
+    snapshot?.version
+    || sourceMeta?.version
+    || parseOpenClawVersion(releaseTag)
+    || ''
+  ).trim();
+  const tag = String(sourceMeta?.tag || releaseTag || (version ? `v${version}` : '')).trim();
+
+  const result = {
+    version,
+    tag,
+    touchedAt,
+    configChanged: false,
+    updateCheckChanged: false
+  };
+
+  if (!version) {
+    result.error = 'installed-version-unavailable';
+    return result;
+  }
+
+  const cfg = readJson(CONFIG_PATH, null);
+  if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+    const nextCfg = { ...cfg, meta: { ...(cfg.meta || {}) } };
+    const nextMeta = nextCfg.meta;
+    let changed = false;
+
+    if (String(nextMeta.lastTouchedVersion || '').trim() !== version) {
+      nextMeta.lastTouchedVersion = version;
+      changed = true;
+    }
+    if (String(nextMeta.lastTouchedAt || '').trim() !== touchedAt) {
+      nextMeta.lastTouchedAt = touchedAt;
+      changed = true;
+    }
+
+    if (changed) {
+      writeOpenClawConfig(nextCfg);
+      result.configChanged = true;
+    }
+  }
+
+  const updateCheckPath = `${OPENCLAW_STATE_ROOT}/update-check.json`;
+  const updateState = readJson(updateCheckPath, {});
+  const lastNotifiedVersion = parseOpenClawVersion(updateState?.lastNotifiedVersion || updateState?.lastNotifiedTag || '');
+  const shouldAdvanceNotification = !lastNotifiedVersion || compareSemver(version, lastNotifiedVersion) >= 0;
+  const nextUpdateState = {
+    ...(updateState && typeof updateState === 'object' && !Array.isArray(updateState) ? updateState : {}),
+    lastCheckedAt: touchedAt
+  };
+  let updateChanged = String(updateState?.lastCheckedAt || '').trim() !== touchedAt;
+
+  if (shouldAdvanceNotification) {
+    if (String(nextUpdateState.lastNotifiedVersion || '').trim() !== version) {
+      nextUpdateState.lastNotifiedVersion = version;
+      updateChanged = true;
+    }
+    if (tag && String(nextUpdateState.lastNotifiedTag || '').trim() !== tag) {
+      nextUpdateState.lastNotifiedTag = tag;
+      updateChanged = true;
+    }
+  }
+
+  if (updateChanged) {
+    writeJsonFileAtomic(updateCheckPath, nextUpdateState);
+    result.updateCheckChanged = true;
+  }
+
+  return result;
 }
 
 async function getLatestOpenClawVersion(timeoutMs = 2500) {
@@ -5038,7 +5136,7 @@ function queueGatewayRestart(source = 'manual', taskId = '') {
   return state;
 }
 
-function runOpenClawTask(command, title, operationType = 'installing') {
+function runOpenClawTask(command, title, operationType = 'installing', options = {}) {
   if (isOpenClawOperationBusy()) return null;
   const taskId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const taskLogFile = OPENCLAW_INSTALL_LOG_FILE;
@@ -5054,6 +5152,12 @@ function runOpenClawTask(command, title, operationType = 'installing') {
 
   const task = installLogs[taskId];
   task.operationType = String(operationType || 'installing');
+  if (options?.release && typeof options.release === 'object') {
+    task.release = {
+      repo: parseGitHubRepo(options.release.repo || '') || '',
+      tag: String(options.release.tag || '').trim()
+    };
+  }
   appendInstallLog(task, `\n===== [${new Date().toISOString()}] task ${taskId} (${operationType}) begin =====\n`);
   appendInstallLog(task, `[state] operation=${operationType} status=begin task=${taskId}\n`);
   activeInstallTaskId = taskId;
@@ -5109,6 +5213,13 @@ function runOpenClawTask(command, title, operationType = 'installing') {
       openClawRuntimeRecoveryState.suppressUntil = 0;
       openClawRuntimeRecoveryState.suppressReason = '';
       const opLabel = operationType === 'updating' ? '更新' : '安装';
+      const metadataSync = syncOpenClawPostInstallMetadata({ operationType, release: task.release || null });
+      task.metadataSync = metadataSync;
+      if (metadataSync?.error) {
+        appendInstallLog(task, `[openclaw][warn] ${opLabel}后元数据同步失败: ${metadataSync.error}\n`);
+      } else if (metadataSync?.configChanged || metadataSync?.updateCheckChanged) {
+        appendInstallLog(task, `[openclaw] ${opLabel}后已同步元数据：version=${metadataSync.version}${metadataSync.tag ? ` tag=${metadataSync.tag}` : ''}\n`);
+      }
       const restartState = queueGatewayRestart(`${operationType}-complete`, taskId);
       task.gatewayRestartQueued = true;
       task.gatewayRestartState = restartState;
@@ -5326,6 +5437,7 @@ const OPENCLAW_OPERATION_MAX_SEC = {
   restarting_gateway: 480,
   repairing_config: 900
 };
+const OPENCLAW_RESTART_RECONCILE_GRACE_SEC = 5;
 
 function ensureOpenClawRuntimeStateDirs() {
   try {
@@ -5401,9 +5513,9 @@ function getOpenClawOperationState() {
     const current = state && typeof state === 'object' ? { ...state } : { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
     if (current.type !== 'restarting_gateway') return current;
 
-    // Grace period: don't reconcile within the first 30s — the watchdog needs time to pick up the lock
+    // Short grace period: let the watchdog pick up the lock, but don't keep the UI stuck for tens of seconds.
     const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(current.startedAt || 0)) / 1000));
-    if (elapsedSec < 30) return current;
+    if (elapsedSec < OPENCLAW_RESTART_RECONCILE_GRACE_SEC) return current;
 
     const gatewayHealthCode = Number.parseInt(String(runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000) || '').trim(), 10) || 0;
     const gatewayRunning = gatewayHealthCode === 200;
@@ -6318,20 +6430,32 @@ app.get('/api/openclaw/gateway-link', (req, res) => {
     }
 
     const cfg = readJson(CONFIG_PATH, {});
+    const ocSnapshot = getOpenClawInstallationSnapshot();
     const authMode = String(cfg?.gateway?.auth?.mode || 'none').trim() || 'none';
     const rawToken = String(cfg?.gateway?.auth?.token || '').trim();
     const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
     const protoHeader = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim().toLowerCase();
     const hostname = (hostHeader.split(':')[0] || '127.0.0.1').trim();
     const externalProto = (protoHeader === 'https' ? 'https' : 'http');
+    const uiVersionStamp = String(ocSnapshot?.version || '').trim();
+
+    const appendGatewayUiVersion = (url) => {
+      const rawUrl = String(url || '').trim();
+      if (!rawUrl || !uiVersionStamp) return rawUrl;
+      const hashIndex = rawUrl.indexOf('#');
+      const base = hashIndex >= 0 ? rawUrl.slice(0, hashIndex) : rawUrl;
+      const hash = hashIndex >= 0 ? rawUrl.slice(hashIndex) : '';
+      const sep = base.includes('?') ? '&' : '?';
+      return `${base}${sep}uiVersion=${encodeURIComponent(uiVersionStamp)}${hash}`;
+    };
 
     const gatewayPort = Number(cfg?.port || 18789) || 18789;
     const directBase = `http://${hostname}:${gatewayPort}/`;
     const tokenHash = rawToken ? `#token=${encodeURIComponent(rawToken)}` : '';
-    const directUrl = `${directBase}${tokenHash}`;
+    const directUrl = appendGatewayUiVersion(`${directBase}${tokenHash}`);
     const proxyUrl = `/${'gateway-proxy/'}`;
-    const externalProxyUrl = `${externalProto}://${hostHeader || hostname}${proxyUrl}${tokenHash}`;
-    const externalGatewayUrl = `${externalProto}://${hostHeader || hostname}/gateway${tokenHash}`;
+    const externalProxyUrl = appendGatewayUiVersion(`${externalProto}://${hostHeader || hostname}${proxyUrl}${tokenHash}`);
+    const externalGatewayUrl = appendGatewayUiVersion(`${externalProto}://${hostHeader || hostname}/gateway${tokenHash}`);
 
     const preferredUrl = externalGatewayUrl;
 
@@ -6511,7 +6635,12 @@ app.post('/api/openclaw/install', async (req, res) => {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
-    const taskId = runOpenClawTask(command, `安装 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`, 'installing');
+    const taskId = runOpenClawTask(
+      command,
+      `安装 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`,
+      'installing',
+      { release }
+    );
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }
@@ -6719,7 +6848,12 @@ app.post('/api/openclaw/update', async (req, res) => {
     const repo = resolveOpenClawSourceRepo(true);
     const release = await getLatestOpenClawRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
-    const taskId = runOpenClawTask(command, `更新 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`, 'updating');
+    const taskId = runOpenClawTask(
+      command,
+      `更新 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`,
+      'updating',
+      { release }
+    );
     if (!taskId) {
       return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
     }

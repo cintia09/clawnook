@@ -84,9 +84,10 @@ log_throttled() {
 }
 
 detect_runtime_version() {
-  [ -n "$OPENCLAW_RUNTIME_VERSION" ] && return 0
   local candidates file ver
-  candidates="$SOURCE_ROOT/package.json /root/.npm-global/lib/node_modules/openclaw/package.json /usr/local/lib/node_modules/openclaw/package.json /usr/lib/node_modules/openclaw/package.json"
+  candidates="/root/.npm-global/lib/node_modules/openclaw/package.json $SOURCE_ROOT/package.json /usr/local/lib/node_modules/openclaw/package.json /usr/lib/node_modules/openclaw/package.json"
+  OPENCLAW_RUNTIME_VERSION=""
+  unset OPENCLAW_VERSION OPENCLAW_SERVICE_VERSION
   for file in $candidates; do
     [ -f "$file" ] || continue
     ver=$(grep -m1 '"version"' "$file" 2>/dev/null | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | tr -d '\r\n ')

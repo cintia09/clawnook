@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OpenClaw 管理面板</title>
-  <link rel="stylesheet" href="/style.css?v=1.2.03" />
+  <link rel="stylesheet" href="/style.css?v=1.2.05" />
   <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
 </head>
 <body>
@@ -24,7 +24,7 @@
         <a href="#dashboard" data-route="dashboard" class="active"><span class="ico">◔</span><span>仪表盘</span></a>
 
         <div class="nav-group-label">OpenClaw</div>
-        <a href="#openclaw-engine" data-route="openclaw-engine"><span class="ico">✦</span><span>OpenClaw 控制台</span><span id="openclaw-update-dot" style="display:none;color:#ff453a;font-size:20px;line-height:1;margin-left:4px">●</span></a>
+        <a href="#openclaw-engine" data-route="openclaw-engine"><span class="ico">✦</span><span>OpenClaw 控制台</span><span id="openclaw-update-dot" class="nav-update-dot" aria-label="有可用更新">●</span></a>
         <a href="#openclaw-ai" data-route="openclaw-ai"><span class="ico">◈</span><span>接入模型配置</span></a>
         <a href="#messaging" data-route="messaging"><span class="ico">⌁</span><span>消息平台</span></a>
         <a href="#plugins" data-route="plugins"><span class="ico">◌</span><span>插件市场</span></a>
@@ -34,7 +34,7 @@
 
         <div class="nav-group-label">运维与系统</div>
         <a href="#terminal" data-route="terminal"><span class="ico">⌘</span><span>终端</span></a>
-        <a href="#settings" data-route="settings"><span class="ico">⛭</span><span>系统设置</span><span id="update-dot" style="display:none;color:#ff453a;font-size:20px;line-height:1;margin-left:4px">●</span></a>
+        <a href="#settings" data-route="settings"><span class="ico">⛭</span><span>系统设置</span><span id="update-dot" class="nav-update-dot" aria-label="有可用更新">●</span></a>
         <a href="#logs" data-route="logs"><span class="ico">≣</span><span>日志</span></a>
       </nav>
 
@@ -184,7 +184,7 @@
             </div>            <!-- 操作日志窗口 -->
             <div class="sep"></div>
             <div style="font-weight:700;font-size:13px;margin-bottom:6px">操作日志</div>
-            <div class="terminal" id="oc-log" style="height:160px;font-size:11.5px"></div>          </div>
+            <div class="terminal" id="oc-log" style="height:240px;font-size:11.5px"></div>          </div>
         </div>
       </section>
 
@@ -663,6 +663,6 @@
 
   <script src="/vendor/xterm/xterm.js"></script>
   <script src="/vendor/xterm/addon-fit.js"></script>
-  <script src="/app.js?v=1.2.06"></script>
+  <script src="/app.js?v=1.2.12"></script>
 </body>
 </html>

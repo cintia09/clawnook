@@ -599,7 +599,7 @@ ensure_gateway_proxy_compat_config() {
         printf '"https://%s"\n"http://%s"\n' "$h" "$h"
     done | awk '!seen[$0]++' | jq -s '.')
 
-    local trusted_json='["127.0.0.1","::1","172.17.0.1","172.17.0.0/16"]'
+    local trusted_json='["127.0.0.1","127.0.0.0/8","::1","::ffff:127.0.0.1","::ffff:127.0.0.0/104","172.17.0.1","172.17.0.0/16"]'
     local tmp_file
     tmp_file=$(mktemp)
 
