@@ -360,11 +360,13 @@ function writeJson(p, obj) {
 const AI_AGENT_DIR = '/root/.openclaw/agents/main/agent';
 const AI_MODELS_PATH = path.join(AI_AGENT_DIR, 'models.json');
 const AI_AUTH_PROFILES_PATH = path.join(AI_AGENT_DIR, 'auth-profiles.json');
+const AUTH_PROFILE_META_KEYS = new Set(['version', 'profiles', 'lastGood', 'usageStats']);
+const DEFAULT_COPILOT_API_BASE_URL = 'https://api.individual.githubcopilot.com';
 
 function normalizeAuthProfiles(raw) {
   let authProfiles = raw && typeof raw === 'object' ? { ...raw } : {};
   if (!authProfiles.profiles || typeof authProfiles.profiles !== 'object' || Array.isArray(authProfiles.profiles)) {
-    const oldEntries = Object.entries(authProfiles).filter(([k]) => !['version', 'profiles', 'lastGood', 'usageStats'].includes(k));
+    const oldEntries = Object.entries(authProfiles).filter(([k]) => !AUTH_PROFILE_META_KEYS.has(k));
     authProfiles = { version: 1, profiles: {} };
     for (const [k, v] of oldEntries) {
       if (v && typeof v === 'object' && !Array.isArray(v)) authProfiles.profiles[k] = v;
@@ -380,6 +382,69 @@ function readAiAuthProfiles() {
 
 function writeAiAuthProfiles(obj) {
   writeJson(AI_AUTH_PROFILES_PATH, normalizeAuthProfiles(obj));
+}
+
+function getAuthProfileSecret(profile) {
+  return profile?.apiKey || profile?.key || profile?.token || '';
+}
+
+function getAuthProfileIdentity(profile) {
+  return getAuthProfileSecret(profile) || profile?.keyRef?.id || profile?.tokenRef?.id || profile?.email || '';
+}
+
+function buildConfiguredKeySignature(provider, authType, rawKey) {
+  return `${provider}::${authType}::${rawKey}`;
+}
+
+function removeDuplicateProfilesBySecret(authProfiles, provider, rawSecret, keepProfileId) {
+  if (!rawSecret) return;
+  for (const [profileId, profile] of Object.entries(authProfiles.profiles || {})) {
+    if (profileId === keepProfileId) continue;
+    if (profile?.provider !== provider) continue;
+    if (getAuthProfileSecret(profile) !== rawSecret) continue;
+    delete authProfiles.profiles[profileId];
+  }
+  const topLevelProfile = authProfiles[provider];
+  if (topLevelProfile?.provider === provider && getAuthProfileSecret(topLevelProfile) === rawSecret) {
+    delete authProfiles[provider];
+  }
+}
+
+function saveCanonicalCopilotAuthProfile(authProfiles, githubToken) {
+  const profileId = 'github-copilot:github';
+  authProfiles.profiles[profileId] = {
+    type: 'token',
+    provider: 'github-copilot',
+    mode: 'token',
+    token: githubToken,
+    addedAt: Date.now()
+  };
+  removeDuplicateProfilesBySecret(authProfiles, 'github-copilot', githubToken, profileId);
+  delete authProfiles.profiles['github-copilot'];
+  delete authProfiles['github-copilot'];
+  return profileId;
+}
+
+async function resolveCopilotProviderBaseUrl(githubToken) {
+  if (!githubToken) return DEFAULT_COPILOT_API_BASE_URL;
+  try {
+    const tokenRes = await fetch('https://api.github.com/copilot_internal/v2/token', {
+      headers: {
+        'Authorization': `Bearer ${githubToken}`,
+        'Accept': 'application/json',
+        'User-Agent': 'GitHubCopilotChat/0.22.2024'
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+    if (!tokenRes.ok) return DEFAULT_COPILOT_API_BASE_URL;
+    const tokenData = await tokenRes.json();
+    const copilotApiToken = tokenData?.token || '';
+    const epMatch = copilotApiToken.match(/(?:^|;)\s*proxy-ep=([^;\s]+)/i);
+    if (!epMatch) return DEFAULT_COPILOT_API_BASE_URL;
+    return `https://${epMatch[1].replace(/^proxy\./, 'api.')}`;
+  } catch {
+    return DEFAULT_COPILOT_API_BASE_URL;
+  }
 }
 
 function readAiModels() {
@@ -655,9 +720,10 @@ function buildModelEntry(providerName, modelId) {
       id: modelId,
       name: catalogEntry.name || modelId,
       api: safeApi,
+      ...(catalogEntry.headers ? { headers: catalogEntry.headers } : {}),
       reasoning: catalogEntry.reasoning ?? false,
       input: catalogEntry.input || ['text'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: catalogEntry.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: catalogEntry.contextWindow || 128000,
       maxTokens: catalogEntry.maxTokens || 4096,
       ...(catalogEntry.compat ? { compat: catalogEntry.compat } : {})
@@ -731,6 +797,10 @@ function syncConfiguredModelsToModelsJson() {
       if (fb && fb.includes('/')) configuredModels.push(fb);
     }
     if (configuredModels.length === 0) return;
+    const resolveProviderSyncApi = (provName, fallbackApi) => {
+      if (provName === 'github-copilot') return 'github-copilot';
+      return sanitizeApiValue(fallbackApi, provName) || fallbackApi;
+    };
     // 同步到 openclaw.json（gateway 启动时读取此文件生成 models.json）
     let configChanged = false;
     if (!config.models) config.models = {};
@@ -749,7 +819,7 @@ function syncConfiguredModelsToModelsJson() {
       } else {
         // 已存在时，用目录能力更新关键字段（保留用户自定义值）
         const existing = prov.models[existingIdx];
-        const fieldsToSync = ['api', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat'];
+        const fieldsToSync = ['name', 'api', 'headers', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat', 'cost'];
         for (const field of fieldsToSync) {
           if (entry[field] !== undefined && JSON.stringify(existing[field]) !== JSON.stringify(entry[field])) {
             console.log(`[sync] 更新 ${modelStr}.${field}: ${JSON.stringify(existing[field])} → ${JSON.stringify(entry[field])}`);
@@ -759,19 +829,21 @@ function syncConfiguredModelsToModelsJson() {
         }
       }
       // 如果 catalog 指示不同的 api 类型，同步更新 provider 级别的 api
-      if (entry.api && prov.api && entry.api !== prov.api) {
-        console.log(`[sync] 更新 provider ${provName}.api: ${prov.api} → ${entry.api} (来自模型目录)`);
-        prov.api = entry.api;
+      const syncedProviderApi = resolveProviderSyncApi(provName, entry.api);
+      if (syncedProviderApi && prov.api && syncedProviderApi !== prov.api) {
+        console.log(`[sync] 更新 provider ${provName}.api: ${prov.api} → ${syncedProviderApi} (来自模型目录)`);
+        prov.api = syncedProviderApi;
         configChanged = true;
         // 同步更新该 provider 下已有模型的 api 字段（保持一致性）
         for (const m of prov.models) {
           if (m.api && m.api !== entry.api) {
             // 查询 catalog 确认该模型的原生 api
             const mCap = lookupModelCapabilities(provName, m.id);
-            const correctApi = mCap?.api || entry.api;
+            const correctApi = sanitizeApiValue(mCap?.api, provName) || entry.api;
             if (m.api !== correctApi) {
               console.log(`[sync] 同步 ${provName}/${m.id}.api: ${m.api} → ${correctApi}`);
               m.api = correctApi;
+              configChanged = true;
             }
           }
         }
@@ -782,9 +854,10 @@ function syncConfiguredModelsToModelsJson() {
       if (!prov.models || !Array.isArray(prov.models)) continue;
       for (const m of prov.models) {
         const mCap = lookupModelCapabilities(provName, m.id);
-        if (mCap?.api && m.api !== mCap.api) {
-          console.log(`[sync] 修正 ${provName}/${m.id}.api: ${m.api} → ${mCap.api}`);
-          m.api = mCap.api;
+        const correctApi = sanitizeApiValue(mCap?.api, provName);
+        if (correctApi && m.api !== correctApi) {
+          console.log(`[sync] 修正 ${provName}/${m.id}.api: ${m.api} → ${correctApi}`);
+          m.api = correctApi;
           configChanged = true;
         }
       }
@@ -811,7 +884,7 @@ function syncConfiguredModelsToModelsJson() {
             console.log(`[sync] 已将模型 ${modelStr} 添加到 models.json`);
           } else {
             const existing = prov.models[existingIdx];
-            const fieldsToSync = ['api', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat'];
+            const fieldsToSync = ['name', 'api', 'headers', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat', 'cost'];
             for (const field of fieldsToSync) {
               if (entry[field] !== undefined && JSON.stringify(existing[field]) !== JSON.stringify(entry[field])) {
                 existing[field] = entry[field];
@@ -820,16 +893,18 @@ function syncConfiguredModelsToModelsJson() {
             }
           }
           // 同步 provider 级别的 api
-          if (entry.api && prov.api && entry.api !== prov.api) {
-            prov.api = entry.api;
+          const syncedProviderApi = resolveProviderSyncApi(provName, entry.api);
+          if (syncedProviderApi && prov.api && syncedProviderApi !== prov.api) {
+            prov.api = syncedProviderApi;
             modelsChanged = true;
             // 同步更新该 provider 下已有模型的 api 字段
             for (const m of prov.models) {
               if (m.api && m.api !== entry.api) {
                 const mCap = lookupModelCapabilities(provName, m.id);
-                const correctApi = mCap?.api || entry.api;
+                const correctApi = sanitizeApiValue(mCap?.api, provName) || entry.api;
                 if (m.api !== correctApi) {
                   m.api = correctApi;
+                  modelsChanged = true;
                 }
               }
             }
@@ -840,8 +915,9 @@ function syncConfiguredModelsToModelsJson() {
           if (!prov2.models || !Array.isArray(prov2.models)) continue;
           for (const m of prov2.models) {
             const mCap = lookupModelCapabilities(provName2, m.id);
-            if (mCap?.api && m.api !== mCap.api) {
-              m.api = mCap.api;
+            const correctApi = sanitizeApiValue(mCap?.api, provName2);
+            if (correctApi && m.api !== correctApi) {
+              m.api = correctApi;
               modelsChanged = true;
             }
           }
@@ -2289,12 +2365,10 @@ function getClientIp(req) {
   return ip || 'unknown';
 }
 
-const STATUS_LOG_SLOW_THRESHOLD_MS = 5000;
-const STATUS_LOG_SLOW_THROTTLE_MS = 5 * 60 * 1000;
 const statusLogState = {
-  lastSnapshot: '',
-  lastSlowLogAt: 0
+  lastSnapshot: ''
 };
+const LOCAL_GATEWAY_HEALTH_CHECK_CMD = "curl --noproxy '*' -s -o /dev/null -w \"%{http_code}\" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true";
 
 // ============================================================
 // Login rate limiting (per IP)
@@ -3114,7 +3188,7 @@ app.get('/api/status', (req, res) => {
   status.openclawVersion = String(ocSnapshot?.version || '').trim();
 
   const gatewayLogTail = readGatewayLogTail(220);
-  const gatewayHealthCodeText = runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000);
+  const gatewayHealthCodeText = runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000);
   const gatewayHealthCode = Number.parseInt(String(gatewayHealthCodeText || '').trim(), 10) || 0;
   const gatewayRuntimePid = getGatewayRuntimePid();
   const gatewayPidSafe = Number.parseInt(String(gatewayRuntimePid || '').trim(), 10) || 0;
@@ -3213,17 +3287,9 @@ app.get('/api/status', (req, res) => {
   if (changed) {
     statusLogState.lastSnapshot = snapshot;
   }
-  const now = Date.now();
-  const isSlow = statusElapsed > STATUS_LOG_SLOW_THRESHOLD_MS;
-  const slowLogDue = !statusLogState.lastSlowLogAt || (now - statusLogState.lastSlowLogAt) >= STATUS_LOG_SLOW_THROTTLE_MS;
-  // 仅在状态变化或异常(gateway/caddy 挂掉)时打印，正常慢请求不再打印
-  const isAbnormal = !status.gateway || !status.caddy;
-  if (debugMode || changed || isAbnormal) {
-    const reason = debugMode ? 'debug' : (changed ? 'changed' : (isAbnormal ? 'abnormal' : 'slow'));
+  if (debugMode || changed) {
+    const reason = debugMode ? 'debug' : 'changed';
     console.log(`[status] reason=${reason} elapsed=${statusElapsed}ms gateway=${status.gateway} caddy=${status.caddy} version=${status.version}`);
-  }
-  if (isSlow && (debugMode || changed || isAbnormal || slowLogDue)) {
-    statusLogState.lastSlowLogAt = now;
   }
 
   res.json(status);
@@ -3524,43 +3590,24 @@ app.post('/api/ai/auth/oauth/login', async (req, res) => {
 
         // Step 3: 保存到 auth-profiles.json（兼容 openclaw 格式）
         const authProfiles = readAiAuthProfiles();
-        authProfiles.profiles['github-copilot:github'] = {
-          type: 'token',
-          provider: 'github-copilot',
-          mode: 'token',
-          token: accessToken,
-          addedAt: Date.now()
-        };
-
-        // 同时写入以 provider key 为索引的条目（兼容我们的 /api/ai/models 读取逻辑）
-        authProfiles.profiles['github-copilot'] = {
-          type: 'token',
-          provider: 'github-copilot',
-          mode: 'token',
-          token: accessToken,
-          addedAt: Date.now()
-        };
-        // 也在旧格式位置写一份
-        authProfiles['github-copilot'] = {
-          provider: 'github-copilot',
-          mode: 'token',
-          token: accessToken
-        };
+        saveCanonicalCopilotAuthProfile(authProfiles, accessToken);
         writeAiAuthProfiles(authProfiles);
         appendAiTaskLog(task, '[ai] 认证信息已保存到 auth-profiles.json\n');
 
         // Step 4: 确保 models.json 中有 github-copilot provider 条目
         const modelsData = readAiModels();
+        const copilotBaseUrl = await resolveCopilotProviderBaseUrl(accessToken);
         if (!modelsData.providers['github-copilot']) {
           modelsData.providers['github-copilot'] = {
-            baseUrl: 'https://api.githubcopilot.com',
+            baseUrl: copilotBaseUrl,
             apiKey: accessToken,
-            api: 'openai-completions',
+            api: 'github-copilot',
             models: []
           };
         } else {
           modelsData.providers['github-copilot'].apiKey = accessToken;
-          modelsData.providers['github-copilot'].baseUrl = 'https://api.githubcopilot.com';
+          modelsData.providers['github-copilot'].baseUrl = copilotBaseUrl;
+          modelsData.providers['github-copilot'].api = 'github-copilot';
         }
         writeAiModels(modelsData);
         appendAiTaskLog(task, '[ai] 已更新 models.json 中的 github-copilot 配置\n');
@@ -3573,12 +3620,13 @@ app.post('/api/ai/auth/oauth/login', async (req, res) => {
         if (!ocConfig.models.providers) ocConfig.models.providers = {};
         if (!ocConfig.models.providers['github-copilot']) {
           ocConfig.models.providers['github-copilot'] = {
-            baseUrl: 'https://api.githubcopilot.com',
-            api: 'openai-completions',
+            baseUrl: copilotBaseUrl,
+            api: 'github-copilot',
             models: []
           };
         }
-        ocConfig.models.providers['github-copilot'].baseUrl = 'https://api.githubcopilot.com';
+        ocConfig.models.providers['github-copilot'].baseUrl = copilotBaseUrl;
+        ocConfig.models.providers['github-copilot'].api = 'github-copilot';
         // 注: openclaw.json 中不写 apiKey（token 式授权由 gateway 自行交换）
         writeOpenClawConfig(ocConfig);
         appendAiTaskLog(task, '[ai] 已同步 openclaw.json 中的 github-copilot provider\n');
@@ -3643,12 +3691,12 @@ app.get('/api/ai/config', async (req, res) => {
       if (profile?.provider) providers.add(profile.provider);
     }
     for (const [key, profile] of Object.entries(authProfiles || {})) {
-      if (!['version', 'profiles', 'lastGood', 'usageStats'].includes(key) && profile?.provider) providers.add(profile.provider);
+      if (!AUTH_PROFILE_META_KEYS.has(key) && profile?.provider) providers.add(profile.provider);
     }
 
     // 构建 configuredKeys 数组（支持每个 provider 多个 key）
     const configuredKeys = [];
-    const processedProfiles = new Set();
+    const configuredKeySignatures = new Set();
 
     // 遍历 auth-profiles.profiles 找所有 key（支持多 key: provider, provider:2, provider:3 等）
     const profiles = authProfiles.profiles || {};
@@ -3660,10 +3708,11 @@ app.get('/api/ai/config', async (req, res) => {
       const isApiKey = profile.mode === 'api_key' || profile.type === 'api_key';
       const isToken = profile.mode === 'token' || profile.type === 'token';
       const isOAuth = profile.mode === 'oauth' || profile.mode === 'device' || isToken;
-      const rawKey = profile.apiKey || profile.key || profile.token || '';
+      const rawKey = getAuthProfileSecret(profile);
       const hasKey = !!rawKey && rawKey !== 'YOUR_API_KEY';
+      const signature = buildConfiguredKeySignature(pName, isOAuth ? 'oauth' : 'apikey', getAuthProfileIdentity(profile));
 
-      if (hasKey || isOAuth) {
+      if ((hasKey || isOAuth) && !configuredKeySignatures.has(signature)) {
         // 检查这个 key 是否是当前活跃的（与 models.json 中的 apiKey 匹配）
         const activeKey = prov?.apiKey || '';
         const isActive = isApiKey ? (rawKey === activeKey) : true;
@@ -3677,7 +3726,7 @@ app.get('/api/ai/config', async (req, res) => {
           models: (prov?.models || []).map(m => m.id || m),
           isActive
         });
-        processedProfiles.add(profileId);
+        configuredKeySignatures.add(signature);
       }
     }
 
@@ -3694,8 +3743,9 @@ app.get('/api/ai/config', async (req, res) => {
       // 检查旧格式 auth-profiles 顶级条目
       const topLevelProfile = authProfiles[pName];
       const isTopOAuth = topLevelProfile?.mode === 'oauth' || topLevelProfile?.mode === 'device' || topLevelProfile?.mode === 'token';
+      const signature = buildConfiguredKeySignature(pName, isTopOAuth ? 'oauth' : 'apikey', getAuthProfileIdentity(topLevelProfile));
 
-      if (hasKey || isTopOAuth) {
+      if ((hasKey || isTopOAuth) && !configuredKeySignatures.has(signature)) {
         configuredKeys.push({
           id: pName,
           provider: pName,
@@ -3705,6 +3755,7 @@ app.get('/api/ai/config', async (req, res) => {
           models: (prov?.models || []).map(m => m.id || m),
           isActive: true
         });
+        configuredKeySignatures.add(signature);
       }
     }
 
@@ -3839,7 +3890,7 @@ app.post('/api/ai/config', async (req, res) => {
     const profiles = authProfiles.profiles || {};
     for (const [, profile] of Object.entries(profiles)) {
       if (!profile?.provider) continue;
-      const rawKey = profile.apiKey || profile.key || profile.token || '';
+      const rawKey = getAuthProfileSecret(profile);
       const hasKey = !!rawKey && rawKey !== 'YOUR_API_KEY';
       const isOAuth = profile.mode === 'oauth' || profile.mode === 'device' || profile.mode === 'token' || profile.type === 'token';
       if (hasKey || isOAuth) validProviders.add(profile.provider);
@@ -3950,16 +4001,17 @@ app.post('/api/ai/config', async (req, res) => {
       } else {
         // 已存在时更新关键字段
         const existing = target[provName].models[existingIdx];
-        for (const field of ['api', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat']) {
+        for (const field of ['name', 'api', 'headers', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat', 'cost']) {
           if (entry[field] !== undefined) existing[field] = entry[field];
         }
       }
       // 同步 provider 级别的 api（仅当新值是 gateway 合法值时才更新）
       if (entry.api && target[provName].api && entry.api !== target[provName].api) {
         const safeProvApi = sanitizeApiValue(entry.api, provName);
-        if (safeProvApi && safeProvApi !== target[provName].api) {
-          console.log(`[ensureModelEntry] 更新 provider ${provName}.api: ${target[provName].api} → ${safeProvApi}`);
-          target[provName].api = safeProvApi;
+        const desiredProvApi = provName === 'github-copilot' ? 'github-copilot' : safeProvApi;
+        if (desiredProvApi && desiredProvApi !== target[provName].api) {
+          console.log(`[ensureModelEntry] 更新 provider ${provName}.api: ${target[provName].api} → ${desiredProvApi}`);
+          target[provName].api = desiredProvApi;
         }
       }
     };
@@ -4277,12 +4329,17 @@ app.delete('/api/ai/keys', async (req, res) => {
 
     // 删除指定的 profile（keyId 是 profileId）
     const profileId = keyId || provider;
+    const removedProfile = authProfiles.profiles?.[profileId];
+    const removedSecret = getAuthProfileSecret(removedProfile);
     if (authProfiles.profiles?.[profileId]) {
       delete authProfiles.profiles[profileId];
       console.log(`[ai/keys] Removed profile ${profileId} from auth-profiles.json`);
     }
     if (authProfiles[profileId]) {
       delete authProfiles[profileId];
+    }
+    if (removedProfile?.provider && removedSecret) {
+      removeDuplicateProfilesBySecret(authProfiles, removedProfile.provider, removedSecret);
     }
 
     // 检查该 provider 是否还有其他 key
@@ -4305,7 +4362,7 @@ app.delete('/api/ai/keys', async (req, res) => {
     } else {
       // 还有剩余 key，激活第一个
       const [nextPid, nextProfile] = remainingKeys[0];
-      const nextKey = nextProfile.apiKey || nextProfile.key || nextProfile.token || '';
+      const nextKey = getAuthProfileSecret(nextProfile);
       if (nextKey && models.providers?.[provider]) {
         models.providers[provider].apiKey = nextKey;
         console.log(`[ai/keys] Activated next key for ${provider}: profile ${nextPid}`);
@@ -4685,7 +4742,7 @@ function getDefaultBaseUrl(provider) {
     // 常用
     'anthropic': 'https://api.anthropic.com/v1',
     'openai': 'https://api.openai.com/v1',
-    'github-copilot': 'https://api.githubcopilot.com',
+    'github-copilot': DEFAULT_COPILOT_API_BASE_URL,
     'gemini': 'https://generativelanguage.googleapis.com/v1beta',
     'openrouter': 'https://openrouter.ai/api/v1',
     'deepseek': 'https://api.deepseek.com/v1',
@@ -4741,8 +4798,7 @@ app.post('/api/restart', (req, res) => {
     }
 
     // 写入 operation.lock，让 watchdog 来执行重启
-    setOpenClawOperationState('restarting_gateway');
-    console.log('[api/restart] restart request submitted to watchdog');
+    queueGatewayRestart('api-restart');
 
     res.json({
       success: true,
@@ -4975,6 +5031,13 @@ function runOpenClawRepairTask() {
   return taskId;
 }
 
+function queueGatewayRestart(source = 'manual', taskId = '') {
+  const state = setOpenClawOperationState('restarting_gateway', taskId);
+  const suffix = taskId ? ` task=${taskId}` : '';
+  console.log(`[openclaw][restart] request submitted (${source})${suffix}`);
+  return state;
+}
+
 function runOpenClawTask(command, title, operationType = 'installing') {
   if (isOpenClawOperationBusy()) return null;
   const taskId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -5045,6 +5108,11 @@ function runOpenClawTask(command, title, operationType = 'installing') {
     if (task.status === 'success' && (operationType === 'installing' || operationType === 'updating')) {
       openClawRuntimeRecoveryState.suppressUntil = 0;
       openClawRuntimeRecoveryState.suppressReason = '';
+      const opLabel = operationType === 'updating' ? '更新' : '安装';
+      const restartState = queueGatewayRestart(`${operationType}-complete`, taskId);
+      task.gatewayRestartQueued = true;
+      task.gatewayRestartState = restartState;
+      appendInstallLog(task, `[openclaw] ${opLabel}完成，已提交 Gateway 自动重启请求。\n`);
     }
     if (task.status === 'failed') {
       const lines = String(task.log || '')
@@ -5337,7 +5405,7 @@ function getOpenClawOperationState() {
     const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(current.startedAt || 0)) / 1000));
     if (elapsedSec < 30) return current;
 
-    const gatewayHealthCode = Number.parseInt(String(runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000) || '').trim(), 10) || 0;
+    const gatewayHealthCode = Number.parseInt(String(runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000) || '').trim(), 10) || 0;
     const gatewayRunning = gatewayHealthCode === 200;
     const gatewayProcessRunning = isGatewayRuntimeProcessRunning()
       || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
@@ -6096,7 +6164,7 @@ app.get('/api/openclaw', async (req, res) => {
     const gatewayPairingRequired = !isGatewayDeviceAuthDisabled()
       && detectGatewayPairingRequiredRecent(gatewayLogTail, 900);
 
-    const gatewayHealthCodeText = runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000);
+    const gatewayHealthCodeText = runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000);
     const gatewayHealthCode = Number.parseInt(String(gatewayHealthCodeText || '').trim(), 10) || 0;
     const gatewayRunning = gatewayHealthCode === 200;
     const gatewayRuntimePid = getGatewayRuntimePid();
@@ -6245,7 +6313,7 @@ app.get('/api/openclaw/gateway-link', (req, res) => {
       // 触发 watchdog 重启 gateway
       const opState = getOpenClawOperationState();
       if (opState.type === 'idle') {
-        setOpenClawOperationState('restarting_gateway');
+        queueGatewayRestart('gateway-link-patch');
       }
     }
 
@@ -6281,7 +6349,7 @@ app.get('/api/openclaw/gateway-link', (req, res) => {
     // 检查 gateway 健康状态
     let gatewayReady = false;
     try {
-      const healthText = runCommandText('curl -s -o /dev/null -w "%{http_code}" --connect-timeout 1 --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true', 3000);
+      const healthText = runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000);
       gatewayReady = Number.parseInt(String(healthText || '').trim(), 10) === 200;
     } catch {}
 
@@ -6690,8 +6758,7 @@ app.post('/api/openclaw/start', (req, res) => {
   }
 
   // 写入 operation.lock，让 watchdog 来执行重启
-  setOpenClawOperationState('restarting_gateway');
-  console.log('[openclaw][start] restart request submitted to watchdog');
+  queueGatewayRestart('openclaw-start');
 
   res.json({
     success: true,

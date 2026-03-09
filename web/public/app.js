@@ -684,8 +684,10 @@ async function checkForUpdate(force = false) {
   }
 
   // Sidebar red dot
-  const dot = $('update-dot');
-  if (dot) { dot.style.display = u.hasUpdate ? '' : 'none'; }
+  ['update-dot', 'openclaw-update-dot'].forEach((id) => {
+    const dot = $(id);
+    if (dot) dot.style.display = u.hasUpdate ? '' : 'none';
+  });
 
   // Settings page
   if ($('settings-current-ver')) {
@@ -1423,37 +1425,29 @@ async function pollTask(taskId){
       ocInstallPhase = 'auto';
       syncOpenClawButtons();
       appendOcLogLine(st.status === 'success' ? `✅ ${opLabel}完成` : `❌ ${opLabel}失败`);
-      toast(st.status === 'success' ? '完成' : '失败', st.status === 'success' ? 'OpenClaw 已就绪' : (st.error || st.log || '请查看日志'));
+      const successDetail = taskOp === 'uninstalling'
+        ? 'OpenClaw 已卸载'
+        : (taskOp === 'updating' ? 'OpenClaw 已更新，Gateway 正在自动重启' : 'OpenClaw 已安装，Gateway 正在自动重启');
+      toast(st.status === 'success' ? '完成' : '失败', st.status === 'success' ? successDetail : (st.error || st.log || '请查看日志'));
       if (st.status === 'success' && taskOp !== 'uninstalling') {
-        appendOcLogLine('⏳ 正在自动重启 Gateway...');
+        appendOcLogLine('⏳ 安装/更新已完成，等待 Gateway 自动重启...');
         ocPostInstallWarmupUntil = Date.now() + (5 * 60 * 1000);
         ocLastGatewaySnapshot = '';
         setStatusBadge('oc-gateway', 'pending', '启动中', true);
         setOpenClawStatusLine('更新状态：Gateway 启动中', { active: true, startedAt: Date.now(), totalSec: 60 });
-        try {
-          const rr = await api('/api/openclaw/start', { method:'POST', timeoutMs: 90000 });
-          if (rr.success) {
-            if (rr.logs) ocLastGatewaySnapshot = String(rr.logs || '').trim() || ocLastGatewaySnapshot;
-            scheduleGatewayStartupLogPulls(220);
-            await new Promise(r => setTimeout(r, 8000));
-            const pollStart = Date.now();
-            let gwUp = false;
-            while (Date.now() - pollStart < 5 * 60 * 1000) {
-              await new Promise(r => setTimeout(r, 3000));
-              try {
-                const ps = await api('/api/openclaw', { timeoutMs: 8000 });
-                const stillStarting = !!(ps.gatewayStarting) || ps.operationState?.type === 'restarting_gateway';
-                if (ps.gatewayRunning && !stillStarting) { gwUp = true; break; }
-              } catch {}
-            }
-            appendOcLogLine(gwUp ? '✅ Gateway 启动成功' : '⚠️ Gateway 启动超时，请检查状态');
-          } else {
-            appendOcLogLine(`❌ Gateway 启动失败: ${rr.error || '请查看日志'}`);
-            if (rr.logs) ocLastGatewaySnapshot = String(rr.logs || '').trim() || ocLastGatewaySnapshot;
-          }
-        } catch (e) {
-          appendOcLogLine(`❌ Gateway 启动失败: ${e.message || e}`);
+        scheduleGatewayStartupLogPulls(220);
+        await new Promise(r => setTimeout(r, 5000));
+        const pollStart = Date.now();
+        let gwUp = false;
+        while (Date.now() - pollStart < 5 * 60 * 1000) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const ps = await api('/api/openclaw', { timeoutMs: 8000 });
+            const stillStarting = !!(ps.gatewayStarting) || ps.operationState?.type === 'restarting_gateway';
+            if (ps.gatewayRunning && !stillStarting) { gwUp = true; break; }
+          } catch {}
         }
+        appendOcLogLine(gwUp ? '✅ Gateway 启动成功' : '⚠️ Gateway 启动超时，请检查状态');
       }
       refreshOpenClaw();
       refreshStatus();

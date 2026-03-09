@@ -608,8 +608,6 @@ ensure_gateway_proxy_compat_config() {
       | .gateway.controlUi = (.gateway.controlUi // {})
       | .gateway.trustedProxies = ((.gateway.trustedProxies // []) + $trusted | unique)
       | .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + $allowed | unique)
-            | .gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true
-            | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
     ' "$cfg_file" > "$tmp_file" 2>/dev/null; then
         if ! cmp -s "$cfg_file" "$tmp_file"; then
             cp "$cfg_file" "$cfg_file.before-proxy-compat.$(date +%Y%m%d-%H%M%S).bak" 2>/dev/null || true
