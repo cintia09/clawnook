@@ -3183,7 +3183,11 @@ function Main {
                             Write-Host "     域名: $($upgradeConfig.domain)" -ForegroundColor White
                         }
                         Write-Host "     证书: $(if ($upgradeConfig.cert_mode -eq 'internal') { '自签证书' } else { 'Let''s Encrypt' })" -ForegroundColor White
-                        Write-Host "     HTTP: $($upgradeConfig.http_port)  HTTPS: $($upgradeConfig.https_port)" -ForegroundColor White
+                        if ($upgradeConfig.cert_mode -eq 'letsencrypt') {
+                            Write-Host "     HTTP: $($upgradeConfig.http_port)  HTTPS: $($upgradeConfig.https_port)" -ForegroundColor White
+                        } else {
+                            Write-Host "     HTTPS: $($upgradeConfig.https_port)" -ForegroundColor White
+                        }
                     } else {
                         Write-Host "     Gateway 端口: $($upgradeConfig.port)" -ForegroundColor White
                         Write-Host "     Web面板端口: $($upgradeConfig.web_port)" -ForegroundColor White
