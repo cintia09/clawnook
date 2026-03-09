@@ -5370,6 +5370,11 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
     env: { ...process.env, TERM: 'dumb' }
   });
   task.pid = Number(child.pid || 0) || 0;
+  // C7: 持久化子进程 PID 以便重启后检测孤儿进程 (DFMEA T2)
+  try {
+    fs.mkdirSync(path.dirname(OPENCLAW_TASK_PID_FILE), { recursive: true });
+    fs.writeFileSync(OPENCLAW_TASK_PID_FILE, JSON.stringify({ pid: task.pid, taskId, operationType, startedAt: task.startedAt }), { mode: 0o600 });
+  } catch {}
   const heartbeatTimer = setInterval(() => {
     const elapsedSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
     setOpenClawOperationState(operationType, taskId);
@@ -5407,6 +5412,12 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
       } else if (metadataSync?.configChanged || metadataSync?.updateCheckChanged) {
         appendInstallLog(task, `[openclaw] ${opLabel}后已同步元数据：version=${metadataSync.version}${metadataSync.tag ? ` tag=${metadataSync.tag}` : ''}\n`);
       }
+      // C3: 确保 watchdog 存活后再提交 gateway 重启 (DFMEA G1)
+      ensureGatewayWatchdog((wdErr) => {
+        if (wdErr) {
+          appendInstallLog(task, `[openclaw][warn] ensureGatewayWatchdog 失败: ${wdErr.message}\n`);
+        }
+      });
       const restartState = queueGatewayRestart(`${operationType}-complete`, taskId);
       task.gatewayRestartQueued = true;
       task.gatewayRestartState = restartState;
@@ -5438,11 +5449,41 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
     appendInstallLog(task, `\n===== [${new Date().toISOString()}] task ${taskId} end status=${task.status} exitCode=${code ?? 'null'} signal=${signal || 'none'} =====\n`);
     if (activeInstallTaskId === taskId) activeInstallTaskId = '';
     clearOpenClawOperationState(operationType);
+    // C7: 清理 PID 文件
+    try { fs.unlinkSync(OPENCLAW_TASK_PID_FILE); } catch {}
     const keys = Object.keys(installLogs).sort();
     while (keys.length > 5) delete installLogs[keys.shift()];
   });
 
   return taskId;
+}
+
+// C7: 服务重启时检测并清理孤儿安装进程 (DFMEA T2)
+function checkOrphanInstallTask() {
+  try {
+    if (!fs.existsSync(OPENCLAW_TASK_PID_FILE)) return;
+    const raw = fs.readFileSync(OPENCLAW_TASK_PID_FILE, 'utf8');
+    const info = JSON.parse(raw);
+    const pid = Number(info.pid || 0);
+    if (!pid) { try { fs.unlinkSync(OPENCLAW_TASK_PID_FILE); } catch {} return; }
+    let alive = false;
+    try { process.kill(pid, 0); alive = true; } catch { alive = false; }
+    if (alive) {
+      const ageSec = Math.floor((Date.now() - Number(info.startedAt || 0)) / 1000);
+      console.log(`[openclaw][orphan] 检测到孤儿安装进程 PID=${pid} task=${info.taskId} age=${ageSec}s，尝试终止...`);
+      try { process.kill(pid, 'SIGTERM'); } catch {}
+      setTimeout(() => {
+        try { process.kill(pid, 0); process.kill(pid, 'SIGKILL'); } catch {}
+      }, 5000);
+    } else {
+      console.log(`[openclaw][orphan] PID=${pid} 已不存在，清理過期 PID 文件`);
+    }
+    try { fs.unlinkSync(OPENCLAW_TASK_PID_FILE); } catch {}
+    // 同时清理可能过期的 operation.lock
+    clearOpenClawOperationState(info.operationType || 'installing');
+  } catch (e) {
+    console.log(`[openclaw][orphan] 检查孤儿进程失败: ${e.message}`);
+  }
 }
 
 function buildOpenClawUninstallCommand() {
@@ -5616,6 +5657,7 @@ function getLastBackupAt() {
 }
 
 const OPENCLAW_OPERATION_LOCK_FILE = `${OPENCLAW_LOCK_DIR}/operation.lock`;
+const OPENCLAW_TASK_PID_FILE = `${OPENCLAW_LOCK_DIR}/task.pid`;
 let openClawOperationState = { type: 'idle', taskId: '', startedAt: 0, pid: process.pid };
 const OPENCLAW_OPERATION_MAX_SEC = {
   installing: 5400,
@@ -5678,7 +5720,8 @@ function writeOperationLock(state) {
       if (fs.existsSync(OPENCLAW_OPERATION_LOCK_FILE)) fs.unlinkSync(OPENCLAW_OPERATION_LOCK_FILE);
       return;
     }
-    fs.writeFileSync(OPENCLAW_OPERATION_LOCK_FILE, JSON.stringify(state), { mode: 0o600 });
+    // C6: 使用原子写入防止竞态读到半写数据 (DFMEA O2)
+    writeJsonFileAtomic(OPENCLAW_OPERATION_LOCK_FILE, state, 0o600);
   } catch {}
 }
 
@@ -6050,7 +6093,16 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  fi',
     'fi',
     'if [ ! -f dist/control-ui/index.html ]; then',
+    '  # C5: 增强 control-ui 缺失的诊断信息 (DFMEA S1)',
     '  echo "[openclaw][error] control-ui 产物缺失，无法保证 Gateway /health 可用"',
+    '  echo "[openclaw][diag] ls -la dist/ :"',
+    '  ls -la dist/ 2>/dev/null || echo "  (dist/ 目录不存在)"',
+    '  echo "[openclaw][diag] ls -la dist/control-ui/ :"',
+    '  ls -la dist/control-ui/ 2>/dev/null || echo "  (dist/control-ui/ 目录不存在)"',
+    '  echo "[openclaw][diag] find . -name index.html:"',
+    '  find . -name index.html -type f 2>/dev/null | head -10 || echo "  (未找到任何 index.html)"',
+    '  echo "[openclaw][diag] npm run scripts:"',
+    '  npm run 2>/dev/null | grep -E "ui:|build" || echo "  (无匹配)"',
     '  exit 4',
     'fi',
     'STAGE_SRC_DIR="$WORK_BASE/openclaw-source.stage.$$"',
@@ -6163,6 +6215,14 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     '  exit 13',
     'fi',
     'echo "[openclaw] 编译包根目录: $ASSET_ROOT"',
+    '# C4: node --check 语法验证 (DFMEA R1)',
+    'if command -v node >/dev/null 2>&1; then',
+    '  if ! node --check "$ASSET_ROOT/openclaw.mjs" 2>/dev/null; then',
+    '    echo "[openclaw][error] openclaw.mjs 语法校验失败(node --check)，编译包可能损坏"',
+    '    exit 14',
+    '  fi',
+    '  echo "[openclaw] openclaw.mjs node --check 语法校验通过"',
+    'fi',
     'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ -f "$ASSET_ROOT/dist/index.js" ]; then ln -sfn index.js "$ASSET_ROOT/dist/entry.js"; fi',
     'if [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ -f "$ASSET_ROOT/dist/index.mjs" ]; then ln -sfn index.mjs "$ASSET_ROOT/dist/entry.mjs"; fi',
     'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ ! -f "$ASSET_ROOT/dist/index.js" ] && [ ! -f "$ASSET_ROOT/dist/index.mjs" ]; then',
@@ -6892,13 +6952,54 @@ function buildOpenClawNpmInstallCommand() {
     'OPENCLAW_BIN="${NPM_PREFIX}/bin/openclaw"',
     'MIRROR_LATEST="$(npm view openclaw version --registry=https://registry.npmmirror.com 2>/dev/null || true)"',
     'NPMJS_LATEST="$(npm view openclaw version --registry=https://registry.npmjs.org 2>/dev/null || true)"',
+    'VERSION_QUERY_FAILED=0',
+    'if [ -z "$MIRROR_LATEST" ] && [ -z "$NPMJS_LATEST" ]; then',
+    '  VERSION_QUERY_FAILED=1',
+    '  echo "[openclaw][warn] npm view 查询失败（两个源均不可用），跳过版本对齐检查"',
+    'fi',
     'if [ -n "$NPMJS_LATEST" ] && [ "$MIRROR_LATEST" != "$NPMJS_LATEST" ]; then',
     '  echo "[openclaw] 镜像最新(${MIRROR_LATEST:-unknown})落后于 npmjs(${NPMJS_LATEST})，直接使用 npmjs 源安装..."',
     '  npm config set registry https://registry.npmjs.org',
     'fi',
-    'npm uninstall -g openclaw >/dev/null 2>&1 || true',
-    'rm -rf "${OPENCLAW_LIB_DIR}/openclaw" "${OPENCLAW_LIB_DIR}"/.openclaw-* >/dev/null 2>&1 || true',
+    '# --- backup-then-install-in-place: 备份旧版本而非预删除 (DFMEA N1) ---',
+    'BACKUP_LIB_DIR="/root/.npm-global-backup"',
+    'rm -rf "$BACKUP_LIB_DIR" 2>/dev/null || true',
+    'if [ -d "${OPENCLAW_LIB_DIR}/openclaw" ]; then',
+    '  mkdir -p "$BACKUP_LIB_DIR"',
+    '  cp -a "${OPENCLAW_LIB_DIR}/openclaw" "$BACKUP_LIB_DIR/openclaw"',
+    '  echo "[openclaw] 旧版本已备份到 $BACKUP_LIB_DIR"',
+    'fi',
+    'rm -rf "${OPENCLAW_LIB_DIR}"/.openclaw-* >/dev/null 2>&1 || true',
     'npm cache verify >/dev/null 2>&1 || true',
+    '# --- 验证安装结果的函数 (DFMEA N4/N2) ---',
+    'verify_installed_openclaw() {',
+    '  [ -f "${OPENCLAW_LIB_DIR}/openclaw/package.json" ] || return 1',
+    '  local has_entry=0',
+    '  [ -f "${OPENCLAW_LIB_DIR}/openclaw/openclaw.mjs" ] && has_entry=1',
+    '  [ -f "${OPENCLAW_LIB_DIR}/openclaw/dist/openclaw.mjs" ] && has_entry=1',
+    '  [ -f "${OPENCLAW_LIB_DIR}/openclaw/dist/entry.js" ] && has_entry=1',
+    '  [ -f "${OPENCLAW_LIB_DIR}/openclaw/dist/index.js" ] && has_entry=1',
+    '  [ -f "${OPENCLAW_LIB_DIR}/openclaw/dist/index.mjs" ] && has_entry=1',
+    '  [ "$has_entry" = "1" ] || return 1',
+    '  if command -v openclaw >/dev/null 2>&1; then',
+    '    openclaw -v >/dev/null 2>&1 || return 1',
+    '  elif [ -x "$OPENCLAW_BIN" ]; then',
+    '    "$OPENCLAW_BIN" -v >/dev/null 2>&1 || return 1',
+    '  fi',
+    '  return 0',
+    '}',
+    '# --- 安装失败时还原备份 (DFMEA N1) ---',
+    'restore_openclaw_backup() {',
+    '  if [ -d "$BACKUP_LIB_DIR/openclaw" ]; then',
+    '    echo "[openclaw] 安装失败，还原旧版本..."',
+    '    rm -rf "${OPENCLAW_LIB_DIR}/openclaw" 2>/dev/null || true',
+    '    mv "$BACKUP_LIB_DIR/openclaw" "${OPENCLAW_LIB_DIR}/openclaw"',
+    '    npm rebuild -g openclaw 2>/dev/null || true',
+    '    echo "[openclaw] 旧版本已还原"',
+    '  else',
+    '    echo "[openclaw][warn] 无可还原的备份"',
+    '  fi',
+    '}',
     'OPENCLAW_NPM_LAST_ERROR=""',
     'run_npm_global_install() {',
     '  local pkg="$1"',
@@ -6935,15 +7036,21 @@ function buildOpenClawNpmInstallCommand() {
     '}',
     'if ! run_npm_global_install openclaw@latest "first_install"; then',
     '  echo "[openclaw] npm install 首次失败，尝试清理并重试..."',
-    '  npm uninstall -g openclaw >/dev/null 2>&1 || true',
-    '  rm -rf "${OPENCLAW_LIB_DIR}/openclaw" "${OPENCLAW_LIB_DIR}"/.openclaw-* >/dev/null 2>&1 || true',
     '  npm cache verify >/dev/null 2>&1 || true',
     '  npm config set registry https://registry.npmjs.org',
     '  if ! run_npm_global_install openclaw@latest "retry_install"; then',
     '    [ -n "$OPENCLAW_NPM_LAST_ERROR" ] && echo "$OPENCLAW_NPM_LAST_ERROR"',
+    '    restore_openclaw_backup',
     '    exit 31',
     '  fi',
     'fi',
+    '# 首次安装成功后验证 (DFMEA N4/N2)',
+    'if ! verify_installed_openclaw; then',
+    '  echo "[openclaw][warn] 首次安装验证失败，尝试 rebuild..."',
+    '  npm rebuild -g openclaw 2>/dev/null || true',
+    'fi',
+    '# 安装成功，清理备份',
+    'rm -rf "$BACKUP_LIB_DIR" 2>/dev/null || true',
     'if [ ! -x "$OPENCLAW_BIN" ] && [ -f "${OPENCLAW_LIB_DIR}/openclaw/openclaw.mjs" ]; then',
     '  ln -sf "${OPENCLAW_LIB_DIR}/openclaw/openclaw.mjs" "$OPENCLAW_BIN" || true',
     'fi',
@@ -6991,63 +7098,45 @@ function buildOpenClawNpmInstallCommand() {
     'fi',
     '# 提取纯数字版本号（openclaw -v 输出可能含 "OpenClaw 2026.3.8 (commit)" 等前后缀）',
     'CURRENT_VER="$(printf "%s" "$CURRENT_VER" | tr -d "\\r" | grep -Eo "[0-9]+\\.[0-9]+\\.[0-9]+([-.][-0-9A-Za-z.]+)?" | head -n1 || true)"',
-    'echo "[openclaw] version alignment check: current=${CURRENT_VER:-empty} npmjs=${NPMJS_LATEST:-empty} sync_ok=${SYNC_OK}"',
-    'if [ "$SYNC_OK" != "1" ] || { [ -n "$NPMJS_LATEST" ] && [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$NPMJS_LATEST" ]; }; then',
+    'echo "[openclaw] version alignment check: current=${CURRENT_VER:-empty} npmjs=${NPMJS_LATEST:-empty} sync_ok=${SYNC_OK} query_failed=${VERSION_QUERY_FAILED}"',
+    'if [ "$VERSION_QUERY_FAILED" != "1" ] && { [ "$SYNC_OK" != "1" ] || { [ -n "$NPMJS_LATEST" ] && [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$NPMJS_LATEST" ]; }; }; then',
     '  if [ "$SYNC_OK" != "1" ]; then',
     '    echo "[openclaw] 预构建包校验失败，尝试从 npmjs 重新安装一次..."',
     '  else',
     '    echo "[openclaw] 镜像版本(${CURRENT_VER:-unknown})落后于 npmjs 最新(${NPMJS_LATEST})，切换 npmjs 对齐..."',
     '  fi',
     '  npm config set registry https://registry.npmjs.org',
-    '  # === 安全对齐：安装到备用 prefix，验证后原子切换，中断不影响旧版本 ===',
-    '  STAGING_PREFIX="/root/.npm-global-staging"',
-    '  STAGING_LIB="${STAGING_PREFIX}/lib/node_modules"',
-    '  rm -rf "$STAGING_PREFIX" 2>/dev/null || true',
-    '  mkdir -p "$STAGING_LIB"',
+    '  # === 安全对齐：backup-then-install-in-place (DFMEA N4/N2/N1) ===',
     '  ALIGN_PKG="${NPMJS_LATEST:+openclaw@$NPMJS_LATEST}"',
     '  ALIGN_PKG="${ALIGN_PKG:-openclaw@latest}"',
-    '  ALIGN_LABEL="npmjs对齐安装(staging)"',
+    '  ALIGN_LABEL="npmjs对齐安装"',
     '  ALIGN_OK=0',
-    '  echo "[openclaw] ${ALIGN_LABEL}: 安装到备用 prefix ${STAGING_PREFIX}..."',
+    '  # 备份当前版本',
+    '  rm -rf "$BACKUP_LIB_DIR" 2>/dev/null || true',
+    '  if [ -d "${OPENCLAW_LIB_DIR}/openclaw" ]; then',
+    '    mkdir -p "$BACKUP_LIB_DIR"',
+    '    cp -a "${OPENCLAW_LIB_DIR}/openclaw" "$BACKUP_LIB_DIR/openclaw"',
+    '    echo "[openclaw] 对齐前已备份旧版本到 $BACKUP_LIB_DIR"',
+    '  fi',
+    '  echo "[openclaw] ${ALIGN_LABEL}: 原地安装 ${ALIGN_PKG}..."',
     '  set +e',
     '  if command -v timeout >/dev/null 2>&1; then',
-    '    echo "[openclaw] ${ALIGN_LABEL}: timeout 900s npm install -g ${ALIGN_PKG} --prefix ${STAGING_PREFIX} --prefer-online --no-audit --no-fund"',
-    '    timeout 900 npm install -g "$ALIGN_PKG" --prefix "$STAGING_PREFIX" --prefer-online --no-audit --no-fund 2>&1 | tee "$OPENCLAW_STATE_ROOT/logs/npm-install-align.log"',
+    '    echo "[openclaw] ${ALIGN_LABEL}: timeout 900s npm install -g ${ALIGN_PKG} --prefer-online --no-audit --no-fund"',
+    '    timeout 900 npm install -g "$ALIGN_PKG" --prefer-online --no-audit --no-fund 2>&1 | tee "$OPENCLAW_STATE_ROOT/logs/npm-install-align.log"',
     '    ALIGN_RC=${PIPESTATUS[0]}',
     '  else',
-    '    npm install -g "$ALIGN_PKG" --prefix "$STAGING_PREFIX" --prefer-online --no-audit --no-fund 2>&1 | tee "$OPENCLAW_STATE_ROOT/logs/npm-install-align.log"',
+    '    npm install -g "$ALIGN_PKG" --prefer-online --no-audit --no-fund 2>&1 | tee "$OPENCLAW_STATE_ROOT/logs/npm-install-align.log"',
     '    ALIGN_RC=${PIPESTATUS[0]}',
     '  fi',
     '  set -e',
-    '  # 验证: package.json 和入口文件必须存在',
-    '  if [ "$ALIGN_RC" -eq 0 ] && [ -f "${STAGING_LIB}/openclaw/package.json" ]; then',
-    '    STAGING_HAS_ENTRY=0',
-    '    [ -f "${STAGING_LIB}/openclaw/openclaw.mjs" ] && STAGING_HAS_ENTRY=1',
-    '    [ -f "${STAGING_LIB}/openclaw/dist/openclaw.mjs" ] && STAGING_HAS_ENTRY=1',
-    '    [ -f "${STAGING_LIB}/openclaw/dist/entry.js" ] && STAGING_HAS_ENTRY=1',
-    '    [ -f "${STAGING_LIB}/openclaw/dist/index.js" ] && STAGING_HAS_ENTRY=1',
-    '    [ -f "${STAGING_LIB}/openclaw/dist/index.mjs" ] && STAGING_HAS_ENTRY=1',
-    '    if [ "$STAGING_HAS_ENTRY" = "1" ]; then',
-    '      ALIGN_OK=1',
-    '    else',
-    '      echo "[openclaw] staging 安装缺少入口文件，放弃切换"',
-    '    fi',
+    '  # 验证安装结果',
+    '  if [ "$ALIGN_RC" -eq 0 ] && verify_installed_openclaw; then',
+    '    ALIGN_OK=1',
+    '    echo "[openclaw] 对齐安装成功且验证通过"',
+    '    rm -rf "$BACKUP_LIB_DIR" 2>/dev/null || true',
     '  else',
-    '    echo "[openclaw] staging 安装失败或 package.json 缺失 (rc=${ALIGN_RC})"',
-    '  fi',
-    '  if [ "$ALIGN_OK" = "1" ]; then',
-    '    echo "[openclaw] staging 校验通过，原子切换到正式目录..."',
-    '    # 备份旧版本到 .npm-global-backup，然后切换',
-    '    rm -rf /root/.npm-global-backup 2>/dev/null || true',
-    '    if [ -d "${NPM_PREFIX}" ]; then',
-    '      mv "${NPM_PREFIX}" /root/.npm-global-backup 2>/dev/null || true',
-    '    fi',
-    '    mv "$STAGING_PREFIX" "${NPM_PREFIX}"',
-    '    echo "[openclaw] 切换完成，清理备份..."',
-    '    rm -rf /root/.npm-global-backup 2>/dev/null || true',
-    '  else',
-    '    echo "[openclaw] staging 安装未通过校验，保留旧版本不变"',
-    '    rm -rf "$STAGING_PREFIX" 2>/dev/null || true',
+    '    echo "[openclaw] 对齐安装失败或验证未通过 (rc=${ALIGN_RC})"',
+    '    restore_openclaw_backup',
     '  fi',
     '  sync_openclaw_pkg_to_source',
     'fi',
@@ -7733,6 +7822,7 @@ server.on('connection', (socket) => {
 server.listen(PORT, '0.0.0.0', () => {
   repairOpenClawConfigProviders();
   sanitizeAllConfigBackups();
+  checkOrphanInstallTask(); // C7: 启动时检测孤儿安装进程 (DFMEA T2)
   console.log(`[web] OpenClaw Web 管理面板启动: http://0.0.0.0:${PORT}`);
 });
 

@@ -1365,31 +1365,43 @@ async function pollTask(taskId){
 
   let lastSeq = 0;
   let errorStreak = 0;
+  let errorBackoffMs = 2000; // C8: 指数退避起始值 (DFMEA F2)
   const startedAt = Date.now();
   let lastHeartbeatAt = 0;
   const initialPhase = ocInstallPhase;
+  const POLL_TOTAL_TIMEOUT_MS = 120000; // C8: 总超时 120s (DFMEA F2)
+
+  const schedulePoll = () => {
+    if (ocPollTimer) clearTimeout(ocPollTimer);
+    ocPollTimer = setTimeout(tick, errorStreak > 0 ? errorBackoffMs : 1500);
+  };
 
   const tick = async () => {
     const st = await api('/api/openclaw/install/' + taskId + '?since=' + lastSeq, { timeoutMs: 20000 });
     if (!st || st.error) {
       errorStreak += 1;
-      if (errorStreak >= 8) {
-        if (ocPollTimer) clearInterval(ocPollTimer);
+      errorBackoffMs = Math.min(errorBackoffMs * 2, 30000); // C8: 指数退避，上限 30s
+      const totalErrorMs = Date.now() - startedAt;
+      if (totalErrorMs > POLL_TOTAL_TIMEOUT_MS && errorStreak >= 3) {
+        if (ocPollTimer) clearTimeout(ocPollTimer);
         ocPollTimer = null;
         ocInstallRunning = false;
         ocUninstallRunning = false;
         ocInstallPhase = 'auto';
         syncOpenClawButtons();
         const detail = st?.error || '任务状态轮询失败';
-        appendOcLogLine(`❌ 轮询中断: ${detail}`);
+        appendOcLogLine(`❌ 轮询中断: ${detail}（连续失败${errorStreak}次，总耗时${Math.round(totalErrorMs/1000)}s）`);
         toast('任务状态异常', detail);
+      } else {
+        schedulePoll();
       }
       return;
     }
     errorStreak = 0;
+    errorBackoffMs = 2000; // C8: 成功后重置退避
 
     if ((Date.now() - startedAt) > 18 * 60 * 1000) {
-      if (ocPollTimer) clearInterval(ocPollTimer);
+      if (ocPollTimer) clearTimeout(ocPollTimer);
       ocPollTimer = null;
       ocInstallRunning = false;
       ocUninstallRunning = false;
@@ -1417,7 +1429,7 @@ async function pollTask(taskId){
     }
 
     if (st.status && st.status !== 'running'){
-      clearInterval(ocPollTimer);
+      clearTimeout(ocPollTimer);
       ocPollTimer = null;
       ocInstallRunning = false;
       ocUninstallRunning = false;
@@ -1452,11 +1464,12 @@ async function pollTask(taskId){
       }
       refreshOpenClaw();
       refreshStatus();
+      return; // C8: 任务结束，不再调度下一次轮询
     }
+    schedulePoll(); // C8: 调度下一次轮询
   };
 
   await tick();
-  ocPollTimer = setInterval(tick, 600);
 }
 
 async function pollRepairTask(taskId){
