@@ -1053,6 +1053,8 @@ function collapseWatchdogLogLines(lines) {
   for (let i = 0; i < source.length; i += 1) {
     const line = String(source[i] || '').trim();
     if (!line) continue;
+    /* suppress heartbeat lines – they are operational noise */
+    if (/\[wd\]\[heartbeat\]/i.test(line)) continue;
     const signature = watchdogFoldSignature(line);
     if (!signature) {
       out.push(line);
