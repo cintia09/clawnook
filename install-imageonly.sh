@@ -1015,7 +1015,7 @@ create_and_start(){
     --hostname openclaw \
     --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
     --cap-add NET_BIND_SERVICE --cap-add KILL --cap-add DAC_OVERRIDE \
-    --cap-add FOWNER \
+    --cap-add FOWNER --cap-add SYS_CHROOT --cap-add AUDIT_WRITE \
     "${vol_args[@]}" \
     "${port_args[@]}" \
     "${env_args[@]}" \
@@ -1155,6 +1155,8 @@ create_and_start(){
     local current_user="${ssh_login_user:-root}"
     echo -e "    ${WHITE}cat ~/.ssh/id_rsa.pub | ssh -p ${SSH_PORT} ${current_user}@<host> \"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys\"${NC}"
   fi
+  info "  - GitHub 访问: 不会复制宿主机私钥到容器"
+  info "  - 容器内拉取代码: 请单独配置 SSH key，或使用 HTTPS + PAT"
 
   info "日志文件：$LOG_FILE"
 }

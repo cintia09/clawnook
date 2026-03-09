@@ -18,6 +18,9 @@ services:
       - NET_BIND_SERVICE
       - KILL
       - DAC_OVERRIDE
+      - FOWNER
+      - SYS_CHROOT
+      - AUDIT_WRITE
     volumes:
       - ../home-docker:/root
     environment:

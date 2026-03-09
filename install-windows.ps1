@@ -2035,6 +2035,8 @@ function Show-Completion {
             $currentSshUser = if ($script:hostUserForSSH) { $script:hostUserForSSH } else { "root" }
             Write-Host "     cat ~/.ssh/id_rsa.pub | ssh -p ${SshPort} ${currentSshUser}@<host> `"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys`"" -ForegroundColor White
         }
+        Write-Host "     GitHub 访问: 不会复制宿主机私钥到容器" -ForegroundColor DarkGray
+        Write-Host "     容器内拉取代码: 请单独配置 SSH key，或使用 HTTPS + PAT" -ForegroundColor DarkGray
         Write-Host ""
         Write-Host "  🔄 升级到新版本：" -ForegroundColor White
         Write-Host "     重新运行安装命令即可，脚本会自动检测版本差异：" -ForegroundColor DarkGray
@@ -4145,6 +4147,16 @@ function Main {
                 "--hostname", "openclaw",
                 "--dns", "8.8.8.8",
                 "--dns", "8.8.4.4",
+                "--cap-drop", "ALL",
+                "--cap-add", "CHOWN",
+                "--cap-add", "SETUID",
+                "--cap-add", "SETGID",
+                "--cap-add", "NET_BIND_SERVICE",
+                "--cap-add", "KILL",
+                "--cap-add", "DAC_OVERRIDE",
+                "--cap-add", "FOWNER",
+                "--cap-add", "SYS_CHROOT",
+                "--cap-add", "AUDIT_WRITE",
                 "-v", "${rootDataDir}:/root",
                 "-e", "TZ=Asia/Shanghai"
             )
