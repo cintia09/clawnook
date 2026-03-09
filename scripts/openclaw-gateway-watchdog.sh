@@ -108,9 +108,21 @@ config_hash() {
 
 trim_backups() {
   [ -d "$BACKUP_DIR" ] || return 0
+  # 清理 snapshot 目录（新格式）
+  local dirs
+  dirs=$(ls -1td "$BACKUP_DIR"/snapshot-* 2>/dev/null || true)
+  local count=0
+  local dir
+  for dir in $dirs; do
+    count=$((count + 1))
+    if [ "$count" -gt "$MAX_BACKUPS" ]; then
+      rm -rf "$dir" 2>/dev/null || true
+    fi
+  done
+  # 清理旧格式单文件备份
   local files
   files=$(ls -1t "$BACKUP_DIR"/openclaw-*.json 2>/dev/null || true)
-  local count=0
+  count=0
   local file
   for file in $files; do
     count=$((count + 1))
@@ -120,30 +132,54 @@ trim_backups() {
   done
 }
 
+# 配置文件列表（需要备份的所有 OpenClaw 配置文件）
+BACKUP_CONFIG_FILES="$CONFIG_FILE /root/.openclaw/agents/main/agent/auth-profiles.json /root/.openclaw/agents/main/agent/models.json /root/.openclaw/cron/jobs.json"
+
 backup_config_if_changed() {
   mkdir -p "$BACKUP_DIR"
   [ -f "$CONFIG_FILE" ] || return 0
 
-  local cur_hash prev_hash backup_file
-  cur_hash=$(config_hash "$CONFIG_FILE")
-  [ -n "$cur_hash" ] || return 0
+  # 计算所有配置文件的组合 hash
+  local combined_hash=""
+  local f
+  for f in $BACKUP_CONFIG_FILES; do
+    [ -f "$f" ] || continue
+    combined_hash="${combined_hash}$(config_hash "$f" || true)"
+  done
+  # 对组合 hash 再次 hash 得到单一值
+  combined_hash=$(echo -n "$combined_hash" | sha256sum 2>/dev/null | awk '{print $1}')
+  [ -n "$combined_hash" ] || return 0
 
-  prev_hash=""
+  local prev_hash=""
   if [ -f "$BACKUP_INDEX_FILE" ]; then
     prev_hash=$(cat "$BACKUP_INDEX_FILE" 2>/dev/null || true)
   fi
 
-  if [ "$cur_hash" = "$prev_hash" ]; then
+  if [ "$combined_hash" = "$prev_hash" ]; then
     return 0
   fi
 
-  backup_file="$BACKUP_DIR/openclaw-$(date '+%Y%m%d-%H%M%S').json"
-  if cp "$CONFIG_FILE" "$backup_file" 2>/dev/null; then
-    echo "$cur_hash" > "$BACKUP_INDEX_FILE"
-    echo "$backup_file" > "$LAST_GOOD_BACKUP_FILE"
-    log "Config changed after successful start, backup created: $backup_file"
-    log_event "backup-created" "$backup_file"
+  local timestamp snapshot_dir
+  timestamp=$(date '+%Y%m%d-%H%M%S')
+  snapshot_dir="$BACKUP_DIR/snapshot-$timestamp"
+  mkdir -p "$snapshot_dir"
+
+  local backed_up=0
+  for f in $BACKUP_CONFIG_FILES; do
+    [ -f "$f" ] || continue
+    if cp "$f" "$snapshot_dir/$(basename "$f")" 2>/dev/null; then
+      backed_up=$((backed_up + 1))
+    fi
+  done
+
+  if [ "$backed_up" -gt 0 ]; then
+    echo "$combined_hash" > "$BACKUP_INDEX_FILE"
+    echo "$snapshot_dir" > "$LAST_GOOD_BACKUP_FILE"
+    log "Config snapshot created: $snapshot_dir ($backed_up files)"
+    log_event "backup-created" "$snapshot_dir"
     trim_backups
+  else
+    rm -rf "$snapshot_dir" 2>/dev/null || true
   fi
 }
 
@@ -152,38 +188,144 @@ is_invalid_config_failure() {
   tail -n 120 "$GATEWAY_LOG" 2>/dev/null | grep -Eiq 'Unrecognized key|Invalid config|schema|validation|parse|配置无效|unexpected token|doctor --fix'
 }
 
+# 从 snapshot 目录或旧格式找到最新的 openclaw.json 备份
+find_latest_backup_config() {
+  local backup_source=""
+
+  # 优先从 LAST_GOOD_BACKUP_FILE 读取
+  if [ -f "$LAST_GOOD_BACKUP_FILE" ]; then
+    backup_source=$(cat "$LAST_GOOD_BACKUP_FILE" 2>/dev/null || true)
+  fi
+
+  # 如果是 snapshot 目录
+  if [ -d "$backup_source" ] && [ -f "$backup_source/openclaw.json" ]; then
+    echo "$backup_source/openclaw.json"
+    return 0
+  fi
+  # 旧格式单文件
+  if [ -f "$backup_source" ]; then
+    echo "$backup_source"
+    return 0
+  fi
+
+  # 找最新的 snapshot
+  local latest_snap
+  latest_snap=$(ls -1td "$BACKUP_DIR"/snapshot-* 2>/dev/null | head -1 || true)
+  if [ -d "$latest_snap" ] && [ -f "$latest_snap/openclaw.json" ]; then
+    echo "$latest_snap/openclaw.json"
+    return 0
+  fi
+
+  # 回退到旧格式
+  ls -1t "$BACKUP_DIR"/openclaw-*.json 2>/dev/null | head -1 || true
+}
+
+# 尝试智能修复：解析 gateway 错误日志中的无效/无法识别的 key，
+# 用备份中的对应值替换；备份中也没有则直接删除
+try_surgical_repair() {
+  local backup_config="$1"
+  [ -f "$GATEWAY_LOG" ] || return 1
+  [ -f "$CONFIG_FILE" ] || return 1
+  [ -f "$backup_config" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  # 从 gateway 错误日志提取 Unrecognized key 名称
+  local error_tail
+  error_tail=$(tail -n 120 "$GATEWAY_LOG" 2>/dev/null || true)
+  local unrecognized_keys
+  unrecognized_keys=$(echo "$error_tail" | grep -ioP '(?:Unrecognized|unknown|invalid)\s+key[s]?\s*"?\K[a-zA-Z0-9_./-]+' | sort -u || true)
+
+  if [ -z "$unrecognized_keys" ]; then
+    return 1
+  fi
+
+  log "[wd][repair] Attempting surgical repair for keys: $(echo "$unrecognized_keys" | tr '\n' ', ')"
+
+  # 先备份当前配置
+  cp "$CONFIG_FILE" "$CONFIG_FILE.before-surgical-repair.$(date '+%Y%m%d-%H%M%S').bak" 2>/dev/null || true
+
+  local tmp_config
+  tmp_config=$(mktemp)
+  cp "$CONFIG_FILE" "$tmp_config"
+
+  local key repaired=false
+  for key in $unrecognized_keys; do
+    # 检查 key 是否在备份中存在（支持顶级 key）
+    local has_in_backup
+    has_in_backup=$(jq --arg k "$key" 'has($k)' "$backup_config" 2>/dev/null || echo "false")
+
+    if [ "$has_in_backup" = "true" ]; then
+      # 用备份中的值替换
+      local backup_val
+      backup_val=$(jq --arg k "$key" '.[$k]' "$backup_config" 2>/dev/null)
+      if [ -n "$backup_val" ]; then
+        jq --arg k "$key" --argjson v "$backup_val" '.[$k] = $v' "$tmp_config" > "${tmp_config}.new" 2>/dev/null
+        if [ $? -eq 0 ]; then
+          mv "${tmp_config}.new" "$tmp_config"
+          log "[wd][repair] Replaced key '$key' with backup value"
+          repaired=true
+        fi
+      fi
+    else
+      # 备份中也没有这个 key，直接删除
+      jq --arg k "$key" 'del(.[$k])' "$tmp_config" > "${tmp_config}.new" 2>/dev/null
+      if [ $? -eq 0 ]; then
+        mv "${tmp_config}.new" "$tmp_config"
+        log "[wd][repair] Deleted unrecognized key '$key' (not in backup)"
+        repaired=true
+      fi
+    fi
+  done
+
+  if [ "$repaired" = "true" ]; then
+    mv "$tmp_config" "$CONFIG_FILE"
+    local hash
+    hash=$(config_hash "$CONFIG_FILE" || true)
+    [ -n "$hash" ] && echo "$hash" > "$BACKUP_INDEX_FILE"
+    log_event "surgical-repair" "$(echo "$unrecognized_keys" | tr '\n' ',')"
+    return 0
+  fi
+
+  rm -f "$tmp_config" "${tmp_config}.new" 2>/dev/null || true
+  return 1
+}
+
 restore_previous_backup() {
   mkdir -p "$BACKUP_DIR"
-  local backup_file=""
 
-  if [ -f "$LAST_GOOD_BACKUP_FILE" ]; then
-    backup_file=$(cat "$LAST_GOOD_BACKUP_FILE" 2>/dev/null || true)
-  fi
+  local backup_config
+  backup_config=$(find_latest_backup_config)
 
-  if [ -z "$backup_file" ] || [ ! -f "$backup_file" ]; then
-    backup_file=$(ls -1t "$BACKUP_DIR"/openclaw-*.json 2>/dev/null | head -1 || true)
-  fi
-
-  if [ -z "$backup_file" ] || [ ! -f "$backup_file" ]; then
+  if [ -z "$backup_config" ] || [ ! -f "$backup_config" ]; then
     log "No config backup found for rollback"
     return 1
   fi
+
+  # 优先尝试智能修复（只替换/删除无效 key）
+  if try_surgical_repair "$backup_config"; then
+    log "Surgical config repair succeeded using: $backup_config"
+    log_event "rollback-success" "surgical:$backup_config"
+    return 0
+  fi
+
+  # 智能修复失败（无法提取具体 key），回退到整体替换
+  log "[wd][rollback] Surgical repair not applicable, using full config replacement"
 
   if [ -f "$CONFIG_FILE" ]; then
     cp "$CONFIG_FILE" "$CONFIG_FILE.before-auto-rollback.$(date '+%Y%m%d-%H%M%S').bak" 2>/dev/null || true
   fi
 
-  if cp "$backup_file" "$CONFIG_FILE" 2>/dev/null; then
+  if cp "$backup_config" "$CONFIG_FILE" 2>/dev/null; then
     local hash
     hash=$(config_hash "$CONFIG_FILE" || true)
     [ -n "$hash" ] && echo "$hash" > "$BACKUP_INDEX_FILE"
-    log "Config rollback applied from backup: $backup_file"
-    log_event "rollback-success" "$backup_file"
+    log "Config rollback applied from backup: $backup_config"
+    log_event "rollback-success" "$backup_config"
     return 0
   fi
 
-  log "Failed to restore config backup: $backup_file"
-  log_event "rollback-failed" "$backup_file"
+  log "Failed to restore config backup: $backup_config"
+  log_event "rollback-failed" "$backup_config"
   return 1
 }
 
@@ -611,6 +753,8 @@ while true; do
     LAST_HEARTBEAT_TS=$_now_ts
     _gw_pid=$(get_gateway_pid 2>/dev/null || true)
     log "[wd][heartbeat] pid=$$ gw_pid=${_gw_pid:-none} port_ok=$(is_port_listening && echo y || echo n)"
+    # 心跳时也检查配置备份（捕获运行期间的配置变更）
+    backup_config_if_changed
   fi
 
   trim_log

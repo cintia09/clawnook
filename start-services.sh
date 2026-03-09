@@ -548,10 +548,20 @@ detect_openclaw_runtime_version() {
     return 1
 }
 
+_PROXY_COMPAT_LAST_MTIME=""
+_PROXY_COMPAT_APPLIED=false
+
 ensure_gateway_proxy_compat_config() {
     local cfg_file="/root/.openclaw/openclaw.json"
     [ -f "$cfg_file" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
+
+    # 如果已经应用过且文件没变(mtime相同)，跳过检查（避免频繁运行 jq）
+    local cur_mtime
+    cur_mtime=$(stat -c %Y "$cfg_file" 2>/dev/null || echo "0")
+    if [ "$_PROXY_COMPAT_APPLIED" = "true" ] && [ "$cur_mtime" = "$_PROXY_COMPAT_LAST_MTIME" ]; then
+        return 0
+    fi
 
     local domain=""
     if [ -f "$CONFIG_FILE" ]; then
@@ -591,9 +601,13 @@ ensure_gateway_proxy_compat_config() {
             cp "$cfg_file" "$cfg_file.before-proxy-compat.$(date +%Y%m%d-%H%M%S).bak" 2>/dev/null || true
             mv "$tmp_file" "$cfg_file"
             echo "[start-services] Updated openclaw.json: added gateway.trustedProxies + gateway.controlUi.allowedOrigins"
+            # 更新 mtime 缓存为新文件的 mtime
+            _PROXY_COMPAT_LAST_MTIME=$(stat -c %Y "$cfg_file" 2>/dev/null || echo "0")
         else
             rm -f "$tmp_file"
         fi
+        _PROXY_COMPAT_APPLIED=true
+        [ -z "$_PROXY_COMPAT_LAST_MTIME" ] || _PROXY_COMPAT_LAST_MTIME=$(stat -c %Y "$cfg_file" 2>/dev/null || echo "0")
     else
         rm -f "$tmp_file"
     fi

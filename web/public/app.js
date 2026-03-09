@@ -1563,35 +1563,72 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
       return;
     }
 
-    const shown = list.backups.slice(0, 12);
-    const hint = shown.map((item, idx) => `${idx + 1}. ${item.name}`).join('\n');
-    const input = window.prompt(`请选择要恢复的备份（输入序号或文件名）：\n${hint}`, shown[0].name);
+    const shown = list.backups.slice(0, 15);
+    const hint = shown.map((item, idx) => {
+      const dateStr = item.name.replace('snapshot-', '').replace(/^openclaw-/, '').replace(/\.json$/, '').replace(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/, '$1-$2-$3 $4:$5:$6');
+      const filesInfo = (item.files || []).map(f => f.name).join(', ');
+      const typeLabel = item.type === 'snapshot' ? `[${filesInfo}]` : '[openclaw.json]';
+      return `${idx + 1}. ${dateStr} ${typeLabel}`;
+    }).join('\n');
+    const input = window.prompt(`请选择要恢复的备份（输入序号）：\n${hint}`, '1');
     if (input === null) {
       appendOcLogLine('[restore] 已取消。');
       return;
     }
 
     const raw = String(input || '').trim();
-    if (!raw) {
-      appendOcLogLine('[restore] 未输入备份项，已取消。');
+    if (!raw || !/^\d+$/.test(raw)) {
+      appendOcLogLine('[restore] 未输入有效序号，已取消。');
       return;
     }
 
-    let selectedName = raw;
-    if (/^\d+$/.test(raw)) {
-      const idx = Number(raw) - 1;
-      if (idx >= 0 && idx < shown.length) selectedName = shown[idx].name;
+    const selectedIdx = Number(raw) - 1;
+    if (selectedIdx < 0 || selectedIdx >= shown.length) {
+      appendOcLogLine('[restore] 无效的选择。');
+      return;
     }
 
-    appendOcLogLine(`[restore] 正在恢复备份: ${selectedName}`);
-    const r = await api('/api/openclaw/config/restore', { method:'POST', body: { name: selectedName }, timeoutMs: 15000 });
+    const selected = shown[selectedIdx];
+    let filesToRestore = [];
+
+    // 如果是 snapshot 且有多个文件，让用户选择恢复哪些
+    if (selected.type === 'snapshot' && selected.files && selected.files.length > 1) {
+      const fileHint = selected.files.map((f, i) => `${i + 1}. ${f.name}`).join('\n');
+      const fileInput = window.prompt(
+        `备份 ${selected.name} 包含 ${selected.files.length} 个配置文件：\n${fileHint}\n\n输入序号恢复单个文件，或输入 "all" 恢复全部：`,
+        'all'
+      );
+      if (fileInput === null) {
+        appendOcLogLine('[restore] 已取消。');
+        return;
+      }
+      const fraw = String(fileInput || '').trim().toLowerCase();
+      if (fraw === 'all' || fraw === '全部') {
+        filesToRestore = selected.files.map(f => f.name);
+      } else if (/^\d+$/.test(fraw)) {
+        const fi = Number(fraw) - 1;
+        if (fi >= 0 && fi < selected.files.length) {
+          filesToRestore = [selected.files[fi].name];
+        }
+      }
+      if (filesToRestore.length === 0) {
+        appendOcLogLine('[restore] 无效的文件选择。');
+        return;
+      }
+    }
+
+    const body = { name: selected.name };
+    if (filesToRestore.length > 0) body.files = filesToRestore;
+    appendOcLogLine(`[restore] 正在恢复备份: ${selected.name}` + (filesToRestore.length > 0 ? ` (${filesToRestore.join(', ')})` : ''));
+    const r = await api('/api/openclaw/config/restore', { method:'POST', body, timeoutMs: 15000 });
     if (!r || r.error || !r.success) {
       throw new Error(r?.error || '恢复失败');
     }
 
-    appendOcLogLine(`[restore] 配置恢复完成: ${r.restored || selectedName}`);
+    const restoredDesc = r.restoredFiles ? r.restoredFiles.join(', ') : (r.restored || selected.name);
+    appendOcLogLine(`[restore] 配置恢复完成: ${restoredDesc}`);
     appendOcLogLine('[restore] 请点击“重启 Gateway”使配置生效。');
-    toast('配置恢复完成', r.restored || selectedName);
+    toast('配置恢复完成', restoredDesc);
   } catch (e) {
     const err = e?.message || String(e || '配置恢复失败');
     appendOcLogLine(`[restore] 失败: ${err}`);
@@ -2275,10 +2312,8 @@ function onConfiguredKeySelected() {
 
   const pConfig = AI_PROVIDERS[key.provider] || {};
   const authLabel = key.authType === 'oauth' ? 'OAuth' : 'API Key';
-  const modelCount = (key.models || []).length;
   let infoText = `${authLabel}: ${key.keyMasked || '—'}`;
   if (key.baseUrl) infoText += `\nURL: ${key.baseUrl}`;
-  if (modelCount > 0) infoText += `\n已注册 ${modelCount} 个模型`;
   if (info) info.textContent = infoText;
 
   // 自动获取可用模型

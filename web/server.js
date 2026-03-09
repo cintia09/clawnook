@@ -5096,21 +5096,57 @@ function buildOpenClawUninstallCommand() {
 function listOpenClawConfigBackups() {
   try {
     if (!fs.existsSync(OPENCLAW_CONFIG_BACKUP_DIR)) return [];
-    return fs.readdirSync(OPENCLAW_CONFIG_BACKUP_DIR)
-      .filter((name) => name && name.endsWith('.json'))
-      .map((name) => {
-        const fullPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
-        let stat = null;
-        try { stat = fs.statSync(fullPath); } catch {}
-        return {
-          name,
-          path: fullPath,
-          size: stat?.size || 0,
-          mtimeMs: stat?.mtimeMs || 0,
-          mtime: stat?.mtime || null
-        };
-      })
-      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const entries = fs.readdirSync(OPENCLAW_CONFIG_BACKUP_DIR);
+    const result = [];
+
+    // 新格式: snapshot-YYYYMMDD-HHMMSS 目录
+    for (const name of entries) {
+      if (!name.startsWith('snapshot-')) continue;
+      const dirPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
+      let stat = null;
+      try { stat = fs.statSync(dirPath); } catch {}
+      if (!stat || !stat.isDirectory()) continue;
+      const files = [];
+      try {
+        for (const f of fs.readdirSync(dirPath)) {
+          if (!f.endsWith('.json')) continue;
+          const fp = path.join(dirPath, f);
+          let fstat = null;
+          try { fstat = fs.statSync(fp); } catch {}
+          files.push({ name: f, size: fstat?.size || 0 });
+        }
+      } catch {}
+      if (files.length === 0) continue;
+      result.push({
+        name,
+        type: 'snapshot',
+        path: dirPath,
+        files,
+        size: files.reduce((s, f) => s + f.size, 0),
+        mtimeMs: stat?.mtimeMs || 0,
+        mtime: stat?.mtime || null
+      });
+    }
+
+    // 旧格式: openclaw-YYYYMMDD-HHMMSS.json 单文件
+    for (const name of entries) {
+      if (!name.endsWith('.json') || name.startsWith('.')) continue;
+      const fullPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
+      let stat = null;
+      try { stat = fs.statSync(fullPath); } catch {}
+      if (!stat || !stat.isFile()) continue;
+      result.push({
+        name,
+        type: 'legacy',
+        path: fullPath,
+        files: [{ name, size: stat?.size || 0 }],
+        size: stat?.size || 0,
+        mtimeMs: stat?.mtimeMs || 0,
+        mtime: stat?.mtime || null
+      });
+    }
+
+    return result.sort((a, b) => b.mtimeMs - a.mtimeMs);
   } catch {
     return [];
   }
@@ -5125,20 +5161,25 @@ function sanitizeAllConfigBackups() {
     const backups = listOpenClawConfigBackups();
     let cleaned = 0;
     for (const backup of backups) {
-      try {
-        const raw = fs.readFileSync(backup.path, 'utf8');
-        const cfg = JSON.parse(raw);
-        if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) continue;
-        const result = sanitizeOpenClawConfig(cfg);
-        if (result.changed) {
-          fs.writeFileSync(backup.path, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 });
-          cleaned++;
-          console.log(`[config] sanitized backup ${backup.name}: removed ${result.removed.join(', ')}`);
-        }
-      } catch {}
+      const jsonFiles = backup.type === 'snapshot'
+        ? backup.files.filter(f => f.name === 'openclaw.json').map(f => path.join(backup.path, f.name))
+        : [backup.path];
+      for (const filePath of jsonFiles) {
+        try {
+          const raw = fs.readFileSync(filePath, 'utf8');
+          const cfg = JSON.parse(raw);
+          if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) continue;
+          const result = sanitizeOpenClawConfig(cfg);
+          if (result.changed) {
+            fs.writeFileSync(filePath, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 });
+            cleaned++;
+            console.log(`[config] sanitized backup ${backup.name}/${path.basename(filePath)}: removed ${result.removed.join(', ')}`);
+          }
+        } catch {}
+      }
     }
     if (cleaned > 0) {
-      console.log(`[config] sanitized ${cleaned} config backup(s) at startup`);
+      console.log(`[config] sanitized ${cleaned} config backup file(s) at startup`);
     }
   } catch {}
 }
@@ -5146,6 +5187,8 @@ function sanitizeAllConfigBackups() {
 function sanitizeBackupFileName(input) {
   const value = String(input || '').trim();
   if (!value) return '';
+  // 支持旧格式 JSON 文件名和新的 snapshot 目录名
+  if (/^snapshot-[0-9-]+$/.test(value)) return value;
   if (!/^[A-Za-z0-9._-]+\.json$/.test(value)) return '';
   return value;
 }
@@ -6308,23 +6351,66 @@ app.get('/api/openclaw/config/backups', (req, res) => {
 app.post('/api/openclaw/config/restore', (req, res) => {
   try {
     const name = sanitizeBackupFileName(req.body?.name);
-    if (!name) return res.status(400).json({ success: false, error: '备份文件名无效' });
+    if (!name) return res.status(400).json({ success: false, error: '备份名无效' });
 
     const backupPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
     if (!backupPath.startsWith(`${OPENCLAW_CONFIG_BACKUP_DIR}/`) || !fs.existsSync(backupPath)) {
-      return res.status(404).json({ success: false, error: '备份文件不存在' });
+      return res.status(404).json({ success: false, error: '备份不存在' });
     }
 
-    if (fs.existsSync(CONFIG_PATH)) {
-      try {
-        const keepPath = `${CONFIG_PATH}.before-restore.${Date.now()}.bak`;
-        fs.copyFileSync(CONFIG_PATH, keepPath);
-      } catch {}
+    // 要恢复的特定文件列表（空=全部）
+    const requestedFiles = Array.isArray(req.body?.files) ? req.body.files : [];
+    const restoredFiles = [];
+
+    const stat = fs.statSync(backupPath);
+    if (stat.isDirectory()) {
+      // snapshot 目录：恢复选定的文件
+      const availableFiles = fs.readdirSync(backupPath).filter(f => f.endsWith('.json'));
+      const filesToRestore = requestedFiles.length > 0
+        ? availableFiles.filter(f => requestedFiles.includes(f))
+        : availableFiles;
+
+      const OPENCLAW_BASE = path.dirname(CONFIG_PATH);
+      const FILE_TARGETS = {
+        'openclaw.json': CONFIG_PATH,
+        'auth-profiles.json': path.join(OPENCLAW_BASE, 'agents/main/agent/auth-profiles.json'),
+        'models.json': path.join(OPENCLAW_BASE, 'agents/main/agent/models.json'),
+        'jobs.json': path.join(OPENCLAW_BASE, 'cron/jobs.json')
+      };
+
+      for (const fileName of filesToRestore) {
+        const srcFile = path.join(backupPath, fileName);
+        const targetPath = FILE_TARGETS[fileName];
+        if (!targetPath || !fs.existsSync(srcFile)) continue;
+
+        // 备份当前文件
+        if (fs.existsSync(targetPath)) {
+          try {
+            fs.copyFileSync(targetPath, `${targetPath}.before-restore.${Date.now()}.bak`);
+          } catch {}
+        }
+
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.copyFileSync(srcFile, targetPath);
+        restoredFiles.push(fileName);
+      }
+
+      if (restoredFiles.length === 0) {
+        return res.status(400).json({ success: false, error: '没有可恢复的文件' });
+      }
+    } else {
+      // 旧格式：单个 JSON 文件恢复到 openclaw.json
+      if (fs.existsSync(CONFIG_PATH)) {
+        try {
+          fs.copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.before-restore.${Date.now()}.bak`);
+        } catch {}
+      }
+      fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+      fs.copyFileSync(backupPath, CONFIG_PATH);
+      restoredFiles.push(name);
     }
 
-    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-    fs.copyFileSync(backupPath, CONFIG_PATH);
-    res.json({ success: true, restored: name });
+    res.json({ success: true, restored: name, restoredFiles });
   } catch (e) {
     res.status(500).json({ success: false, error: e?.message || '配置恢复失败' });
   }
