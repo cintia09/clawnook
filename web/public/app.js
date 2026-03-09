@@ -1563,13 +1563,16 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
       return;
     }
 
+    // 配置文件简短说明
+    const _cfgDesc = {'openclaw':'网关主配置','auth-profiles':'认证密钥','models':'模型列表','jobs':'定时任务'};
+    const _descOf = n => _cfgDesc[n] || n;
+
     // 构建备份选择列表
     const shown = list.backups.slice(0, 15);
     const hint = shown.map((item, idx) => {
       const dateStr = item.name.replace('snapshot-', '').replace(/^openclaw-/, '').replace(/\.json$/, '').replace(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/, '$1-$2-$3 $4:$5:$6');
-      const fileNames = (item.files || []).map(f => f.name.replace(/\.json$/, ''));
-      const fileCount = fileNames.length;
-      return `${idx + 1}. ${dateStr}  (${fileCount}个文件: ${fileNames.join(', ')})`;
+      const descs = (item.files || []).map(f => _descOf(f.name.replace(/\.json$/, '')));
+      return `${idx + 1}. ${dateStr}  (${descs.join(', ')})`;
     }).join('\n');
     const input = window.prompt(`可用备份列表：\n${'─'.repeat(40)}\n${hint}\n${'─'.repeat(40)}\n输入序号选择备份：`, '1');
     if (input === null) {
@@ -1594,7 +1597,10 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
 
     // 如果是 snapshot 且有多个文件，让用户选择恢复哪些
     if (selected.type === 'snapshot' && selected.files && selected.files.length > 1) {
-      const fileHint = selected.files.map((f, i) => `  ${i + 1}. ${f.name}`).join('\n');
+      const fileHint = selected.files.map((f, i) => {
+        const desc = _descOf(f.name.replace(/\.json$/, ''));
+        return `  ${i + 1}. ${f.name}  (${desc})`;
+      }).join('\n');
       const fileInput = window.prompt(
         `备份包含 ${selected.files.length} 个配置文件：\n${fileHint}\n\n` +
         `输入序号恢复单个文件（如 1）\n` +
