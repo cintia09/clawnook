@@ -1563,14 +1563,15 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
       return;
     }
 
+    // 构建备份选择列表
     const shown = list.backups.slice(0, 15);
     const hint = shown.map((item, idx) => {
       const dateStr = item.name.replace('snapshot-', '').replace(/^openclaw-/, '').replace(/\.json$/, '').replace(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/, '$1-$2-$3 $4:$5:$6');
-      const filesInfo = (item.files || []).map(f => f.name).join(', ');
-      const typeLabel = item.type === 'snapshot' ? `[${filesInfo}]` : '[openclaw.json]';
-      return `${idx + 1}. ${dateStr} ${typeLabel}`;
+      const fileNames = (item.files || []).map(f => f.name.replace(/\.json$/, ''));
+      const fileCount = fileNames.length;
+      return `${idx + 1}. ${dateStr}  (${fileCount}个文件: ${fileNames.join(', ')})`;
     }).join('\n');
-    const input = window.prompt(`请选择要恢复的备份（输入序号）：\n${hint}`, '1');
+    const input = window.prompt(`可用备份列表：\n${'─'.repeat(40)}\n${hint}\n${'─'.repeat(40)}\n输入序号选择备份：`, '1');
     if (input === null) {
       appendOcLogLine('[restore] 已取消。');
       return;
@@ -1593,9 +1594,12 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
 
     // 如果是 snapshot 且有多个文件，让用户选择恢复哪些
     if (selected.type === 'snapshot' && selected.files && selected.files.length > 1) {
-      const fileHint = selected.files.map((f, i) => `${i + 1}. ${f.name}`).join('\n');
+      const fileHint = selected.files.map((f, i) => `  ${i + 1}. ${f.name}`).join('\n');
       const fileInput = window.prompt(
-        `备份 ${selected.name} 包含 ${selected.files.length} 个配置文件：\n${fileHint}\n\n输入序号恢复单个文件，或输入 "all" 恢复全部：`,
+        `备份包含 ${selected.files.length} 个配置文件：\n${fileHint}\n\n` +
+        `输入序号恢复单个文件（如 1）\n` +
+        `输入多个序号恢复多个文件（如 1,3）\n` +
+        `输入 all 恢复全部文件：`,
         'all'
       );
       if (fileInput === null) {
@@ -1605,10 +1609,11 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
       const fraw = String(fileInput || '').trim().toLowerCase();
       if (fraw === 'all' || fraw === '全部') {
         filesToRestore = selected.files.map(f => f.name);
-      } else if (/^\d+$/.test(fraw)) {
-        const fi = Number(fraw) - 1;
-        if (fi >= 0 && fi < selected.files.length) {
-          filesToRestore = [selected.files[fi].name];
+      } else {
+        // 支持逗号分隔的多序号选择，如 "1,3" 或 "1, 2, 4"
+        const indices = fraw.split(/[,，\s]+/).map(s => Number(s.trim()) - 1).filter(i => i >= 0 && i < selected.files.length);
+        if (indices.length > 0) {
+          filesToRestore = [...new Set(indices)].map(i => selected.files[i].name);
         }
       }
       if (filesToRestore.length === 0) {
