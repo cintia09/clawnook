@@ -6344,8 +6344,10 @@ app.get('/api/openclaw/config/repair/:taskId', (req, res) => {
 app.get('/api/openclaw/config/backups', (req, res) => {
   try {
     const backups = listOpenClawConfigBackups();
+    console.log(`[config-backup] 查询备份列表: ${backups.length} 个备份`);
     res.json({ success: true, backups });
   } catch (e) {
+    console.error(`[config-backup] 读取备份列表失败: ${e?.message}`);
     res.status(500).json({ success: false, error: e?.message || '读取备份列表失败' });
   }
 });
@@ -6355,8 +6357,11 @@ app.post('/api/openclaw/config/restore', (req, res) => {
     const name = sanitizeBackupFileName(req.body?.name);
     if (!name) return res.status(400).json({ success: false, error: '备份名无效' });
 
+    console.log(`[config-restore] 开始恢复配置, 备份: ${name}, 请求文件: ${JSON.stringify(req.body?.files || '全部')}`);
+
     const backupPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
     if (!backupPath.startsWith(`${OPENCLAW_CONFIG_BACKUP_DIR}/`) || !fs.existsSync(backupPath)) {
+      console.warn(`[config-restore] 备份不存在: ${name}`);
       return res.status(404).json({ success: false, error: '备份不存在' });
     }
 
@@ -6398,6 +6403,7 @@ app.post('/api/openclaw/config/restore', (req, res) => {
       }
 
       if (restoredFiles.length === 0) {
+        console.warn(`[config-restore] 备份 ${name} 中没有可恢复的文件`);
         return res.status(400).json({ success: false, error: '没有可恢复的文件' });
       }
     } else {
@@ -6412,8 +6418,10 @@ app.post('/api/openclaw/config/restore', (req, res) => {
       restoredFiles.push(name);
     }
 
+    console.log(`[config-restore] 恢复完成: ${name}, 已恢复文件: [${restoredFiles.join(', ')}]`);
     res.json({ success: true, restored: name, restoredFiles });
   } catch (e) {
+    console.error(`[config-restore] 恢复失败: ${e?.message}`);
     res.status(500).json({ success: false, error: e?.message || '配置恢复失败' });
   }
 });
