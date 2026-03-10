@@ -3495,7 +3495,7 @@ app.post('/api/update/hotpatch', async (req, res) => {
 // ============================================================
 // API: status
 // ============================================================
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
   const statusStart = Date.now();
   const status = { gateway: false, gatewayStarting: false, web: true, caddy: false, uptime: 0, memory: {}, version: getCurrentVersion() };
   const ocSnapshot = getOpenClawInstallationSnapshot();
@@ -3503,14 +3503,19 @@ app.get('/api/status', (req, res) => {
   status.openclawVersion = String(ocSnapshot?.version || '').trim();
 
   const gatewayLogTail = readGatewayLogTail(220);
-  const gatewayHealthCodeText = runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000);
+  // Run shell checks in parallel (async) to avoid blocking the event loop
+  const [gatewayHealthCodeText, gatewayRuntimePid, portListening, caddyRunning, watchdogRunning] = await Promise.all([
+    runCommandTextAsync(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000),
+    Promise.resolve(getGatewayRuntimePid()),
+    runCommandOkAsync('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200),
+    runCommandOkAsync('pgrep -f caddy >/dev/null 2>&1', 1200),
+    runCommandOkAsync('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200),
+  ]);
   const gatewayHealthCode = Number.parseInt(String(gatewayHealthCodeText || '').trim(), 10) || 0;
-  const gatewayRuntimePid = getGatewayRuntimePid();
   const gatewayPidSafe = Number.parseInt(String(gatewayRuntimePid || '').trim(), 10) || 0;
-  const gatewayProcessRunning = isGatewayRuntimeProcessRunning()
-    || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
+  const gatewayProcessRunning = isGatewayRuntimeProcessRunning() || portListening;
   const gatewayProcessUptimeSec = gatewayPidSafe > 0
-    ? Number.parseInt(String(runCommandText(`ps -o etimes= -p ${gatewayPidSafe} 2>/dev/null || true`, 1200) || '').trim(), 10) || 0
+    ? Number.parseInt(String(await runCommandTextAsync(`ps -o etimes= -p ${gatewayPidSafe} 2>/dev/null || true`, 1200) || '').trim(), 10) || 0
     : 0;
   const gatewayPairingRequired = !isGatewayDeviceAuthDisabled()
     && detectGatewayPairingRequiredRecent(gatewayLogTail, 900);
@@ -3528,7 +3533,7 @@ app.get('/api/status', (req, res) => {
     }
   }
 
-  status.caddy = runCommandOk('pgrep -f caddy >/dev/null 2>&1', 1200);
+  status.caddy = caddyRunning;
   if (!status.caddy) {
     const e = new Error('caddy not detected');
     if (req.query.debug === '1') {
@@ -3555,7 +3560,7 @@ app.get('/api/status', (req, res) => {
   dockerConfig = readDockerConfig();
   status.domain = dockerConfig.domain || '';
   status.port = dockerConfig.port || 18789;
-  status.gatewayWatchdog = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200);
+  status.gatewayWatchdog = watchdogRunning;
   const gatewayWarmupByProcess = !!(
     status.openclawInstalled
     && !status.gateway
