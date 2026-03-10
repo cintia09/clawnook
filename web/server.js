@@ -778,7 +778,7 @@ function buildModelEntry(providerName, modelId) {
 /**
  * 测试模型是否真实可用
  * 向 provider 发起一个极简的 chat completion 请求验证模型是否存在
- * 使用 Node.js 原生 fetch API，避免 shell 命令注入风险
+ * 使用 execFileSync + curl 数组参数，继承代理环境变量且避免 shell 注入
  * @param {string} provider - provider 名称
  * @param {string} modelId - 模型 ID
  * @param {string} apiKey - API Key
@@ -793,13 +793,11 @@ async function testModelAvailability(provider, modelId, apiKey, baseUrl) {
       return { available: false, error: '未找到 API 端点' };
     }
 
+    const { execFileSync } = require('child_process');
+
     const url = `${endpoint}/chat/completions`;
-    const headers = { 'Content-Type': 'application/json' };
-    if (provider === 'anthropic') {
-      headers['x-api-key'] = apiKey;
-    } else {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
+    const authHeader = provider === 'anthropic' ? 'x-api-key' : 'Authorization';
+    const authValue = provider === 'anthropic' ? apiKey : `Bearer ${apiKey}`;
 
     const body = JSON.stringify({
       model: modelId,
@@ -807,23 +805,35 @@ async function testModelAvailability(provider, modelId, apiKey, baseUrl) {
       max_tokens: 5
     });
 
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers,
-      body,
-      signal: AbortSignal.timeout(20000)
+    // execFileSync 以数组传参，不经过 shell，杜绝命令注入
+    const args = [
+      '-sS', '--connect-timeout', '10', '--max-time', '20',
+      '-X', 'POST',
+      '-H', 'Content-Type: application/json',
+      '-H', `${authHeader}: ${authValue}`,
+      '-d', body,
+      '-w', '\n%{http_code}',
+      url
+    ];
+
+    const result = execFileSync('curl', args, {
+      encoding: 'utf8',
+      timeout: 30000,
+      env: process.env
     });
 
+    const lines = result.trim().split('\n');
+    const httpCode = parseInt(lines[lines.length - 1], 10);
+    const responseBody = lines.slice(0, -1).join('\n');
     const elapsed = Date.now() - startTime;
 
-    if (resp.ok) {
+    if (httpCode >= 200 && httpCode < 300) {
       console.log(`[model-test] ${provider}/${modelId} 测试成功 (${elapsed}ms)`);
       return { available: true };
     }
 
-    const respText = await resp.text().catch(() => '');
-    console.log(`[model-test] ${provider}/${modelId} 测试失败: HTTP ${resp.status} (${elapsed}ms)`);
-    return { available: false, error: `HTTP ${resp.status}: ${respText.slice(0, 200)}` };
+    console.log(`[model-test] ${provider}/${modelId} 测试失败: HTTP ${httpCode} (${elapsed}ms)`);
+    return { available: false, error: `HTTP ${httpCode}: ${responseBody.slice(0, 200)}` };
 
   } catch (e) {
     const elapsed = Date.now() - startTime;
