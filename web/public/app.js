@@ -377,7 +377,8 @@ function setActiveRoute(route){
   if (route === 'dashboard') refreshStatus();
   if (route === 'openclaw-engine') { refreshOpenClaw(); }
   if (route === 'openclaw-ai') { loadAIConfig(); }
-  if (route === 'messaging') loadMessagingConfig();
+  if (route === 'messaging') { loadMessagingConfig(); }
+  if (route === 'openclaw-engine') { refreshOpenClaw(); loadPairingList(); }
   if (route === 'browser') loadBrowserConfig();
   if (route === 'trading') refreshTrading();
   if (route === 'plugins') refreshPlugins();
@@ -1187,7 +1188,7 @@ async function refreshOpenClaw(opts = {}){
     syncOpenClawButtons();
   }
   const retries = Math.max(0, Number(opts.retries ?? 0));
-  const openclawStatusTimeoutMs = Math.max(2000, Number(opts.timeoutMs ?? 15000));
+  const openclawStatusTimeoutMs = Math.max(2000, Number(opts.timeoutMs ?? 30000));
   let d = null;
   let lastErr = '';
 
@@ -1335,12 +1336,16 @@ async function refreshOpenClaw(opts = {}){
     setOpenClawStatusLine('安装提示：官方 release 暂无 Linux 预编译包，已切换官方 npm 安装（失败再源码兜底）', null);
   } else if (!d.installed) {
     setOpenClawStatusLine('更新状态：未安装，可执行安装', null);
+  } else if (!d.gatewayRunning && d.gatewayStarting && d.discordConnectError) {
+    setOpenClawStatusLine(`Gateway 状态：启动中（通道连接受阻 — ${d.discordConnectError}）`, null);
   } else if (!d.gatewayRunning && d.gatewayStarting) {
     setOpenClawStatusLine('Gateway 状态：启动中（正在等待健康检查）', null);
   } else if (!d.gatewayRunning && postInstallWarmup && d.gatewayProcessRunning) {
     setOpenClawStatusLine('Gateway 状态：启动中（安装完成后初始化中）', null);
   } else if (!d.gatewayRunning && d.gatewayPairingRequired) {
     setOpenClawStatusLine('Gateway 状态：等待控制台配对。请先在网关页面完成配对授权', null);
+  } else if (!d.gatewayRunning && d.gatewayProcessRunning && d.discordConnectError) {
+    setOpenClawStatusLine(`Gateway 状态：初始化中（${d.discordConnectError}）`, null);
   } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
     setOpenClawStatusLine('Gateway 状态：启动中（初始化中，等待健康检查）', null);
   } else if (d.installed && !d.version) {
@@ -1349,11 +1354,15 @@ async function refreshOpenClaw(opts = {}){
     setOpenClawStatusLine(`更新状态：检查失败（${d.updateCheckError}）`, null);
   } else if (d.hasUpdate) {
     setOpenClawStatusLine('更新状态：发现新版本，可更新', null);
+  } else if (d.installed && d.gatewayRunning && d.discordConnectError) {
+    setOpenClawStatusLine(`ℹ️ Discord 连接问题：${d.discordConnectError}`, null);
   } else if (d.installed) {
     setOpenClawStatusLine('更新状态：已是最新版本', null);
   } else {
     setOpenClawStatusLine('更新状态：自动检查中', null);
   }
+
+  // pairing section is now always visible on the messaging page
 
   syncOpenClawButtons();
 
@@ -1542,6 +1551,62 @@ $('btn-oc-refresh').addEventListener('click', async ()=>{
   const r = await refreshOpenClaw({ retries: 1 });
   if (r?.error) toast('状态刷新失败', r.error);
 });
+
+$('btn-pairing-refresh')?.addEventListener('click', () => loadPairingList());
+
+async function loadPairingList() {
+  const listEl = $('pairing-pending-list');
+  if (!listEl) return;
+  try {
+    const r = await api('/api/openclaw/pairing/list');
+    if (!r.success) { listEl.innerHTML = '<div class="muted small">读取失败: ' + esc(r.error || '') + '</div>'; return; }
+    const pending = r.pending || [];
+    if (!pending.length) {
+      listEl.innerHTML = '<div class="muted small" style="color:#8b949e">暂无待审批的配对请求</div>';
+      return;
+    }
+    listEl.innerHTML = pending.map((p) => {
+      const age = Math.round((Date.now() - (p.ts || 0)) / 1000);
+      const ageStr = age < 60 ? age + '秒前' : Math.round(age / 60) + '分钟前';
+      const name = esc(p.displayName || p.clientId || '未知设备');
+      const plat = esc(p.platform || '');
+      const role = esc(p.role || 'operator');
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#1a1a2e;border-radius:6px;margin-bottom:4px">'
+        + '<span style="flex:1;font-size:12px"><b>' + name + '</b>'
+        + (plat ? ' <span class="muted small">(' + plat + ')</span>' : '')
+        + ' · <span class="muted small">' + role + '</span>'
+        + ' · <span class="muted small">' + ageStr + '</span></span>'
+        + '<button class="btn btn-primary" style="font-size:12px;padding:2px 12px" data-approve-id="' + esc(p.requestId) + '">审批通过</button>'
+        + '</div>';
+    }).join('');
+    listEl.querySelectorAll('[data-approve-id]').forEach((btn) => {
+      btn.addEventListener('click', () => approvePairing(btn.dataset.approveId, btn));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="muted small" style="color:#ff453a">加载失败</div>';
+  }
+}
+
+async function approvePairing(requestId, btn) {
+  const resultEl = $('pairing-result');
+  btn.disabled = true; btn.textContent = '审批中...';
+  if (resultEl) { resultEl.textContent = ''; resultEl.style.color = ''; }
+  try {
+    const r = await api('/api/openclaw/pairing/approve', { method: 'POST', body: { requestId } });
+    if (r.success) {
+      if (resultEl) { resultEl.textContent = '✅ 审批成功 (deviceId: ' + (r.deviceId || '').slice(0, 8) + '…)'; resultEl.style.color = '#30d158'; }
+      setTimeout(() => loadPairingList(), 500);
+    } else {
+      if (resultEl) { resultEl.textContent = '❌ ' + (r.error || '审批失败'); resultEl.style.color = '#ff453a'; }
+    }
+  } catch (e) {
+    if (resultEl) { resultEl.textContent = '❌ 网络错误'; resultEl.style.color = '#ff453a'; }
+  } finally {
+    btn.disabled = false; btn.textContent = '审批通过';
+  }
+}
+
+
 
 $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
   if (ocInstallRunning || ocInstallTaskRunningRemote || ocStartRunning || ocGatewayRestartRunningRemote) {
@@ -2836,9 +2901,9 @@ async function loadMessagingConfig(){
   const setBoolSelect = (id, v) => { if ($(id)) $(id).value = String(!!v); };
   const setVal = (id, v) => { if ($(id)) $(id).value = v ?? ''; };
 
-  // -- 飞书 (nested: accounts.main) with flat fallback --
+  // -- 飞书 (nested: accounts.default, fallback accounts.main) with flat fallback --
   const fs = c.feishu || {};
-  const fsMain = fs.accounts?.main || {};
+  const fsMain = fs.accounts?.default || fs.accounts?.main || {};
   setBoolSelect('feishu-enabled', fs.enabled);
   setVal('feishu-appid',   fsMain.appId   || fs.appId   || '');
   setVal('feishu-secret',  fsMain.appSecret || fs.appSecret || '');
@@ -2863,7 +2928,9 @@ async function loadMessagingConfig(){
     : (dc.guildId ? String(dc.guildId) : '');
   setVal('discord-guilds', guildText);
   setVal('discord-grouppolicy', dc.groupPolicy || 'allowlist');
-  setVal('discord-streaming',   dc.streaming   || 'partial');
+  const rawStreaming = String(dc.streaming || 'partial').toLowerCase();
+  const validStreaming = ['partial', 'progress', 'block', 'off'].includes(rawStreaming) ? rawStreaming : (rawStreaming === 'full' ? 'progress' : 'partial');
+  setVal('discord-streaming',   validStreaming);
   setVal('discord-historylimit', dc.historyLimit ?? 30);
   setVal('discord-dmhistorylimit', dc.dmHistoryLimit ?? 50);
 
@@ -2901,15 +2968,19 @@ qa('[data-save-msg]').forEach(btn => {
     update.channels[platform] = { enabled };
 
     if (platform === 'feishu'){
-      // Write nested structure: accounts.main
-      update.channels.feishu.accounts = { main: {
+      // Write nested structure: accounts.default (OpenClaw requires default or bindings)
+      const feishuAcct = {
         appId:             $('feishu-appid').value,
         appSecret:         $('feishu-secret').value,
         botName:           $('feishu-botname').value,
         dmPolicy:          $('feishu-dmpolicy')?.value || 'open',
-        verificationToken: $('feishu-token').value,
-        encryptKey:        $('feishu-encrypt').value,
-      }};
+      };
+      // Only include optional fields if non-empty (avoid empty strings confusing Gateway schema)
+      const vt = $('feishu-token').value.trim();
+      const ek = $('feishu-encrypt').value.trim();
+      if (vt) feishuAcct.verificationToken = vt;
+      if (ek) feishuAcct.encryptKey = ek;
+      update.channels.feishu.accounts = { default: feishuAcct };
     }
     if (platform === 'discord'){
       const guildIds = parseGuildIds($('discord-guilds')?.value || '');
@@ -3844,7 +3915,7 @@ setInterval(() => {
 
 // Auto check for updates on page load (non-blocking)
 setTimeout(() => checkForUpdate(), 3000);
-setTimeout(() => refreshOpenClaw({ retries: 0 }), 4000);
+setTimeout(() => refreshOpenClaw({ retries: 1 }), 4000);
 
 // Periodic update check every 30 minutes
 setInterval(() => checkForUpdate(), 30 * 60 * 1000);
@@ -3852,3 +3923,24 @@ setInterval(() => {
   const route = getRouteFromHash();
   if (route !== 'openclaw-engine') refreshOpenClaw({ retries: 0 });
 }, 5 * 60 * 1000);
+
+// ------------------------
+// Session inactivity timeout
+// ------------------------
+(() => {
+  const INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
+  let _inactivityTimer = null;
+
+  function resetInactivityTimer() {
+    if (_inactivityTimer) clearTimeout(_inactivityTimer);
+    _inactivityTimer = setTimeout(async () => {
+      try { await api('/api/logout', { method: 'POST' }); } catch {}
+      location.href = '/login.html';
+    }, INACTIVITY_MS);
+  }
+
+  ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'].forEach(evt => {
+    document.addEventListener(evt, resetInactivityTimer, { passive: true });
+  });
+  resetInactivityTimer();
+})();

@@ -182,7 +182,21 @@
                 <div class="muted small" style="margin-top:4px">当前：<span id="oc-current-ver">—</span> · 最新：<span id="oc-latest-ver">—</span></div>
                 <div class="muted small" style="margin-top:10px">安装按钮会自动判断是否需要更新，详细日志请到“日志”页面查看</div>
               </div>
-            </div>            <!-- 操作日志窗口 -->
+            </div>
+            <!-- 设备配对审批 -->
+            <div class="sep"></div>
+            <div id="pairing-section">
+              <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div style="font-weight:700;font-size:13px">🔗 设备配对审批</div>
+                <button class="btn" id="btn-pairing-refresh" style="font-size:12px;padding:2px 10px">刷新</button>
+              </div>
+              <div class="muted small" style="margin-bottom:8px">新设备首次连接 Gateway 时需要审批（包括 CLI、Web UI、消息平台 Bot 等所有客户端）</div>
+              <div id="pairing-pending-list" style="min-height:32px">
+                <div class="muted small">加载中...</div>
+              </div>
+              <span class="muted small" id="pairing-result" style="margin-top:4px;display:block"></span>
+            </div>
+            <!-- 操作日志窗口 -->
             <div class="sep"></div>
             <div style="font-weight:700;font-size:13px;margin-bottom:6px">操作日志</div>
             <div class="terminal" id="oc-log" style="height:240px;font-size:11.5px"></div>          </div>
@@ -446,7 +460,7 @@
                 </div>
                 <div style="grid-column: span 3;" class="field">
                   <div class="label"><span>流式回复</span></div>
-                  <select class="input" id="discord-streaming"><option value="partial">partial</option><option value="full">full</option><option value="off">off</option></select>
+                  <select class="input" id="discord-streaming"><option value="partial">partial（逐段）</option><option value="progress">progress（逐字）</option><option value="block">block（整段）</option><option value="off">off（关闭）</option></select>
                 </div>
                 <div style="grid-column: span 3;"></div>
                 <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot Token</span> <span class="muted small">必填</span></div><input class="input" type="password" id="discord-token" /></div>
@@ -511,6 +525,11 @@
               <div class="sep"></div>
               <div class="row"><button class="btn btn-primary" data-save-msg="whatsapp">保存 WhatsApp 配置</button></div>
             </div>
+          </div>
+
+          <div class="sep"></div>
+          <div class="muted small" style="padding:8px 12px;background:#1a1a2e;border-radius:6px">
+            💡 此页面提供常用配置项。如需更详细的通道设置，请打开 <b>OpenClaw Gateway 控制台</b>（<code>openclaw</code> 命令行 或访问 Gateway 自带 Web UI）。
           </div>
 
           <div class="sep"></div>

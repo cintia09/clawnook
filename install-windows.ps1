@@ -1590,7 +1590,7 @@ function Get-DeployConfig {
         Domain       = ""
         PortArgs     = @()
         AutoOpenFirewall = $true
-        HttpsEnabled = $false
+        HttpsEnabled = $true
     }
 
     # 1. Gateway 端口

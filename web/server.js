@@ -328,6 +328,8 @@ const OPENCLAW_INSTALL_LOG_FILE = '/root/.openclaw/logs/openclaw-install.log';
 const OPENCLAW_STATE_ROOT = '/root/.openclaw';
 const OPENCLAW_LOCK_DIR = `${OPENCLAW_STATE_ROOT}/locks`;
 const BROWSER_PAIRS_PATH = '/root/.openclaw/browser-pairs.json';
+const DEVICE_PAIRING_PENDING_PATH = '/root/.openclaw/devices/pending.json';
+const DEVICE_PAIRING_PAIRED_PATH = '/root/.openclaw/devices/paired.json';
 
 const TRADING_DIR = '/root/trading-system';
 const STRATEGY_PARAMS_PATH = path.join(TRADING_DIR, 'strategy_params.json');
@@ -1507,6 +1509,38 @@ function parseBracketTimestamp(line) {
   return Number.isFinite(ts) ? ts : 0;
 }
 
+function detectDiscordConnectError(logText) {
+  const lines = String(logText || '').split('\n');
+  // 从最新开始向前扫描，找到最近的 Discord 连接错误
+  let lastDiscordError = '';
+  let lastDiscordErrorTs = 0;
+  let lastDiscordOk = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = String(lines[i] || '');
+    if (!line) continue;
+    // Discord 成功连接标志
+    if (/\[discord\]\s+(connected|ready|logged in|Logged in as)/i.test(line)) {
+      lastDiscordOk = parseBracketTimestamp(line) || Date.now();
+      break;
+    }
+    // Discord TLS / fetch 错误
+    if (!lastDiscordError && /\[discord\]\s+(gateway\s+error|final reply failed|fetch failed)/i.test(line)) {
+      lastDiscordErrorTs = parseBracketTimestamp(line) || 0;
+      if (/Client network socket disconnected.*TLS/i.test(line) || /fetch failed/i.test(line)) {
+        lastDiscordError = 'TLS连接失败（网络被阻断，建议配置 HTTPS_PROXY 代理）';
+      } else {
+        lastDiscordError = 'Discord 网关连接失败';
+      }
+    }
+  }
+  if (!lastDiscordError) return '';
+  // 如果最后一次成功连接比错误更新，则忽略
+  if (lastDiscordOk > lastDiscordErrorTs) return '';
+  // 错误超过 10 分钟不再显示
+  if (lastDiscordErrorTs && (Date.now() - lastDiscordErrorTs) > 600000) return '';
+  return lastDiscordError;
+}
+
 function detectGatewayPairingRequiredRecent(logText, maxAgeSec = 600) {
   const lines = String(logText || '').split('\n');
   const pairingLines = lines.filter((line) => /pairing\s+required/i.test(line));
@@ -1725,6 +1759,20 @@ function runCommandText(cmd, timeoutMs = 2500) {
   } catch {
     return '';
   }
+}
+
+function runCommandTextAsync(cmd, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    exec(cmd, { encoding: 'utf8', timeout: timeoutMs }, (_err, stdout) => {
+      resolve((_err ? '' : (stdout || '')).trim());
+    });
+  });
+}
+
+function runCommandOkAsync(cmd, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    exec(cmd, { timeout: timeoutMs }, (err) => { resolve(!err); });
+  });
 }
 
 function getGatewayRuntimePid() {
@@ -3031,8 +3079,18 @@ app.post('/api/login', (req, res) => {
   const st = getFailureState(ip);
 
   if (st.lockUntil && Date.now() < st.lockUntil) {
-    const remainSec = Math.ceil((st.lockUntil - Date.now()) / 1000);
-    return res.status(429).json({ error: `登录失败过多，已锁定。请 ${remainSec}s 后重试` });
+    // Clear lockout if admin password was changed after lockout started
+    const changedAt = dockerConfig.webAuth?.users?.admin?.passwordChangedAt;
+    if (changedAt && new Date(changedAt).getTime() > (st.lockUntil - LOCK_MS)) {
+      recordLoginSuccess(ip);
+    } else {
+      const remainSec = Math.ceil((st.lockUntil - Date.now()) / 1000);
+      return res.status(429).json({
+        error: `登录失败过多，已锁定。请 ${remainSec}s 后重试`,
+        locked: true,
+        resetHint: '如需重置密码，请通过 SSH 或 docker exec 登录容器后执行命令：openclaw-reset-password'
+      });
+    }
   }
 
   const { username, password } = req.body || {};
@@ -3640,6 +3698,8 @@ app.post('/api/config', async (req, res) => {
       // 兼容历史错误字段并对齐 OpenClaw 当前 schema
       normalizeDiscordChannelConfig(updates.channels);
       normalizeDiscordChannelConfig(config.channels);
+      normalizeFeishuChannelConfig(updates.channels);
+      normalizeFeishuChannelConfig(config.channels);
 
       // 多服务器模式：当前端显式要求替换 guilds 时，先清空旧值再合并
       const replaceGuilds = !!updates.channels?.discord?.__replaceGuilds;
@@ -3687,10 +3747,22 @@ function stripMaskedValues(obj) {
 }
 
 // 兼容旧版/错误字段，统一到 OpenClaw 当前 schema
+const VALID_DISCORD_STREAMING = new Set(['true', 'false', 'off', 'partial', 'block', 'progress']);
+
 function normalizeDiscordChannelConfig(channelsObj) {
   if (!channelsObj || typeof channelsObj !== 'object') return;
   const discord = channelsObj.discord;
   if (!discord || typeof discord !== 'object') return;
+
+  // streaming 值校验：'full' 是无效值，映射为 'progress'
+  if (discord.streaming !== undefined) {
+    const sv = String(discord.streaming).toLowerCase().trim();
+    if (!VALID_DISCORD_STREAMING.has(sv)) {
+      discord.streaming = sv === 'full' ? 'progress' : 'partial';
+    } else {
+      discord.streaming = sv;
+    }
+  }
 
   // 旧字段 guildId 不在官方 schema 中，迁移到 guilds
   if (typeof discord.guildId === 'string' && discord.guildId.trim()) {
@@ -3721,6 +3793,32 @@ function normalizeDiscordChannelConfig(channelsObj) {
       }
       if (Object.prototype.hasOwnProperty.call(accountCfg, 'guildId')) {
         delete accountCfg.guildId;
+      }
+    }
+  }
+}
+
+// 飞书通道规范化：accounts.main → accounts.default，dmPolicy=open → allowFrom
+function normalizeFeishuChannelConfig(channelsObj) {
+  if (!channelsObj || typeof channelsObj !== 'object') return;
+  const feishu = channelsObj.feishu;
+  if (!feishu || typeof feishu !== 'object') return;
+
+  if (feishu.accounts && typeof feishu.accounts === 'object') {
+    // 如果只有 main 没有 default，把 main 重命名为 default
+    if (feishu.accounts.main && !feishu.accounts.default) {
+      feishu.accounts.default = feishu.accounts.main;
+      delete feishu.accounts.main;
+    }
+    // 对每个账户：dmPolicy=open 时自动补 allowFrom: ["*"]；清理空字符串可选字段
+    for (const acct of Object.values(feishu.accounts)) {
+      if (!acct || typeof acct !== 'object') continue;
+      if (acct.dmPolicy === 'open' && !acct.allowFrom) {
+        acct.allowFrom = ['*'];
+      }
+      // 移除空字符串的可选字段（避免 Gateway schema 报错）
+      for (const opt of ['verificationToken', 'encryptKey']) {
+        if (acct[opt] === '') delete acct[opt];
       }
     }
   }
@@ -6790,18 +6888,47 @@ app.get('/api/openclaw', async (req, res) => {
     const invalidConfigKeys = detectInvalidConfigKeysFromText(gatewayLogTail);
     const gatewayPairingRequired = !isGatewayDeviceAuthDisabled()
       && detectGatewayPairingRequiredRecent(gatewayLogTail, 900);
+    const discordConnectError = detectDiscordConnectError(gatewayLogTail);
 
-    const gatewayHealthCodeText = runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000);
+    // Run independent shell commands in parallel to reduce response time
+    const gatewayPidCmd = [
+      'pid="$(pgrep -x openclaw-gateway 2>/dev/null | head -1 || true)"',
+      'if [ -z "$pid" ]; then pid="$(pgrep -x openclaw-gatewa 2>/dev/null | head -1 || true)"; fi',
+      'if [ -z "$pid" ]; then pid="$(pgrep -f "[o]penclaw\\.mjs gateway" 2>/dev/null | head -1 || true)"; fi',
+      'if [ -z "$pid" ]; then pid="$(pgrep -f "[o]penclaw[^\\n]*gateway run" 2>/dev/null | head -1 || true)"; fi',
+      'if [ -z "$pid" ]; then',
+      '  for candidate in $(pgrep -x openclaw 2>/dev/null || true); do',
+      '    cmdline="$(cat /proc/$candidate/cmdline 2>/dev/null | tr "\\000" " ")"',
+      '    comm="$(cat /proc/$candidate/comm 2>/dev/null || true)"',
+      '    if [ "$comm" = "bash" ] || [ "$comm" = "sh" ] || [ "$comm" = "timeout" ]; then continue; fi',
+      '    case "$cmdline" in',
+      '      *"gateway run"*|*" openclaw gateway"*) pid="$candidate"; break ;;',
+      '    esac',
+      '  done',
+      'fi',
+      'printf "%s" "$pid"'
+    ].join('\n');
+
+    const [gatewayHealthCodeText, gatewayRuntimePid, gatewayWatchdogRunning] = await Promise.all([
+      runCommandTextAsync(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000),
+      runCommandTextAsync(gatewayPidCmd, 1200),
+      runCommandOkAsync('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200)
+    ]);
     const gatewayHealthCode = Number.parseInt(String(gatewayHealthCodeText || '').trim(), 10) || 0;
     const gatewayRunning = gatewayHealthCode === 200;
-    const gatewayRuntimePid = getGatewayRuntimePid();
     const gatewayPidSafe = Number.parseInt(String(gatewayRuntimePid || '').trim(), 10) || 0;
-    const gatewayProcessRunning = isGatewayRuntimeProcessRunning()
-      || runCommandOk('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200);
-    const gatewayWatchdogRunning = runCommandOk('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200);
-    const gatewayProcessUptimeSec = gatewayPidSafe > 0
-      ? Number.parseInt(String(runCommandText(`ps -o etimes= -p ${gatewayPidSafe} 2>/dev/null || true`, 1200) || '').trim(), 10) || 0
-      : 0;
+
+    // Second batch: dependent on PID result
+    const [gatewayProcessUptimeText, portListening] = await Promise.all([
+      gatewayPidSafe > 0
+        ? runCommandTextAsync(`ps -o etimes= -p ${gatewayPidSafe} 2>/dev/null || true`, 1200)
+        : Promise.resolve(''),
+      !gatewayPidSafe
+        ? runCommandOkAsync('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200)
+        : Promise.resolve(false)
+    ]);
+    const gatewayProcessRunning = !!gatewayPidSafe || portListening;
+    const gatewayProcessUptimeSec = Number.parseInt(String(gatewayProcessUptimeText || '').trim(), 10) || 0;
 
     let operationState = getOpenClawOperationState();
     let installTaskRunning = isTaskRunning(installLogs, activeInstallTaskId);
@@ -6875,7 +7002,7 @@ app.get('/api/openclaw', async (req, res) => {
       && !gatewayRunning
       && gatewayProcessRunning
       && gatewayProcessUptimeSec > 0
-      && gatewayProcessUptimeSec <= 300
+      && gatewayProcessUptimeSec <= 600
     );
     const gatewayRestartingByOp = !!(
       installed
@@ -6909,6 +7036,7 @@ app.get('/api/openclaw', async (req, res) => {
       gatewayHealthCode,
       gatewayWatchdogRunning,
       gatewayPairingRequired,
+      discordConnectError,
       invalidConfigKeys,
       installSource: detected.source,
       runtimeReady,
@@ -7489,6 +7617,76 @@ app.post('/api/openclaw/start', (req, res) => {
   });
 });
 
+app.get('/api/openclaw/pairing/list', async (_req, res) => {
+  try {
+    const pending = readJson(DEVICE_PAIRING_PENDING_PATH, {});
+    const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+    const pendingList = Object.values(pending)
+      .filter((p) => p && typeof p === 'object' && p.requestId)
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const pairedList = Object.values(paired)
+      .filter((p) => p && typeof p === 'object' && p.deviceId)
+      .sort((a, b) => (b.approvedAtMs || 0) - (a.approvedAtMs || 0));
+    res.json({ success: true, pending: pendingList, paired: pairedList });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || '读取配对状态失败' });
+  }
+});
+
+app.post('/api/openclaw/pairing/approve', async (req, res) => {
+  const { requestId } = req.body || {};
+  if (!requestId || typeof requestId !== 'string') return res.status(400).json({ success: false, error: '缺少 requestId' });
+  if (!/^[0-9a-f-]{36}$/.test(requestId)) return res.status(400).json({ success: false, error: 'requestId 格式无效' });
+  try {
+    const pending = readJson(DEVICE_PAIRING_PENDING_PATH, {});
+    const entry = pending[requestId];
+    if (!entry) return res.status(404).json({ success: false, error: '未找到该配对请求（可能已过期）' });
+
+    const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+    const deviceId = entry.deviceId;
+    const existing = paired[deviceId] || {};
+    const now = Date.now();
+    const token = require('crypto').randomBytes(24).toString('hex');
+
+    const role = (entry.role || 'operator').trim() || 'operator';
+    const existingTokens = existing.tokens && typeof existing.tokens === 'object' ? { ...existing.tokens } : {};
+    existingTokens[role] = {
+      token,
+      role,
+      scopes: entry.scopes || existing.approvedScopes || ['operator.admin'],
+      createdAtMs: existingTokens[role]?.createdAtMs || now,
+      rotatedAtMs: now
+    };
+
+    paired[deviceId] = {
+      ...existing,
+      deviceId,
+      publicKey: entry.publicKey || existing.publicKey,
+      displayName: entry.displayName || existing.displayName,
+      platform: entry.platform || existing.platform,
+      clientId: entry.clientId || existing.clientId,
+      clientMode: entry.clientMode || existing.clientMode,
+      role,
+      roles: Array.from(new Set([...(existing.roles || []), ...(entry.roles || [role])])),
+      approvedScopes: entry.scopes || existing.approvedScopes || ['operator.admin'],
+      tokens: existingTokens,
+      approvedAtMs: now,
+      isRepair: entry.isRepair || false
+    };
+
+    delete pending[requestId];
+
+    fs.writeFileSync(DEVICE_PAIRING_PENDING_PATH, JSON.stringify(pending, null, 2));
+    fs.writeFileSync(DEVICE_PAIRING_PAIRED_PATH, JSON.stringify(paired, null, 2));
+
+    console.log(`[pairing][approve] requestId=${requestId} deviceId=${deviceId} role=${role}`);
+    res.json({ success: true, deviceId, role });
+  } catch (e) {
+    console.error(`[pairing][approve] error:`, e);
+    res.status(500).json({ success: false, error: e?.message || '审批失败' });
+  }
+});
+
 app.get('/api/openclaw/gateway/logs', (req, res) => {
   try {
     const lines = Math.max(20, Math.min(parseInt(req.query.lines || String(LOG_VIEW_DEFAULT_LINES), 10) || LOG_VIEW_DEFAULT_LINES, OPENCLAW_GATEWAY_LOG_API_MAX_LINES));
@@ -7510,6 +7708,21 @@ function sanitizeLogLine(line) {
   }
   // 过滤掉高频 ws 消息日志（device.pair.list, node.list, chat.history 等）
   if (/\[ws\]\s+⇄\s+res\s+✓\s+(device\.pair\.list|node\.list|chat\.history|device\.list)\b/.test(line)) {
+    return null;
+  }
+  // 过滤掉重复的 Discord 重连/TLS 错误日志（网络问题时极其频繁）
+  if (/\[discord\]\s+gateway:\s+(WebSocket connection closed|Attempting resume with backoff)/i.test(line)) {
+    return null;
+  }
+  if (/\[discord\]\s+gateway\s+error:\s+Error:\s+Client network socket disconnected/i.test(line)) {
+    return null;
+  }
+  // 过滤掉 config reload 的重复 invalid config 行（已在 invalidConfigKeys 中检测）
+  if (/\[reload\]\s+config reload skipped\s+\(invalid config\)/i.test(line)) {
+    return null;
+  }
+  // 过滤掉飞书/Discord 等通道的收发消息日志（对话内容不应泄露到运维日志面板）
+  if (/\[(feishu|discord|telegram|signal|whatsapp)\].*(?:received message from|DM from|dispatching to agent|group message from)/i.test(line)) {
     return null;
   }
   const keyRegexes = [

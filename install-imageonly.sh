@@ -49,7 +49,7 @@ HTTPS_PORT="${HTTPS_PORT:-0}"
 DOMAIN="${DOMAIN:-}"
 CERT_MODE="${CERT_MODE:-letsencrypt}"
 TZ_VALUE="${TZ_VALUE:-Asia/Shanghai}"
-HTTPS_ENABLED="false"
+HTTPS_ENABLED="true"
 ROOT_PASS="${ROOT_PASS:-}"
 DO_FIREWALL="${DO_FIREWALL:-}"
 UPGRADE_MODE="false"
@@ -235,7 +235,8 @@ load_existing_config(){
   v="$(safe_json_value domain)";     DOMAIN="$v"
   v="$(safe_json_value cert_mode)";  [ -n "$v" ] && CERT_MODE="$v"
   v="$(safe_json_value timezone)";   [ -n "$v" ] && TZ_VALUE="$v"
-  if [ -n "$DOMAIN" ]; then HTTPS_ENABLED="true"; else HTTPS_ENABLED="false"; HTTP_PORT=0; HTTPS_PORT=0; fi
+  HTTPS_ENABLED="true"
+  if [ -z "$DOMAIN" ]; then HTTP_PORT=0; HTTPS_PORT=0; fi
   return 0
 }
 
@@ -915,17 +916,13 @@ configure_firewall_and_fail2ban(){
     ufw default allow outgoing >/dev/null 2>&1 || true
     ufw allow 22/tcp >/dev/null 2>&1 || true
     ufw allow "${SSH_PORT}/tcp" >/dev/null 2>&1 || true
-    if [ "$HTTPS_ENABLED" = "true" ] && [ "$CERT_MODE" = "letsencrypt" ]; then
+    if [ "$CERT_MODE" = "letsencrypt" ]; then
       [ "$HTTP_PORT"  -gt 0 ] 2>/dev/null && ufw allow "${HTTP_PORT}/tcp"  >/dev/null 2>&1 || true
       [ "$HTTPS_PORT" -gt 0 ] 2>/dev/null && ufw allow "${HTTPS_PORT}/tcp" >/dev/null 2>&1 || true
       success "ufw 放行: 22/${SSH_PORT}/${HTTP_PORT}/${HTTPS_PORT}"
-    elif [ "$HTTPS_ENABLED" = "true" ]; then
+    else
       [ "$HTTPS_PORT" -gt 0 ] 2>/dev/null && ufw allow "${HTTPS_PORT}/tcp" >/dev/null 2>&1 || true
       success "ufw 放行: 22/${SSH_PORT}/${HTTPS_PORT}"
-    else
-      ufw allow "${GW_PORT}/tcp"  >/dev/null 2>&1 || true
-      ufw allow "${WEB_PORT}/tcp" >/dev/null 2>&1 || true
-      success "ufw 放行: 22/${SSH_PORT}/${GW_PORT}/${WEB_PORT}"
     fi
     ufw --force enable >/dev/null 2>&1 || true
     success "ufw 防火墙已启用"
@@ -990,10 +987,8 @@ create_and_start(){
   local port_args=()
   if [ "$HTTPS_ENABLED" = "true" ] && [ "$CERT_MODE" = "letsencrypt" ]; then
     port_args+=(-p "${HTTP_PORT}:80" -p "${HTTPS_PORT}:443" -p "127.0.0.1:${GW_PORT}:18789" -p "127.0.0.1:${WEB_PORT}:3000" -p "${SSH_PORT}:22")
-  elif [ "$HTTPS_ENABLED" = "true" ]; then
-    port_args+=(-p "${HTTPS_PORT}:443" -p "127.0.0.1:${GW_PORT}:18789" -p "127.0.0.1:${WEB_PORT}:3000" -p "${SSH_PORT}:22")
   else
-    port_args+=(-p "${GW_PORT}:18789" -p "${WEB_PORT}:3000" -p "${SSH_PORT}:22")
+    port_args+=(-p "${HTTPS_PORT}:443" -p "127.0.0.1:${GW_PORT}:18789" -p "127.0.0.1:${WEB_PORT}:3000" -p "${SSH_PORT}:22")
   fi
 
   # Build volume arguments
@@ -1120,13 +1115,9 @@ create_and_start(){
   configure_firewall_and_fail2ban
 
   success "容器已部署并启动"
-  if [ "$HTTPS_ENABLED" = "true" ]; then
-    local url_suffix=""
-    [ "$HTTPS_PORT" != "443" ] && url_suffix=":${HTTPS_PORT}"
-    info "访问：主站 https://${DOMAIN}${url_suffix}"
-  else
-    info "访问：Gateway http://<host>:${GW_PORT}  管理面板 http://<host>:${WEB_PORT}"
-  fi
+  local url_suffix=""
+  [ "$HTTPS_PORT" != "443" ] && url_suffix=":${HTTPS_PORT}"
+  info "访问：主站 https://${DOMAIN}${url_suffix}"
 
   # 显示 SSH 登录信息
   echo ""

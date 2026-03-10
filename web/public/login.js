@@ -11,9 +11,10 @@ async function api(url, opts = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
-function setHint(msg, type = '') {
+function setHint(msg, type = '', html = false) {
   const el = $('login-hint');
-  el.textContent = msg || '';
+  if (html) el.innerHTML = msg || '';
+  else el.textContent = msg || '';
   el.className = 'auth-hint' + (type ? ` ${type}` : '');
 }
 
@@ -82,6 +83,13 @@ async function doSubmit() {
     if (r.status === 409 && r.data?.setupRequired) {
       setSetupMode(true);
       setHint(r.data?.error || '需要先初始化', 'error');
+      return;
+    }
+    if (r.status === 429 && r.data?.locked && r.data?.resetHint) {
+      const escaped = r.data.error.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const hintEscaped = r.data.resetHint.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/openclaw-reset-password/, '<code style="background:#333;padding:2px 6px;border-radius:3px;font-family:monospace;user-select:all">openclaw-reset-password</code>');
+      setHint(escaped + '<br><br>' + hintEscaped, 'error', true);
       return;
     }
     setHint(r.data?.error || '登录失败', 'error');
