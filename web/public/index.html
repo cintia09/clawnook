@@ -750,24 +750,71 @@
       <!-- Plugins -->
       <section class="page" id="page-plugins" data-title="插件市场">
         <div class="card">
-          <div class="row" style="justify-content:space-between">
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
             <div>
               <div style="font-weight:900;font-size:18px">插件市场</div>
-              <div class="muted small" style="margin-top:4px">一键安装常用 Skills / 增强功能</div>
+              <div class="muted small" style="margin-top:4px">管理 Skills（知识包）和 Extensions（功能扩展），增强 OpenClaw 的能力</div>
             </div>
-            <div class="row">
-              <button class="btn" id="btn-plugins-refresh">刷新</button>
+            <button class="btn" id="btn-plugins-refresh">刷新</button>
+          </div>
+
+          <!-- 说明 -->
+          <div style="margin-top:14px;padding:12px 14px;background:#1a1a2e;border-radius:8px;line-height:1.7">
+            <div class="muted small">
+              <b style="color:#f5f5f7">📖 Skills</b> — Markdown 驱动的知识包，为 Agent 注入专业领域能力（如 GitHub 操作、Notion 读写等）。每个 Skill 是一个包含 <code>SKILL.md</code> 的目录。<br>
+              <b style="color:#f5f5f7">🧩 Extensions</b> — TypeScript 插件，扩展 OpenClaw 运行时功能（如新的消息通道、工具集、存储后端等）。通过 npm 安装。
             </div>
           </div>
+
           <div class="sep"></div>
 
           <div class="tabs" id="plugins-tabs">
-            <button class="tab active" data-ptab="skills">Skills</button>
-            <button class="tab" data-ptab="pro">增强功能</button>
+            <button class="tab active" data-ptab="skills">📖 Skills</button>
+            <button class="tab" data-ptab="extensions">🧩 Extensions</button>
           </div>
 
-          <div id="plugins-skills"></div>
-          <div id="plugins-pro" hidden></div>
+          <!-- Skills Tab -->
+          <div id="plugins-skills">
+            <div style="margin-bottom:14px">
+              <div class="muted small" style="margin-bottom:10px">OpenClaw 内置 48+ Skills。以下为用户自行安装的 Skills，存储在 <code>~/.openclaw/skills/</code></div>
+              <div class="row" style="gap:8px;flex-wrap:wrap">
+                <input class="input" id="skill-url-input" placeholder="输入 Skill Git 仓库 URL 或名称" style="flex:1;min-width:200px" />
+                <button class="btn btn-primary" id="btn-skill-install">安装 Skill</button>
+              </div>
+              <div class="muted small" style="margin-top:6px">
+                支持 GitHub URL（如 <code>https://github.com/user/my-skill</code>）或本地路径。安装后需重启 Gateway 生效。
+              </div>
+            </div>
+            <div id="skill-install-log" style="display:none">
+              <pre class="terminal" style="height:120px;overflow-y:auto;font-size:11.5px"></pre>
+            </div>
+            <div id="skills-list">
+              <div class="muted small">加载中...</div>
+            </div>
+          </div>
+
+          <!-- Extensions Tab -->
+          <div id="plugins-extensions" hidden>
+            <div style="margin-bottom:14px">
+              <div class="muted small" style="margin-bottom:10px">OpenClaw 内置 40+ Extensions（含 Feishu、Discord、Telegram 等通道）。以下为用户额外安装的 Extensions。</div>
+              <div class="row" style="gap:8px;flex-wrap:wrap">
+                <input class="input" id="ext-npm-input" placeholder="输入 npm 包名（如 @openclaw/my-extension）" style="flex:1;min-width:200px" />
+                <button class="btn btn-primary" id="btn-ext-install">安装 Extension</button>
+              </div>
+              <div class="muted small" style="margin-top:6px">
+                通过 npm 全局安装 OpenClaw 扩展包。安装后需重启 Gateway 生效。
+              </div>
+            </div>
+            <div id="ext-install-log" style="display:none">
+              <pre class="terminal" style="height:120px;overflow-y:auto;font-size:11.5px"></pre>
+            </div>
+            <div id="extensions-list">
+              <div class="muted small">加载中...</div>
+            </div>
+          </div>
+
+          <!-- 操作结果 -->
+          <span class="muted small" id="plugins-result" style="margin-top:6px;display:block"></span>
         </div>
       </section>
 

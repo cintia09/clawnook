@@ -528,15 +528,6 @@ function bindTabs(containerId, tabAttr, panelSelector, panelAttr){
 
 bindTabs('msg-tabs', 'data-tab', '#msg-panels .msg-panel', 'data-panel');
 
-$('plugins-tabs')?.addEventListener('click', (e)=>{
-  const t = e.target.closest('.tab');
-  if (!t) return;
-  const ptab = t.dataset.ptab;
-  qa('#plugins-tabs .tab').forEach(x=> x.classList.toggle('active', x===t));
-  $('plugins-skills').hidden = ptab !== 'skills';
-  $('plugins-pro').hidden = ptab !== 'pro';
-});
-
 // ------------------------
 // Dashboard
 // ------------------------
@@ -1943,15 +1934,15 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     syncOpenClawButtons();
   }
   if (restartAccepted) {
-    // 轮询等待 Gateway 真正启动完成（最多 5 分钟）
-    // Gateway 冷启动通常需要 2~3 分钟，预留足够余量
+    // 轮询等待 Gateway 真正启动完成（最多 10 分钟）
+    // Gateway 冷启动通常需要 2~5 分钟（受 Discord/TLS 等外部连接影响），预留足够余量
     const pollStart = Date.now();
-    const pollTimeout = 5 * 60 * 1000;
+    const pollTimeout = 10 * 60 * 1000;
     const pollInterval = 2000;
     // 初始等待：给旧进程退出、新进程启动留时间，避免误判旧进程为"已成功"
     const initialDelay = 2500;
     let gwUp = false;
-    appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 5 分钟）...');
+    appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 10 分钟）...');
     await new Promise(r => setTimeout(r, initialDelay));
     while (Date.now() - pollStart < pollTimeout) {
       await new Promise(r => setTimeout(r, pollInterval));
@@ -1970,7 +1961,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
       appendOcLogLine('✅ Gateway 重启成功');
       toast('重启成功', 'Gateway 已恢复运行');
     } else {
-      appendOcLogLine('⚠️ Gateway 重启超时（5 分钟），请检查状态');
+      appendOcLogLine('⚠️ Gateway 重启超时（10 分钟），请检查状态');
       toast('重启超时', 'Gateway 未在预期时间内恢复，请手动检查');
     }
     ocGatewayRestartRunningRemote = false;
@@ -3231,52 +3222,151 @@ $('btn-strategy-save').addEventListener('click', async ()=>{
 });
 
 // ------------------------
-// Plugins
+// Plugins (Skills & Extensions)
 // ------------------------
-function pluginCard(p){
-  const tag = p.pro ? '<span class="badge pro">PRO</span>' : '<span class="badge">免费</span>';
-  const btnText = p.installed ? '已安装' : '安装';
-  const btnCls = p.installed ? 'btn' : 'btn btn-primary';
-
+function skillCard(s) {
   return `
-    <div class="card" style="margin-bottom:12px">
-      <div class="row" style="justify-content:space-between; align-items:flex-start">
-        <div class="row" style="gap:12px; align-items:flex-start">
-          <div style="font-size:22px; line-height:1">${escapeHtml(p.icon||'🧩')}</div>
-          <div>
-            <div style="font-weight:900">${escapeHtml(p.name)}</div>
-            <div class="muted small" style="margin-top:4px">${escapeHtml(p.desc || '')}</div>
-          </div>
+    <div class="card" style="margin-bottom:10px;padding:10px 14px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700">${escapeHtml(s.name)}</div>
+          <div class="muted small" style="margin-top:2px">${escapeHtml(s.description || s.path || '')}</div>
         </div>
-        <div class="row" style="gap:10px">
-          ${tag}
-          <button class="${btnCls}" data-plugin-install="${escapeHtml(p.id)}" ${p.installed ? 'disabled' : ''}>${btnText}</button>
-        </div>
+        <button class="btn" style="font-size:12px;padding:2px 10px" data-skill-remove="${escapeHtml(s.name)}">移除</button>
       </div>
-    </div>
-  `;
+    </div>`;
 }
 
-async function refreshPlugins(){
+function extensionCard(ext) {
+  return `
+    <div class="card" style="margin-bottom:10px;padding:10px 14px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700">${escapeHtml(ext.name)}</div>
+          <div class="muted small" style="margin-top:2px">${escapeHtml(ext.version ? `v${ext.version}` : '')} ${escapeHtml(ext.description || '')}</div>
+        </div>
+        <button class="btn" style="font-size:12px;padding:2px 10px" data-ext-remove="${escapeHtml(ext.name)}">卸载</button>
+      </div>
+    </div>`;
+}
+
+async function refreshPlugins() {
   const d = await api('/api/plugins/list');
   if (d.error) return toast('加载失败', d.error);
 
-  $('plugins-skills').innerHTML = (d.skills || []).map(pluginCard).join('') || '<div class="muted">暂无</div>';
-  $('plugins-pro').innerHTML = (d.pro || []).map(pluginCard).join('') || '<div class="muted">暂无</div>';
+  const skillsList = d.skills || [];
+  const extsList = d.extensions || [];
+
+  $('skills-list').innerHTML = skillsList.length
+    ? skillsList.map(skillCard).join('')
+    : '<div class="muted small" style="padding:12px 0">暂无用户安装的 Skill。OpenClaw 内置的 48+ Skills 已自动加载，无需安装。</div>';
+
+  $('extensions-list').innerHTML = extsList.length
+    ? extsList.map(extensionCard).join('')
+    : '<div class="muted small" style="padding:12px 0">暂无用户额外安装的 Extension。OpenClaw 内置的 40+ Extensions 已自动加载。</div>';
 }
 
-$('btn-plugins-refresh').addEventListener('click', refreshPlugins);
+$('btn-plugins-refresh')?.addEventListener('click', refreshPlugins);
 
-document.addEventListener('click', async (e)=>{
-  const btn = e.target.closest('[data-plugin-install]');
-  if (!btn) return;
+// Tab switching
+$('plugins-tabs')?.addEventListener('click', (e) => {
+  const t = e.target.closest('.tab');
+  if (!t) return;
+  const ptab = t.getAttribute('data-ptab');
+  qa('#plugins-tabs .tab').forEach(x => x.classList.toggle('active', x === t));
+  $('plugins-skills').hidden = ptab !== 'skills';
+  $('plugins-extensions').hidden = ptab !== 'extensions';
+});
 
-  const id = btn.getAttribute('data-plugin-install');
+// Install Skill from git URL
+$('btn-skill-install')?.addEventListener('click', async () => {
+  const input = $('skill-url-input');
+  const url = (input?.value || '').trim();
+  if (!url) return toast('请输入', '请输入 Skill 的 Git 仓库 URL 或名称');
+
+  const logEl = $('skill-install-log');
+  const pre = logEl?.querySelector('pre');
+  logEl.style.display = '';
+  pre.textContent = '正在安装...\n';
+
+  const btn = $('btn-skill-install');
   btn.disabled = true;
   btn.textContent = '安装中...';
 
-  const r = await api('/api/plugins/install', { method:'POST', body:{ id } });
-  toast(r.success ? '安装成功' : '安装失败', r.error||'');
+  try {
+    const r = await api('/api/plugins/skill/install', { method: 'POST', body: { url }, timeoutMs: 120000 });
+    pre.textContent += (r.output || r.error || (r.success ? '安装成功' : '未知错误')) + '\n';
+    if (r.success) {
+      toast('安装成功', `Skill 已安装，重启 Gateway 后生效`);
+      input.value = '';
+      refreshPlugins();
+    } else {
+      toast('安装失败', r.error || '');
+    }
+  } catch (e) {
+    pre.textContent += `错误: ${e.message}\n`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '安装 Skill';
+  }
+});
+
+// Install Extension from npm
+$('btn-ext-install')?.addEventListener('click', async () => {
+  const input = $('ext-npm-input');
+  const pkg = (input?.value || '').trim();
+  if (!pkg) return toast('请输入', '请输入 npm 包名');
+
+  const logEl = $('ext-install-log');
+  const pre = logEl?.querySelector('pre');
+  logEl.style.display = '';
+  pre.textContent = '正在安装...\n';
+
+  const btn = $('btn-ext-install');
+  btn.disabled = true;
+  btn.textContent = '安装中...';
+
+  try {
+    const r = await api('/api/plugins/extension/install', { method: 'POST', body: { package: pkg }, timeoutMs: 120000 });
+    pre.textContent += (r.output || r.error || (r.success ? '安装成功' : '未知错误')) + '\n';
+    if (r.success) {
+      toast('安装成功', `Extension 已安装，重启 Gateway 后生效`);
+      input.value = '';
+      refreshPlugins();
+    } else {
+      toast('安装失败', r.error || '');
+    }
+  } catch (e) {
+    pre.textContent += `错误: ${e.message}\n`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '安装 Extension';
+  }
+});
+
+// Remove skill
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-skill-remove]');
+  if (!btn) return;
+  const name = btn.getAttribute('data-skill-remove');
+  if (!confirm(`确认移除 Skill "${name}"？`)) return;
+  btn.disabled = true;
+  btn.textContent = '移除中...';
+  const r = await api('/api/plugins/skill/remove', { method: 'POST', body: { name } });
+  toast(r.success ? '已移除' : '移除失败', r.error || '');
+  refreshPlugins();
+});
+
+// Remove extension
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-ext-remove]');
+  if (!btn) return;
+  const name = btn.getAttribute('data-ext-remove');
+  if (!confirm(`确认卸载 Extension "${name}"？`)) return;
+  btn.disabled = true;
+  btn.textContent = '卸载中...';
+  const r = await api('/api/plugins/extension/remove', { method: 'POST', body: { name }, timeoutMs: 60000 });
+  toast(r.success ? '已卸载' : '卸载失败', r.error || '');
   refreshPlugins();
 });
 

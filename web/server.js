@@ -4,7 +4,7 @@
 // - Auth: signed cookie + PBKDF2 (docker-config.json)
 // - Keep legacy APIs: status/config/restart/openclaw/logs/trading
 // - WebSocket: /api/ws/logs (tail gateway log), /api/ws/terminal (interactive shell)
-// - Plugins market APIs: /api/plugins/list + /api/plugins/install
+// - Plugins market APIs: /api/plugins/list + skill/extension install/remove
 // - STT config APIs: /api/stt/config
 // ============================================================
 
@@ -314,7 +314,6 @@ const CONFIG_PATH = '/root/.openclaw/openclaw.json';
 const WEB_AI_CONFIG_PATH = '/root/.openclaw/web-ai-config.json';
 const DOCKER_CONFIG_PATH = '/root/.openclaw/docker-config.json';
 const STT_CONFIG_PATH = '/root/.openclaw/stt-config.json';
-const PLUGINS_STATE_PATH = '/root/.openclaw/plugins-state.json';
 const OPENCLAW_SOURCE_INSTALL_META_PATH = '/root/.openclaw/openclaw-source-install.json';
 const OPENCLAW_SOURCE_REPO_DEFAULT = 'openclaw/openclaw';
 const OPENCLAW_SOURCE_ROOT = '/root/.openclaw/openclaw-source';
@@ -7914,61 +7913,186 @@ app.post('/api/trading/update', (req, res) => {
 });
 
 // ============================================================
-// Plugins market
+// Plugins market — Skills & Extensions
 // ============================================================
-const PLUGINS_CATALOG = {
-  skills: [
-    { id: 'news-push', icon: '📰', name: '新闻推送', desc: '定时推送财经/国际/国内新闻', price: '免费' },
-    { id: 'weather', icon: '🌤', name: '天气查询', desc: '查天气预报', price: '免费' },
-    { id: 'scheduler', icon: '⏰', name: '定时提醒', desc: 'cron任务管理', price: '免费' },
-    { id: 'image-gen', icon: '📷', name: '图片生成', desc: 'AI生成图片(Pollinations)', price: '免费' },
-    { id: 'hospital', icon: '🏥', name: '医院查询', desc: '门诊挂号信息', price: '免费' }
-  ],
-  pro: [
-    { id: 'memory-context', icon: '🧠', name: '增强记忆', desc: 'memory-context对话记忆管理', pro: true },
-    { id: 'quant-trading', icon: '📈', name: '量化交易', desc: 'A股自动化交易系统', pro: true },
-    { id: 'xiaomi-speaker', icon: '🔊', name: '小米音箱', desc: '智能音箱语音控制', pro: true },
-    { id: 'taobao-sourcing', icon: '🛒', name: '淘宝选品', desc: '商品调研对比', pro: true },
-    { id: 'xiaohongshu-post', icon: '📕', name: '小红书发帖', desc: '自动发布笔记', pro: true }
-  ]
-};
+const OPENCLAW_SKILLS_DIR = '/root/.openclaw/skills';
 
-function readPluginState() {
-  const st = readJson(PLUGINS_STATE_PATH, { installed: {}, updatedAt: null });
-  st.installed = st.installed || {};
-  return st;
+function listUserSkills() {
+  try {
+    if (!fs.existsSync(OPENCLAW_SKILLS_DIR)) return [];
+    const entries = fs.readdirSync(OPENCLAW_SKILLS_DIR, { withFileTypes: true });
+    return entries
+      .filter(e => e.isDirectory())
+      .map(e => {
+        const dir = path.join(OPENCLAW_SKILLS_DIR, e.name);
+        const skillMd = path.join(dir, 'SKILL.md');
+        let description = '';
+        if (fs.existsSync(skillMd)) {
+          const content = fs.readFileSync(skillMd, 'utf8');
+          const firstLine = content.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
+          description = (firstLine || '').trim().slice(0, 120);
+        }
+        return { name: e.name, description, path: dir };
+      });
+  } catch {
+    return [];
+  }
 }
 
-function writePluginState(st) {
-  st.updatedAt = new Date().toISOString();
-  writeJson(PLUGINS_STATE_PATH, st);
+async function listUserExtensions() {
+  try {
+    const [json, npmRoot] = await Promise.all([
+      runCommandTextAsync('npm list -g --depth=0 --json 2>/dev/null', 10000),
+      runCommandTextAsync('npm root -g 2>/dev/null', 3000)
+    ]);
+    if (!json || !npmRoot) return [];
+    const parsed = JSON.parse(json);
+    const deps = parsed.dependencies || {};
+    const results = [];
+    for (const [name, info] of Object.entries(deps)) {
+      // Skip openclaw itself and non-openclaw packages
+      if (name === 'openclaw' || name === 'npm' || name === 'corepack') continue;
+      const pluginJson = path.join(npmRoot, name, 'openclaw.plugin.json');
+      const pkgJson = path.join(npmRoot, name, 'package.json');
+      let isOpenClawExt = false;
+      let description = '';
+      let version = info.version || '';
+      // Check openclaw.plugin.json existence
+      if (fs.existsSync(pluginJson)) {
+        isOpenClawExt = true;
+      } else if (fs.existsSync(pkgJson)) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+          if (pkg.openclaw || (pkg.keywords && pkg.keywords.includes('openclaw'))) {
+            isOpenClawExt = true;
+          }
+          description = pkg.description || '';
+          version = pkg.version || version;
+        } catch {}
+      }
+      if (isOpenClawExt) {
+        results.push({ name, version, description });
+      }
+    }
+    return results;
+  } catch {
+    return [];
+  }
 }
 
-app.get('/api/plugins/list', (req, res) => {
-  const st = readPluginState();
-  const withInstalled = (arr) => arr.map(p => ({ ...p, installed: !!st.installed[p.id] }));
-  res.json({
-    skills: withInstalled(PLUGINS_CATALOG.skills),
-    pro: withInstalled(PLUGINS_CATALOG.pro)
-  });
+app.get('/api/plugins/list', async (req, res) => {
+  try {
+    const [skills, extensions] = await Promise.all([
+      Promise.resolve(listUserSkills()),
+      listUserExtensions()
+    ]);
+    res.json({ skills, extensions });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.post('/api/plugins/install', (req, res) => {
-  const { id } = req.body || {};
-  if (!id) return res.status(400).json({ error: 'missing id' });
+app.post('/api/plugins/skill/install', async (req, res) => {
+  const { url } = req.body || {};
+  if (!url || typeof url !== 'string') return res.status(400).json({ error: 'missing url' });
 
-  const all = [...PLUGINS_CATALOG.skills, ...PLUGINS_CATALOG.pro];
-  const exists = all.some(p => p.id === id);
-  if (!exists) return res.status(404).json({ error: 'plugin not found' });
+  // Validate: must look like a git URL or simple name
+  const sanitized = url.trim();
+  if (sanitized.length > 500 || /[;&|`$(){}]/.test(sanitized)) {
+    return res.status(400).json({ error: '无效的 URL' });
+  }
 
-  const st = readPluginState();
-  st.installed[id] = { installedAt: new Date().toISOString() };
-  writePluginState(st);
+  try {
+    // Ensure skills dir exists
+    if (!fs.existsSync(OPENCLAW_SKILLS_DIR)) {
+      fs.mkdirSync(OPENCLAW_SKILLS_DIR, { recursive: true });
+    }
+    // Derive skill name from URL
+    const parts = sanitized.replace(/\.git$/, '').split('/');
+    const skillName = parts[parts.length - 1] || 'skill';
+    const dest = path.join(OPENCLAW_SKILLS_DIR, skillName);
 
-  // TODO: Actually install the skill — e.g. git clone the skill repo into
-  // the openclaw skills directory, run any setup scripts, etc.
-  // For now we only update the JSON state.
-  res.json({ success: true });
+    if (fs.existsSync(dest)) {
+      return res.status(409).json({ error: `Skill "${skillName}" 已存在，请先移除再安装` });
+    }
+
+    const output = await runCommandTextAsync(
+      `git clone --depth=1 ${JSON.stringify(sanitized)} ${JSON.stringify(dest)} 2>&1`,
+      120000
+    );
+    // Verify SKILL.md exists
+    const hasSkillMd = fs.existsSync(path.join(dest, 'SKILL.md'));
+    res.json({
+      success: true,
+      output: output + (hasSkillMd ? '' : '\n⚠️ 注意: 该仓库中未找到 SKILL.md 文件')
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/plugins/skill/remove', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || typeof name !== 'string') return res.status(400).json({ error: 'missing name' });
+
+  // Prevent path traversal
+  const safeName = path.basename(name);
+  if (safeName !== name || name.includes('..')) {
+    return res.status(400).json({ error: '无效的名称' });
+  }
+
+  const dir = path.join(OPENCLAW_SKILLS_DIR, safeName);
+  if (!fs.existsSync(dir)) {
+    return res.status(404).json({ error: `Skill "${safeName}" 不存在` });
+  }
+
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/plugins/extension/install', async (req, res) => {
+  const pkg = (req.body || {}).package;
+  if (!pkg || typeof pkg !== 'string') return res.status(400).json({ error: 'missing package' });
+
+  const sanitized = pkg.trim();
+  // Basic validation: npm package names should not contain shell metacharacters
+  if (sanitized.length > 200 || /[;&|`$(){}]/.test(sanitized)) {
+    return res.status(400).json({ error: '无效的包名' });
+  }
+
+  try {
+    const output = await runCommandTextAsync(
+      `npm install -g ${JSON.stringify(sanitized)} 2>&1`,
+      120000
+    );
+    res.json({ success: true, output });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/plugins/extension/remove', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || typeof name !== 'string') return res.status(400).json({ error: 'missing name' });
+
+  const sanitized = name.trim();
+  if (sanitized.length > 200 || /[;&|`$(){}]/.test(sanitized)) {
+    return res.status(400).json({ error: '无效的名称' });
+  }
+
+  try {
+    const output = await runCommandTextAsync(
+      `npm uninstall -g ${JSON.stringify(sanitized)} 2>&1`,
+      60000
+    );
+    res.json({ success: true, output });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ============================================================
