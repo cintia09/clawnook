@@ -333,7 +333,7 @@ const DEVICE_PAIRING_PAIRED_PATH = '/root/.openclaw/devices/paired.json';
 const TRADING_DIR = '/root/trading-system';
 const STRATEGY_PARAMS_PATH = path.join(TRADING_DIR, 'strategy_params.json');
 
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && 'body' in err) {
@@ -7947,12 +7947,15 @@ function listUserSkills() {
         const dir = path.join(OPENCLAW_SKILLS_DIR, e.name);
         const skillMd = path.join(dir, 'SKILL.md');
         let description = '';
+        let contentHash = '';
         if (fs.existsSync(skillMd)) {
-          const content = fs.readFileSync(skillMd, 'utf8');
-          const firstLine = content.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
-          description = (firstLine || '').trim().slice(0, 120);
+          const parsed = parseSkillMd(skillMd);
+          if (parsed) {
+            description = parsed.description || '';
+            contentHash = crypto.createHash('md5').update(parsed.content).digest('hex');
+          }
         }
-        return { name: e.name, description, path: dir };
+        return { name: e.name, description, path: dir, contentHash };
       });
   } catch {
     return [];
@@ -8239,11 +8242,20 @@ app.post('/api/plugins/skill/scan', async (req, res) => {
     // Run security validation on each found skill
     const results = skills.map(s => {
       const check = validateSkillSecurity(s.absPath);
+      // Compute content hash for update detection
+      let contentHash = '';
+      try {
+        const smPath = path.join(s.absPath, 'SKILL.md');
+        if (fs.existsSync(smPath)) {
+          contentHash = crypto.createHash('md5').update(fs.readFileSync(smPath, 'utf8')).digest('hex');
+        }
+      } catch {}
       return {
         ...s,
         valid: check.valid,
         errors: check.errors,
         warnings: check.warnings,
+        contentHash,
         installed: fs.existsSync(path.join(OPENCLAW_SKILLS_DIR, s.dirName))
       };
     });
@@ -8289,10 +8301,7 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
     }
 
     const dest = path.join(OPENCLAW_SKILLS_DIR, safeName);
-    if (fs.existsSync(dest)) {
-      results.push({ name: safeName, success: false, error: '已存在，请先移除' });
-      continue;
-    }
+    const existed = fs.existsSync(dest);
 
     // Determine source path
     let srcPath = absPath;
@@ -8314,6 +8323,10 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
     }
 
     try {
+      // Remove existing if updating
+      if (existed) {
+        fs.rmSync(dest, { recursive: true, force: true });
+      }
       // Copy skill dir — use cp -a for proper copy
       execSync(`cp -a ${JSON.stringify(srcPath)} ${JSON.stringify(dest)}`, { timeout: 30000 });
       // Remove .git dir if present (from cloned repos)
@@ -8321,7 +8334,7 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
       if (fs.existsSync(gitDir)) {
         fs.rmSync(gitDir, { recursive: true, force: true });
       }
-      results.push({ name: safeName, success: true, warnings: check.warnings });
+      results.push({ name: safeName, success: true, updated: existed, warnings: check.warnings });
     } catch (e) {
       results.push({ name: safeName, success: false, error: e.message });
     }
@@ -8329,6 +8342,78 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
 
   // Clean up scan temp
   cleanScanTmp();
+
+  const successCount = results.filter(r => r.success).length;
+  res.json({
+    success: successCount > 0,
+    total: skills.length,
+    installed: successCount,
+    results
+  });
+});
+
+// Upload and install skills from browser local filesystem
+app.post('/api/plugins/skill/upload-install', (req, res) => {
+  const { skills } = req.body || {};
+  if (!Array.isArray(skills) || skills.length === 0) {
+    return res.status(400).json({ error: '请选择要安装的 Skills' });
+  }
+  if (skills.length > 50) {
+    return res.status(400).json({ error: '单次最多安装 50 个 Skills' });
+  }
+
+  if (!fs.existsSync(OPENCLAW_SKILLS_DIR)) {
+    fs.mkdirSync(OPENCLAW_SKILLS_DIR, { recursive: true });
+  }
+
+  const results = [];
+  for (const skill of skills) {
+    const { dirName, files } = skill;
+    if (!dirName || typeof dirName !== 'string') {
+      results.push({ name: dirName || '?', success: false, error: '无效的 skill 名称' });
+      continue;
+    }
+    const safeName = path.basename(dirName);
+    if (safeName !== dirName || /[.]{2}/.test(dirName)) {
+      results.push({ name: dirName, success: false, error: '名称包含非法字符' });
+      continue;
+    }
+    if (!Array.isArray(files) || files.length === 0) {
+      results.push({ name: safeName, success: false, error: '无文件内容' });
+      continue;
+    }
+    if (!files.some(f => f.path === 'SKILL.md')) {
+      results.push({ name: safeName, success: false, error: '缺少 SKILL.md 文件' });
+      continue;
+    }
+
+    const dest = path.join(OPENCLAW_SKILLS_DIR, safeName);
+    const existed = fs.existsSync(dest);
+
+    try {
+      if (existed) {
+        fs.rmSync(dest, { recursive: true, force: true });
+      }
+      fs.mkdirSync(dest, { recursive: true });
+
+      for (const f of files) {
+        if (!f.path || typeof f.path !== 'string' || typeof f.content !== 'string') continue;
+        const safePath = path.normalize(f.path);
+        if (safePath.startsWith('..') || path.isAbsolute(safePath)) continue;
+        // Block hidden files
+        if (safePath.split('/').some(seg => seg.startsWith('.'))) continue;
+        const fileDest = path.join(dest, safePath);
+        fs.mkdirSync(path.dirname(fileDest), { recursive: true });
+        fs.writeFileSync(fileDest, Buffer.from(f.content, 'base64'));
+      }
+
+      // Server-side security validation (defense in depth)
+      const check = validateSkillSecurity(dest);
+      results.push({ name: safeName, success: true, updated: existed, warnings: check.warnings });
+    } catch (e) {
+      results.push({ name: safeName, success: false, error: e.message });
+    }
+  }
 
   const successCount = results.filter(r => r.success).length;
   res.json({

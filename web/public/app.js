@@ -3260,37 +3260,48 @@ $('btn-strategy-save').addEventListener('click', async ()=>{
 // Plugins (Skills & Extensions)
 // ------------------------
 let _scanResults = []; // cached scan results
+let _installedSkills = []; // cached installed skills for comparison
+let _scanIsLocal = false; // whether current scan is from browser local
 
 function skillCard(s) {
   return `
     <div class="card" style="margin-bottom:10px;padding:10px 14px">
       <div class="row" style="justify-content:space-between;align-items:center">
-        <div>
+        <div style="flex:1;min-width:0">
           <div style="font-weight:700">${escapeHtml(s.name)}</div>
-          <div class="muted small" style="margin-top:2px">${escapeHtml(s.description || s.path || '')}</div>
+          ${s.description ? `<div class="muted small" style="margin-top:2px">${escapeHtml(s.description)}</div>` : ''}
         </div>
-        <button class="btn" style="font-size:12px;padding:2px 10px" data-skill-remove="${escapeHtml(s.name)}">移除</button>
+        <button class="btn" style="font-size:12px;padding:2px 10px;white-space:nowrap" data-skill-remove="${escapeHtml(s.name)}">移除</button>
       </div>
     </div>`;
 }
 
 function scanSkillCard(s, idx) {
-  const statusBadge = s.installed
-    ? '<span style="color:#4caf50;font-size:11px;margin-left:6px">✓ 已安装</span>'
-    : !s.valid
-      ? '<span style="color:#f44;font-size:11px;margin-left:6px">✗ 无效</span>'
-      : '';
+  // Match with installed skills
+  const installed = _installedSkills.find(i => i.name === s.dirName);
+  const hasUpdate = installed && s.contentHash && installed.contentHash && s.contentHash !== installed.contentHash;
+  const isLocalScan = !!s._localScan;
+  let statusBadge = '';
+  if (installed && hasUpdate) {
+    statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px;font-weight:700">↑ 有更新</span>';
+  } else if (installed && isLocalScan) {
+    statusBadge = '<span style="color:#2196f3;font-size:11px;margin-left:6px">⟳ 已安装 (可覆盖)</span>';
+  } else if (installed) {
+    statusBadge = '<span style="color:#4caf50;font-size:11px;margin-left:6px">✓ 已安装</span>';
+  } else if (!s.valid) {
+    statusBadge = '<span style="color:#f44;font-size:11px;margin-left:6px">✗ 无效</span>';
+  }
   const warningHtml = (s.warnings || []).length
     ? `<div class="muted small" style="color:#ffa726;margin-top:2px">⚠ ${escapeHtml(s.warnings.join('; '))}</div>`
     : '';
   const errorHtml = (s.errors || []).length
     ? `<div class="muted small" style="color:#f44;margin-top:2px">✗ ${escapeHtml(s.errors.join('; '))}</div>`
     : '';
-  const disabled = s.installed || !s.valid;
+  const canInstall = s.valid && (!installed || hasUpdate || isLocalScan);
   return `
-    <div class="card" style="margin-bottom:6px;padding:8px 12px;opacity:${disabled ? '0.6' : '1'}">
+    <div class="card" style="margin-bottom:6px;padding:8px 12px;opacity:${!canInstall && !hasUpdate ? '0.6' : '1'}">
       <div class="row" style="align-items:flex-start;gap:8px">
-        <input type="checkbox" data-scan-idx="${idx}" ${disabled ? 'disabled' : ''} style="margin-top:4px" />
+        <input type="checkbox" data-scan-idx="${idx}" ${canInstall ? '' : 'disabled'} style="margin-top:4px" />
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:13px">${escapeHtml(s.name)}${statusBadge}</div>
           <div class="muted small" style="margin-top:1px">${escapeHtml(s.description || '')}</div>
@@ -3320,6 +3331,7 @@ async function refreshPlugins() {
 
   const skillsList = d.skills || [];
   const extsList = d.extensions || [];
+  _installedSkills = skillsList; // cache for comparison
 
   $('skills-list').innerHTML = skillsList.length
     ? skillsList.map(skillCard).join('')
@@ -3343,10 +3355,158 @@ $('plugins-tabs')?.addEventListener('click', (e) => {
 });
 
 // Install Skill — Scan workflow
+// --- Client-side helpers for local dir scanning ---
+const SKILL_DANGEROUS_PATTERNS_CLIENT = [
+  /\beval\s*\(/i, /\bexec\s*\(/i, /\bspawn\s*\(/i,
+  /\brm\s+-rf\b/i, /\bsudo\b/i, /\bcurl\b.*\|\s*bash/i,
+  /\bwget\b.*\|\s*bash/i, /process\.env/i,
+  /child_process/i, /\brequire\s*\(/i, /\bimport\s*\(/i
+];
+const SKILL_SUSPICIOUS_EXTS = ['.sh', '.bash', '.py', '.js', '.ts', '.exe', '.bat', '.cmd', '.ps1', '.rb', '.pl'];
+
+function clientParseSkillMd(content) {
+  const lines = content.split('\n');
+  let name = '', description = '', inFm = false;
+  for (const l of lines) {
+    const h = l.match(/^#{1,3}\s+(.+)/);
+    if (h) { name = h[1].trim(); break; }
+  }
+  for (const l of lines) {
+    const t = l.trim();
+    if (t === '---') { inFm = !inFm; continue; }
+    if (inFm || !t || t.startsWith('#')) continue;
+    description = t.slice(0, 200);
+    break;
+  }
+  return { name, description, content };
+}
+
+function clientValidateSecurity(files) {
+  const warnings = [], errors = [];
+  const skillMdFile = files.find(f => f.path === 'SKILL.md');
+  if (!skillMdFile) { errors.push('缺少 SKILL.md 文件'); return { valid: false, errors, warnings }; }
+  for (const pat of SKILL_DANGEROUS_PATTERNS_CLIENT) {
+    if (pat.test(skillMdFile.textContent || '')) warnings.push(`SKILL.md 包含可疑模式: ${pat.source}`);
+  }
+  for (const f of files) {
+    const ext = '.' + f.path.split('.').pop().toLowerCase();
+    if (SKILL_SUSPICIOUS_EXTS.includes(ext)) warnings.push(`包含脚本文件: ${f.path}`);
+    if (f.size > 5 * 1024 * 1024) warnings.push(`大文件 (>${Math.round(f.size / 1048576)}MB): ${f.path}`);
+    if (f.path !== 'SKILL.md' && f.path.endsWith('.md')) {
+      for (const pat of SKILL_DANGEROUS_PATTERNS_CLIENT) {
+        if (pat.test(f.textContent || '')) { warnings.push(`${f.path} 包含可疑模式: ${pat.source}`); break; }
+      }
+    }
+  }
+  if (files.length > 200) warnings.push(`目录包含过多文件 (>${files.length})`);
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.split(',')[1]);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function browserScanDirectory(dirHandle, maxDepth) {
+  if (!maxDepth) maxDepth = 8;
+  const results = [];
+
+  async function walk(handle, relPath, depth) {
+    if (depth > maxDepth) return;
+    let hasSkillMd = false;
+    let skillMdText = '';
+    const children = [];
+    for await (const [name, entry] of handle.entries()) {
+      children.push({ name, entry });
+      if (name === 'SKILL.md' && entry.kind === 'file') {
+        const file = await entry.getFile();
+        skillMdText = await file.text();
+        hasSkillMd = true;
+      }
+    }
+    if (hasSkillMd) {
+      const files = [];
+      async function collect(h, prefix, d) {
+        if (d > 3 || files.length > 200) return;
+        for await (const [n, e] of h.entries()) {
+          if (n.startsWith('.')) continue;
+          if (e.kind === 'file') {
+            const file = await e.getFile();
+            if (file.size > 5 * 1024 * 1024) { files.push({ path: prefix ? prefix + '/' + n : n, size: file.size, content: '', textContent: '' }); continue; }
+            const b64 = await readFileAsBase64(file);
+            let textContent = '';
+            if (n.endsWith('.md') || n.endsWith('.txt') || n.endsWith('.yaml') || n.endsWith('.yml') || n.endsWith('.json')) {
+              textContent = await file.text();
+            }
+            files.push({ path: prefix ? prefix + '/' + n : n, content: b64, size: file.size, textContent });
+          } else if (e.kind === 'directory') {
+            await collect(e, prefix ? prefix + '/' + n : n, d + 1);
+          }
+        }
+      }
+      await collect(handle, '', 0);
+      const parsed = clientParseSkillMd(skillMdText);
+      const check = clientValidateSecurity(files);
+      // Compute simple hash of SKILL.md content
+      let contentHash = '';
+      try {
+        const enc = new TextEncoder().encode(skillMdText);
+        const buf = await crypto.subtle.digest('SHA-256', enc);
+        contentHash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+      } catch {}
+      results.push({
+        name: parsed.name || handle.name,
+        dirName: handle.name,
+        relPath: relPath || '.',
+        description: parsed.description,
+        valid: check.valid,
+        errors: check.errors,
+        warnings: check.warnings,
+        contentHash,
+        files, // needed for upload
+        _localScan: true
+      });
+      return;
+    }
+    for (const { name, entry } of children) {
+      if (entry.kind !== 'directory') continue;
+      if (name.startsWith('.') || name === 'node_modules' || name === '__pycache__') continue;
+      await walk(entry, relPath ? relPath + '/' + name : name, depth + 1);
+    }
+  }
+
+  await walk(dirHandle, '', 0);
+  return results;
+}
+
+function showScanResults(skills, logEl) {
+  _scanResults = skills;
+  const pre = logEl?.querySelector('pre');
+  if (pre) pre.textContent += `找到 ${skills.length} 个 Skill\n`;
+  if (skills.length === 0) {
+    if (pre) pre.textContent += '该源中未找到包含 SKILL.md 的目录\n';
+    $('skill-scan-results').style.display = 'none';
+    return;
+  }
+  // Mark installed state
+  for (const s of _scanResults) {
+    s.installed = _installedSkills.some(i => i.name === s.dirName);
+  }
+  $('skill-scan-title').textContent = `扫描结果 — 共 ${skills.length} 个 Skill`;
+  $('skill-scan-list').innerHTML = _scanResults.map((s, i) => scanSkillCard(s, i)).join('');
+  $('skill-scan-results').style.display = '';
+  if (logEl) logEl.style.display = 'none';
+}
+
+// Scan from GitHub URL
 $('btn-skill-scan')?.addEventListener('click', async () => {
   const input = $('skill-url-input');
   const source = (input?.value || '').trim();
-  if (!source) return toast('请输入', '请输入 GitHub URL 或本地目录路径');
+  if (!source) return toast('请输入', '请输入 GitHub URL');
 
   const logEl = $('skill-install-log');
   const pre = logEl?.querySelector('pre');
@@ -3356,29 +3516,20 @@ $('btn-skill-scan')?.addEventListener('click', async () => {
   const btn = $('btn-skill-scan');
   btn.disabled = true;
   btn.textContent = '扫描中...';
+  _scanIsLocal = false;
 
   try {
+    // Refresh installed list first
+    const list = await api('/api/plugins/list');
+    if (list.skills) _installedSkills = list.skills;
+
     const r = await api('/api/plugins/skill/scan', { method: 'POST', body: { source }, timeoutMs: 180000 });
     if (r.error) {
       pre.textContent += `错误: ${r.error}\n`;
       toast('扫描失败', r.error);
       return;
     }
-
-    _scanResults = r.skills || [];
-    pre.textContent += `找到 ${r.total} 个 Skill\n`;
-
-    if (r.total === 0) {
-      pre.textContent += '该源中未找到包含 SKILL.md 的目录\n';
-      $('skill-scan-results').style.display = 'none';
-      return;
-    }
-
-    // Show scan results
-    $('skill-scan-title').textContent = `扫描结果 — 共 ${r.total} 个 Skill`;
-    $('skill-scan-list').innerHTML = _scanResults.map((s, i) => scanSkillCard(s, i)).join('');
-    $('skill-scan-results').style.display = '';
-    logEl.style.display = 'none';
+    showScanResults(r.skills || [], logEl);
   } catch (e) {
     pre.textContent += `错误: ${e.message}\n`;
   } finally {
@@ -3387,12 +3538,53 @@ $('btn-skill-scan')?.addEventListener('click', async () => {
   }
 });
 
-// Browse local directory
-$('btn-skill-browse')?.addEventListener('click', () => {
-  const dir = prompt('请输入容器内的本地目录路径（绝对路径）：\n例如: /root/my-skills 或 /tmp/some-repo');
-  if (!dir) return;
-  $('skill-url-input').value = dir.trim();
-  $('btn-skill-scan')?.click();
+// Browse local directory (browser filesystem)
+$('btn-skill-browse')?.addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) {
+    toast('不支持', '当前浏览器不支持目录选择 API，请使用 Chrome 或 Edge');
+    return;
+  }
+  let dirHandle;
+  try {
+    dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    toast('选择失败', e.message);
+    return;
+  }
+
+  const logEl = $('skill-install-log');
+  const pre = logEl?.querySelector('pre');
+  logEl.style.display = '';
+  pre.textContent = `正在扫描本地目录: ${dirHandle.name}\n`;
+  _scanIsLocal = true;
+
+  const btn = $('btn-skill-browse');
+  btn.disabled = true;
+  btn.textContent = '扫描中...';
+
+  try {
+    // Refresh installed list
+    const list = await api('/api/plugins/list');
+    if (list.skills) _installedSkills = list.skills;
+
+    pre.textContent += '正在读取文件并进行安全扫描...\n';
+    const skills = await browserScanDirectory(dirHandle);
+
+    // Show security scan summary
+    const warnCount = skills.reduce((n, s) => n + (s.warnings?.length || 0), 0);
+    const invalidCount = skills.filter(s => !s.valid).length;
+    if (warnCount > 0) pre.textContent += `⚠ 安全扫描: ${warnCount} 条警告\n`;
+    if (invalidCount > 0) pre.textContent += `✗ ${invalidCount} 个无效 Skill\n`;
+    if (warnCount === 0 && invalidCount === 0 && skills.length > 0) pre.textContent += '✓ 安全扫描通过\n';
+
+    showScanResults(skills, logEl);
+  } catch (e) {
+    pre.textContent += `错误: ${e.message}\n`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📂 本地目录';
+  }
 });
 
 // Select all in scan results
@@ -3428,16 +3620,24 @@ $('btn-skill-install-selected')?.addEventListener('click', async () => {
   btn.textContent = '安装中...';
 
   try {
-    const r = await api('/api/plugins/skill/install-selected', {
-      method: 'POST',
-      body: { skills: selected },
-      timeoutMs: 120000
-    });
+    let r;
+    if (selected.some(s => s._localScan)) {
+      // Browser-local scan: upload files to server
+      const payload = selected.map(s => ({
+        dirName: s.dirName,
+        files: (s.files || []).map(f => ({ path: f.path, content: f.content }))
+      }));
+      r = await api('/api/plugins/skill/upload-install', { method: 'POST', body: { skills: payload }, timeoutMs: 120000 });
+    } else {
+      // Server-side scan (git clone): use existing endpoint
+      r = await api('/api/plugins/skill/install-selected', { method: 'POST', body: { skills: selected }, timeoutMs: 120000 });
+    }
 
     if (r.results) {
       for (const item of r.results) {
         const icon = item.success ? '✓' : '✗';
-        pre.textContent += `${icon} ${item.name}: ${item.success ? '安装成功' : item.error}`;
+        const label = item.updated ? '更新成功' : '安装成功';
+        pre.textContent += `${icon} ${item.name}: ${item.success ? label : item.error}`;
         if (item.warnings?.length) pre.textContent += ` ⚠ ${item.warnings.join('; ')}`;
         pre.textContent += '\n';
       }

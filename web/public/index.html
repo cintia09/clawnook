@@ -781,12 +781,12 @@
               <!-- Scan source input -->
               <div class="muted small" style="margin-bottom:6px;font-weight:600;color:#aaa">扫描 Skill 源</div>
               <div class="row" style="gap:8px;flex-wrap:wrap">
-                <input class="input" id="skill-url-input" placeholder="输入 GitHub URL 或本地目录路径" style="flex:1;min-width:200px" />
+                <input class="input" id="skill-url-input" placeholder="输入 GitHub/GitLab/Gitee URL" style="flex:1;min-width:200px" />
                 <button class="btn btn-primary" id="btn-skill-scan">🔍 扫描</button>
-                <button class="btn" id="btn-skill-browse" title="输入本地目录路径进行扫描">📂 本地目录</button>
+                <button class="btn" id="btn-skill-browse" title="从浏览器本地选择目录">📂 本地目录</button>
               </div>
               <div class="muted small" style="margin-top:6px">
-                支持 GitHub/GitLab/Gitee URL（如 <code>https://github.com/user/skills-repo</code>）或容器内本地路径。扫描会穿透多重目录查找所有可用 Skills。
+                <b>远程仓库</b>：输入 URL 后点扫描（如 <code>https://github.com/user/skills-repo</code>）。<b>本地目录</b>：点 📂 按钮从浏览器本机选择文件夹，含客户端安全扫描。
               </div>
             </div>
 
