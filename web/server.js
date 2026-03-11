@@ -3517,7 +3517,7 @@ app.get('/api/status', async (req, res) => {
     runCommandTextAsync(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000),
     Promise.resolve(getGatewayRuntimePid()),
     runCommandOkAsync('ss -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]" || netstat -ltn 2>/dev/null | grep -q "[:.]18789[[:space:]]"', 1200),
-    runCommandOkAsync('pgrep -f caddy >/dev/null 2>&1', 1200),
+    runCommandOkAsync('pgrep -f caddy >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":443 " || netstat -ltn 2>/dev/null | grep -q ":443 "', 1200),
     runCommandOkAsync('pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1', 1200),
   ]);
   const gatewayHealthCode = Number.parseInt(String(gatewayHealthCodeText || '').trim(), 10) || 0;
