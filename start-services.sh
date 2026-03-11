@@ -608,13 +608,11 @@ ensure_gateway_proxy_compat_config() {
       | .gateway.controlUi = (.gateway.controlUi // {})
       | .gateway.trustedProxies = ((.gateway.trustedProxies // []) + $trusted | unique)
       | .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + $allowed | unique)
-      | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
-      | .gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true
     ' "$cfg_file" > "$tmp_file" 2>/dev/null; then
         if ! cmp -s "$cfg_file" "$tmp_file"; then
             cp "$cfg_file" "$cfg_file.before-proxy-compat.$(date +%Y%m%d-%H%M%S).bak" 2>/dev/null || true
             mv "$tmp_file" "$cfg_file"
-            echo "[start-services] Updated openclaw.json: proxy compat + dangerouslyDisableDeviceAuth=true"
+            echo "[start-services] Updated openclaw.json: added gateway.trustedProxies + gateway.controlUi.allowedOrigins"
             # 更新 mtime 缓存为新文件的 mtime
             _PROXY_COMPAT_LAST_MTIME=$(stat -c %Y "$cfg_file" 2>/dev/null || echo "0")
         else
@@ -663,7 +661,7 @@ start_gateway_watchdog() {
     fi
 
     echo "[start-services] Starting Gateway watchdog..."
-    nohup env OPENCLAW_VERSION="$OPENCLAW_RUNTIME_VERSION" OPENCLAW_SERVICE_VERSION="$OPENCLAW_RUNTIME_VERSION" bash "$GATEWAY_WATCHDOG_SCRIPT" >> "$LOG_DIR/gateway-watchdog.log" 2>&1 &
+    setsid nohup env OPENCLAW_VERSION="$OPENCLAW_RUNTIME_VERSION" OPENCLAW_SERVICE_VERSION="$OPENCLAW_RUNTIME_VERSION" bash "$GATEWAY_WATCHDOG_SCRIPT" >> "$LOG_DIR/gateway-watchdog.log" 2>&1 &
     GATEWAY_WATCHDOG_PID=$!
     echo "[start-services] Gateway watchdog PID: $GATEWAY_WATCHDOG_PID"
 }
@@ -714,7 +712,7 @@ dedupe_gateway_watchdogs() {
     echo "[start-services] WARNING: detected ${count} watchdog processes, keeping pid=${keep}"
     for pid in $pids; do
         [ "$pid" = "$keep" ] && continue
-        kill -TERM "$pid" 2>/dev/null || true
+        kill -USR2 "$pid" 2>/dev/null || true
     done
     sleep 1
     for pid in $pids; do
@@ -754,8 +752,7 @@ current_operation_type() {
         echo "idle"
         return 0
     fi
-    # C9: 兼容紧凑 JSON ("type":"xxx") 和美化 JSON ("type": "xxx")
-    op=$(grep -oP '"type"\s*:\s*"\K[^"]+' "$lock_file" 2>/dev/null | head -1)
+    op=$(grep -o '"type":"[^"]*"' "$lock_file" 2>/dev/null | head -1 | cut -d':' -f2 | tr -d '"')
     [ -n "$op" ] || op="idle"
     echo "$op"
 }
