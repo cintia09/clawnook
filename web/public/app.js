@@ -655,44 +655,60 @@ async function checkForUpdate(force = false) {
   // Dashboard banner
   const banner = $('update-banner');
   if (banner && u.hasUpdate) {
-    $('update-latest').textContent = u.latestVersion;
+    // New version found
+    const tEl = $('update-banner-title');
+    if (tEl) tEl.innerHTML = '\uD83C\uDD95 \u53D1\u73B0\u65B0\u7248\u672C\uFF1A<span id="update-latest">' + escapeHtml(u.latestVersion || '') + '</span>';
+    const curEl = $('update-banner-current');
+    if (curEl) curEl.style.display = '';
     $('update-current').textContent = formatVersionLabel(u.currentVersion);
-    $('update-link').href = u.releaseUrl || '#';
+    const ulEl = $('update-link');
+    if (ulEl) { ulEl.href = u.releaseUrl || '#'; ulEl.style.display = ''; }
     banner.style.display = '';
-    // Show/hide hot update button based on update type
     const hotBtn = $('btn-hotpatch-banner');
     const fullHint = $('update-full-hint');
     const installNote = $('update-install-note');
-    if (hotBtn) hotBtn.style.display = u.requiresFullUpdate ? 'none' : '';
-    if (fullHint) {
-      fullHint.style.display = u.requiresFullUpdate ? '' : 'none';
-      if (u.requiresFullUpdate) {
-        fullHint.innerHTML = '📦 <b>需要完整更新</b>：请重新执行一键安装脚本（会自动检测并升级到新版本）';
+    if (u.requiresFullUpdate) {
+      if (hotBtn) hotBtn.style.display = 'none';
+      if (fullHint) {
+        fullHint.style.display = '';
+        fullHint.style.color = '#ff9f0a';
+        fullHint.innerHTML = '\uD83D\uDCE6 <b>\u9700\u8981\u5B8C\u6574\u66F4\u65B0</b>\uFF1A\u8BF7\u91CD\u65B0\u6267\u884C\u4E00\u952E\u5B89\u88C5\u811A\u672C';
       }
+      if (installNote) installNote.style.display = '';
+    } else {
+      if (hotBtn) {
+        hotBtn.style.display = '';
+        hotBtn.textContent = '\u26A1 \u70ED\u66F4\u65B0';
+        hotBtn.onclick = () => doHotPatch(false);
+      }
+      if (fullHint) {
+        fullHint.style.display = '';
+        fullHint.style.color = '#30d158';
+        fullHint.innerHTML = '\u26A1 <b>\u53EF\u70ED\u66F4\u65B0</b>\uFF1A\u70B9\u51FB\u201C\u70ED\u66F4\u65B0\u201D\u5373\u53EF\uFF0C\u65E0\u9700\u91CD\u88C5\u5BB9\u5668';
+      }
+      if (installNote) installNote.style.display = 'none';
     }
-    if (installNote) installNote.style.display = u.requiresFullUpdate ? '' : 'none';
-    if (!u.requiresFullUpdate && fullHint) {
-      fullHint.style.display = '';
-      fullHint.style.color = '#30d158';
-      fullHint.innerHTML = '⚡ <b>可热更新</b>：建议先点击“热更新”，无需重装容器';
-    } else if (fullHint) {
-      fullHint.style.color = '#ff9f0a';
-    }
-  } else if (banner && u.currentVersion && u.latestVersion && u.currentVersion === u.latestVersion) {
-    // Same version: show force hotpatch option
+  } else if (banner && !u.hasUpdate && u.latestVersion) {
+    // No new version: offer force hotpatch
+    const tEl = $('update-banner-title');
+    if (tEl) tEl.innerHTML = '\u2705 \u5F53\u524D\u5DF2\u662F\u6700\u65B0\u7248\u672C <span class="muted small">(' + escapeHtml(formatVersionLabel(u.currentVersion)) + ')</span>';
+    const curEl = $('update-banner-current');
+    if (curEl) curEl.style.display = 'none';
+    const ulEl = $('update-link');
+    if (ulEl) ulEl.style.display = 'none';
     banner.style.display = '';
     const hotBtn = $('btn-hotpatch-banner');
     const fullHint = $('update-full-hint');
     const installNote = $('update-install-note');
     if (hotBtn) {
       hotBtn.style.display = '';
-      hotBtn.textContent = '⚡ 强制热更新';
+      hotBtn.textContent = '\u26A1 \u5F3A\u5236\u70ED\u66F4\u65B0';
       hotBtn.onclick = () => doHotPatch(true);
     }
     if (fullHint) {
       fullHint.style.display = '';
-      fullHint.style.color = '#30d158';
-      fullHint.innerHTML = '⚡ <b>强制热更新</b>：版本号相同，但可强制同步远程文件';
+      fullHint.style.color = '#8e8e93';
+      fullHint.innerHTML = '\u7248\u672C\u53F7\u76F8\u540C\uFF0C\u53EF\u5F3A\u5236\u540C\u6B65\u8FDC\u7A0B\u6587\u4EF6';
     }
     if (installNote) installNote.style.display = 'none';
   } else if (banner) {
@@ -738,18 +754,18 @@ async function checkForUpdate(force = false) {
           fullNote.innerHTML = '<span style="color:#30d158">版本号相同，点击强制热更新可重新同步远程文件</span>';
         }
       } else {
-        // No update available
+        // No update available (local version newer)
         statusEl.innerHTML = '<span style="color:#f5f5f7">✅ 已是最新</span>';
         if (linkEl) linkEl.style.display = 'none';
-        // Hide hot update button and full update note when already up to date
         const hpBtn = $('btn-hotpatch');
         const fullNote = $('settings-full-update-note');
         if (hpBtn) hpBtn.style.display = 'none';
         if (fullNote) fullNote.style.display = 'none';
       }
-      // Friendly error: don't show raw curl commands to user
-      let errMsg = u.error || '检查失败';
-      if (errMsg.includes('curl fallback failed') || errMsg.includes('fetch')) {
+    } else if (u.error) {
+      // Error fetching update info
+      let errMsg = u.error;
+      if (errMsg.includes('curl fallback failed') || errMsg.includes('fetch') || errMsg.includes('GitHub')) {
         errMsg = '⚠️ 无法连接 GitHub（网络不可达）';
       }
       statusEl.innerHTML = `<span style="color:#ff6b6b">${errMsg}</span>`;
@@ -3273,7 +3289,10 @@ function skillSourceBadge(source) {
 
 function skillCard(s) {
   const secBadge = s.securityWarnings > 0
-    ? '<span style="background:#fff3e0;color:#e65100;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:6px" title="包含脚本文件或可疑模式">⚠ 注意</span>'
+    ? '<span style="background:#fff3e0;color:#e65100;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:6px" title="' + escapeHtml((s.securityDetails || []).join('; ')) + '">\u26A0 \u6CE8\u610F</span>'
+    : '';
+  const secDetail = s.securityWarnings > 0 && (s.securityDetails || []).length
+    ? `<div class="muted small" style="color:#ffa726;margin-top:2px">\u26A0 ${escapeHtml(s.securityDetails.join('; '))}</div>`
     : '';
   return `
     <div class="card" style="margin-bottom:10px;padding:10px 14px${s.securityWarnings > 0 ? ';border-left:3px solid #ff9800' : ''}">
@@ -3281,8 +3300,9 @@ function skillCard(s) {
         <div style="flex:1;min-width:0">
           <div style="font-weight:700">${escapeHtml(s.name)}${skillSourceBadge(s.source)}${secBadge}</div>
           ${s.description ? `<div class="muted small" style="margin-top:2px">${escapeHtml(s.description)}</div>` : ''}
+          ${secDetail}
         </div>
-        <button class="btn" style="font-size:12px;padding:2px 10px;white-space:nowrap" data-skill-remove="${escapeHtml(s.name)}">移除</button>
+        ${s.source !== 'bundled' ? `<button class="btn" style="font-size:12px;padding:2px 10px;white-space:nowrap" data-skill-remove="${escapeHtml(s.name)}">\u79FB\u9664</button>` : ''}
       </div>
     </div>`;
 }
@@ -3344,9 +3364,25 @@ async function refreshPlugins() {
   const extsList = d.extensions || [];
   _installedSkills = skillsList; // cache for comparison
 
-  $('skills-list').innerHTML = skillsList.length
-    ? skillsList.map(skillCard).join('')
-    : '<div class="muted small" style="padding:12px 0">暂无用户安装的 Skill。OpenClaw 内置的 48+ Skills 已自动加载，无需安装。</div>';
+  // Separate managed/ext skills from bundled
+  const userSkills = skillsList.filter(s => s.source !== 'bundled');
+  const bundledSkills = skillsList.filter(s => s.source === 'bundled');
+
+  let html = '';
+  if (userSkills.length) {
+    html += userSkills.map(skillCard).join('');
+  } else {
+    html += '<div class="muted small" style="padding:12px 0">\u6682\u65E0\u7528\u6237\u5B89\u88C5\u7684 Skill\u3002</div>';
+  }
+  if (bundledSkills.length) {
+    html += `<div style="margin-top:12px;border-top:1px solid #333;padding-top:10px">
+      <div style="cursor:pointer;user-select:none;color:#8e8e93;font-size:13px" onclick="const c=this.nextElementSibling;const a=c.style.display==='none';c.style.display=a?'':'none';this.querySelector('span').textContent=a?'\u25BC':'\u25B6'">
+        <span>\u25B6</span> \u5185\u7F6E Skills (${bundledSkills.length})
+      </div>
+      <div style="display:none;margin-top:8px">${bundledSkills.map(skillCard).join('')}</div>
+    </div>`;
+  }
+  $('skills-list').innerHTML = html;
 
   $('extensions-list').innerHTML = extsList.length
     ? extsList.map(extensionCard).join('')
@@ -3377,17 +3413,40 @@ const SKILL_SUSPICIOUS_EXTS = ['.sh', '.bash', '.py', '.js', '.ts', '.exe', '.ba
 
 function clientParseSkillMd(content) {
   const lines = content.split('\n');
-  let name = '', description = '', inFm = false;
+  let name = '', description = '', inFm = false, fmLines = [];
+  // Try YAML frontmatter first
   for (const l of lines) {
-    const h = l.match(/^#{1,3}\s+(.+)/);
-    if (h) { name = h[1].trim(); break; }
+    if (l.trim() === '---') {
+      if (!inFm) { inFm = true; continue; }
+      else break;
+    }
+    if (inFm) fmLines.push(l);
   }
-  for (const l of lines) {
-    const t = l.trim();
-    if (t === '---') { inFm = !inFm; continue; }
-    if (inFm || !t || t.startsWith('#')) continue;
-    description = t.slice(0, 200);
-    break;
+  if (fmLines.length) {
+    for (const fl of fmLines) {
+      const nm = fl.match(/^name:\s*(.+)/);
+      if (nm) name = nm[1].trim().replace(/^['"]|['"]$/g, '');
+      const dm = fl.match(/^description:\s*(.+)/);
+      if (dm) description = dm[1].trim().replace(/^['"]|['"]$/g, '').slice(0, 200);
+    }
+  }
+  // Fallback: heading for name
+  if (!name) {
+    for (const l of lines) {
+      const h = l.match(/^#{1,3}\s+(.+)/);
+      if (h) { name = h[1].trim(); break; }
+    }
+  }
+  // Fallback: first body line for description
+  if (!description) {
+    inFm = false;
+    for (const l of lines) {
+      const t = l.trim();
+      if (t === '---') { inFm = !inFm; continue; }
+      if (inFm || !t || t.startsWith('#')) continue;
+      description = t.slice(0, 200);
+      break;
+    }
   }
   return { name, description, content };
 }

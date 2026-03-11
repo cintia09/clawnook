@@ -7976,23 +7976,33 @@ function scanSkillsDir(dir, source) {
       }
       // Quick security check: look for script files
       let securityWarnings = 0;
+      const securityDetails = [];
       try {
         const allFiles = fs.readdirSync(skillDir, { withFileTypes: true, recursive: true });
         const suspiciousExts = ['.js', '.ts', '.py', '.sh', '.bash', '.exe', '.bat', '.cmd', '.ps1'];
+        const scriptFiles = [];
         for (const f of allFiles) {
           if (!f.isFile()) continue;
           const ext = path.extname(f.name).toLowerCase();
-          if (suspiciousExts.includes(ext)) { securityWarnings++; break; }
+          if (suspiciousExts.includes(ext)) scriptFiles.push(f.name);
+        }
+        if (scriptFiles.length) {
+          securityWarnings++;
+          securityDetails.push('\u5305\u542B\u811A\u672C\u6587\u4EF6: ' + scriptFiles.slice(0, 3).join(', ') + (scriptFiles.length > 3 ? ' \u7B49' : ''));
         }
         // Check SKILL.md for dangerous patterns
         if (fs.existsSync(skillMd)) {
           const content = fs.readFileSync(skillMd, 'utf8').slice(0, 50000);
           for (const pat of SKILL_DANGEROUS_PATTERNS) {
-            if (pat.test(content)) { securityWarnings++; break; }
+            if (pat.test(content)) {
+              securityWarnings++;
+              securityDetails.push('SKILL.md \u542B\u53EF\u7591\u6A21\u5F0F: ' + pat.source);
+              break;
+            }
           }
         }
       } catch {}
-      results.push({ name: e.name, description, path: skillDir, contentHash, source, securityWarnings });
+      results.push({ name: e.name, description, path: skillDir, contentHash, source, securityWarnings, securityDetails });
     }
   } catch {}
   return results;
@@ -8038,20 +8048,41 @@ function parseSkillMd(filePath) {
     const lines = content.split('\n');
     let name = '';
     let description = '';
-    // Extract name from first heading
+    // Try YAML frontmatter first
+    let inFm = false, fmLines = [];
     for (const l of lines) {
-      const hMatch = l.match(/^#{1,3}\s+(.+)/);
-      if (hMatch) { name = hMatch[1].trim(); break; }
+      if (l.trim() === '---') {
+        if (!inFm) { inFm = true; continue; }
+        else break;
+      }
+      if (inFm) fmLines.push(l);
     }
-    // Extract description: first non-empty, non-heading, non-frontmatter line
-    let inFrontmatter = false;
-    for (const l of lines) {
-      const trimmed = l.trim();
-      if (trimmed === '---') { inFrontmatter = !inFrontmatter; continue; }
-      if (inFrontmatter) continue;
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      description = trimmed.slice(0, 200);
-      break;
+    if (fmLines.length) {
+      for (const fl of fmLines) {
+        const nm = fl.match(/^name:\s*(.+)/);
+        if (nm) name = nm[1].trim().replace(/^['"]|['"]$/g, '');
+        const dm = fl.match(/^description:\s*(.+)/);
+        if (dm) description = dm[1].trim().replace(/^['"]|['"]$/g, '').slice(0, 200);
+      }
+    }
+    // Fallback: heading for name
+    if (!name) {
+      for (const l of lines) {
+        const hMatch = l.match(/^#{1,3}\s+(.+)/);
+        if (hMatch) { name = hMatch[1].trim(); break; }
+      }
+    }
+    // Fallback: first body line for description
+    if (!description) {
+      let inFrontmatter = false;
+      for (const l of lines) {
+        const trimmed = l.trim();
+        if (trimmed === '---') { inFrontmatter = !inFrontmatter; continue; }
+        if (inFrontmatter) continue;
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        description = trimmed.slice(0, 200);
+        break;
+      }
     }
     return { name, description, content };
   } catch {
