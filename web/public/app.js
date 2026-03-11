@@ -874,10 +874,12 @@ async function doHotPatch(force = false) {
               toast('请重启容器', '执行: docker restart openclaw-pro');
             }
 
-            if (hasFrontend || hasWebServer) {
+            if (hasFrontend || hasWebServer || updated.length === 0) {
               if (logPre) {
                 logPre.textContent += hasWebServer
                   ? '\n检测到后端已更新，正在等待服务恢复后自动重查更新状态（不再强制刷新页面）。'
+                  : updated.length === 0
+                  ? '\n所有文件已是最新，正在刷新版本状态...'
                   : '\n前端文件已更新，将自动重查更新状态；如需立即加载新前端可手动刷新页面。';
               }
 

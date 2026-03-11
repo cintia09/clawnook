@@ -62,11 +62,9 @@ function buildWsUrl(forceWs) {
   let base = config.serverUrl.replace(/\/+$/, '');
   if (forceWs) {
     // 强制使用 ws:// (绕过自签名证书问题)
-    // 如果原始 URL 是 https 且没有显式端口或端口是 443，回退到 3000 (Web 面板默认端口)
+    // 使用 80 端口 (Caddy HTTP 已配置透传 /api/ws/*)
     let host = base.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-    if (!/:/.test(host) || /:443$/.test(host)) {
-      host = host.replace(/:443$/, '') + ':3000';
-    }
+    host = host.replace(/:\d+$/, ''); // 去掉任何显式端口
     base = 'ws://' + host;
   } else {
     // http → ws, https → wss
@@ -78,12 +76,18 @@ function buildWsUrl(forceWs) {
 
 let _wssFailed = false; // 记住 wss 是否失败过，后续自动使用 ws
 
+// IP 地址(含 IPv4/IPv6)的 HTTPS 永远无法获得有效 TLS 证书，直接跳过 WSS
+function _isIpAddress(url) {
+  const host = url.replace(/^https?:\/\//, '').replace(/[:/].*$/, '');
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^\[/.test(host);
+}
+
 function connect() {
   if (ws) return;
   connState = 'connecting';
   broadcastState();
 
-  const useWs = _wssFailed || /^http:\/\//i.test(config.serverUrl);
+  const useWs = _wssFailed || /^http:\/\//i.test(config.serverUrl) || (/^https:\/\//i.test(config.serverUrl) && _isIpAddress(config.serverUrl));
   const url = buildWsUrl(useWs);
 
   try {

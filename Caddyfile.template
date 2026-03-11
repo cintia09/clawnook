@@ -1,6 +1,12 @@
 ${GLOBAL_OPTIONS}
 http://${DOMAIN_HTTP} {
-    redir https://${DOMAIN_HTTP}{uri} permanent
+    # 允许浏览器插件通过 ws:// (非 TLS) 连接 WebSocket，绕过自签名证书问题
+    handle /api/ws/* {
+        reverse_proxy 127.0.0.1:3000
+    }
+    handle {
+        redir https://${DOMAIN_HTTP}{uri} permanent
+    }
 }
 
 ${DOMAIN} {

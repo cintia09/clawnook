@@ -3454,7 +3454,8 @@ app.post('/api/update/hotpatch', async (req, res) => {
       log(`⚠️ 版本号未更新: ${hotpatchState.failed.length} 个文件更新失败，请检查网络或 GitHub 访问`);
       hotpatchState.status = 'error';
       return;
-    } else if (hotpatchState.updated.length > 0) {
+    } else {
+      // 无失败：更新版本号（即使文件无变化，也同步最新版本标签）
       try {
         let newVersion = '';
         try {
@@ -3479,10 +3480,10 @@ app.post('/api/update/hotpatch', async (req, res) => {
         if (newVersion) {
           fs.writeFileSync(VERSION_FILE, newVersion + '\n');
           log(`版本号更新为: ${newVersion}`);
+        } else if (hotpatchState.updated.length === 0) {
+          log(`所有文件已是最新，无需变更`);
         }
       } catch {}
-    } else {
-      log(`版本号未更新: 无文件变更`);
     }
 
     // Regenerate Caddyfile and restart Caddy if template changed
