@@ -48,6 +48,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     config.deviceName = msg.deviceName || '';
     chrome.storage.local.set(config);
     _wssFailed = false; // 用户重新连接时重置回退标记
+    _wsPort = 0;
+    _wsPortIndex = 0;
     disconnect();
     connect();
     sendResponse({ ok: true });
@@ -61,13 +63,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // ─── WebSocket 连接 ─────────────────────────────────────
-function buildWsUrl(forceWs) {
+function buildWsUrl(forceWs, port) {
   let base = config.serverUrl.replace(/\/+$/, '');
   if (forceWs) {
     // 强制使用 ws:// (绕过自签名证书问题)
-    // 使用 80 端口 (Caddy HTTP 已配置透传 /api/ws/*)
     let host = base.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
     host = host.replace(/:\d+$/, ''); // 去掉任何显式端口
+    if (port) host += ':' + port;
     base = 'ws://' + host;
   } else {
     // http → ws, https → wss
@@ -78,6 +80,7 @@ function buildWsUrl(forceWs) {
 }
 
 let _wssFailed = false; // 记住 wss 是否失败过，后续自动使用 ws
+let _wsPort = 0;        // 成功连接过的 ws:// 端口，0 表示未确定
 
 // IP 地址(含 IPv4/IPv6)的 HTTPS 永远无法获得有效 TLS 证书，直接跳过 WSS
 function _isIpAddress(url) {
@@ -85,13 +88,26 @@ function _isIpAddress(url) {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^\[/.test(host);
 }
 
+// ws:// 回退端口列表: 80 (Caddy HTTP), 3000 (Node.js 直连)
+const _WS_FALLBACK_PORTS = [80, 3000];
+let _wsPortIndex = 0; // 当前尝试的端口索引
+
 function connect() {
   if (ws) return;
   connState = 'connecting';
   broadcastState();
 
-  const useWs = _wssFailed || /^http:\/\//i.test(config.serverUrl) || (/^https:\/\//i.test(config.serverUrl) && _isIpAddress(config.serverUrl));
-  const url = buildWsUrl(useWs);
+  const needWs = _wssFailed || /^http:\/\//i.test(config.serverUrl) || (/^https:\/\//i.test(config.serverUrl) && _isIpAddress(config.serverUrl));
+
+  let url;
+  if (needWs && !_wsPort) {
+    // 还没找到可用的 ws 端口，按顺序尝试
+    url = buildWsUrl(true, _WS_FALLBACK_PORTS[_wsPortIndex]);
+  } else if (needWs && _wsPort) {
+    // 已确定可用端口
+    url = buildWsUrl(true, _wsPort);
+  } else {
+    url = buildWsUrl(false);
 
   try {
     ws = new WebSocket(url);
@@ -104,8 +120,13 @@ function connect() {
   }
 
   ws.onopen = () => {
-    console.log('[bridge] connected');
+    console.log('[bridge] connected to', url);
     _connectStarted = 0;
+    // 记住成功连接的 ws 端口
+    if (needWs && !_wsPort) {
+      _wsPort = _WS_FALLBACK_PORTS[_wsPortIndex];
+      console.log('[bridge] ws fallback port confirmed:', _wsPort);
+    }
     connState = 'connected';
     broadcastState();
     startHeartbeat();
@@ -176,8 +197,17 @@ function connect() {
       console.log('[bridge] wss failed quickly, falling back to ws://');
       _wssFailed = true;
     }
+    // ws 模式下端口探测：如果当前端口失败且还有下一个，快速切换（不等 5 秒）
+    const isProbing = needWs && !_wsPort && _connectStarted > 0 && (Date.now() - _connectStarted < 5000);
     cleanup();
-    scheduleReconnect();
+    if (isProbing && _wsPortIndex < _WS_FALLBACK_PORTS.length - 1) {
+      _wsPortIndex++;
+      console.log('[bridge] trying next ws port:', _WS_FALLBACK_PORTS[_wsPortIndex]);
+      setTimeout(() => connect(), 500); // 快速切换到下一个端口
+    } else {
+      if (isProbing) _wsPortIndex = 0; // 所有端口都失败了，下次重来
+      scheduleReconnect();
+    }
   };
 
   ws.onerror = (e) => {
