@@ -34,13 +34,26 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // 连接按钮
 $('btn-connect').addEventListener('click', () => {
-  const serverUrl  = $('serverUrl').value.trim();
+  let serverUrl  = $('serverUrl').value.trim();
   const pairCode   = $('pairCode').value.trim();
   const deviceName = $('deviceName').value.trim();
   if (!serverUrl || !pairCode) {
     $('status-text').textContent = '⚠️ 请填写服务器地址和配对码';
     return;
   }
+  // 自动补全协议前缀
+  if (!/^https?:\/\//i.test(serverUrl)) {
+    serverUrl = 'http://' + serverUrl;
+  }
+  // 基本校验：必须包含 IP 或域名
+  try {
+    const u = new URL(serverUrl);
+    if (!u.hostname || u.hostname.length < 2) throw new Error();
+  } catch {
+    $('status-text').textContent = '⚠️ 服务器地址格式不正确';
+    return;
+  }
+  $('serverUrl').value = serverUrl;
   chrome.runtime.sendMessage({
     type: 'connect', serverUrl, pairCode, deviceName
   });

@@ -40,7 +40,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
   if (msg.type === 'connect') {
-    config.serverUrl  = msg.serverUrl  || '';
+    let url = (msg.serverUrl || '').trim();
+    // 自动补全协议前缀
+    if (url && !/^https?:\/\//i.test(url)) url = 'http://' + url;
+    config.serverUrl  = url;
     config.pairCode   = msg.pairCode   || '';
     config.deviceName = msg.deviceName || '';
     chrome.storage.local.set(config);
