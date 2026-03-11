@@ -678,6 +678,23 @@ async function checkForUpdate(force = false) {
     } else if (fullHint) {
       fullHint.style.color = '#ff9f0a';
     }
+  } else if (banner && u.currentVersion && u.latestVersion && u.currentVersion === u.latestVersion) {
+    // Same version: show force hotpatch option
+    banner.style.display = '';
+    const hotBtn = $('btn-hotpatch-banner');
+    const fullHint = $('update-full-hint');
+    const installNote = $('update-install-note');
+    if (hotBtn) {
+      hotBtn.style.display = '';
+      hotBtn.textContent = '⚡ 强制热更新';
+      hotBtn.onclick = () => doHotPatch(true);
+    }
+    if (fullHint) {
+      fullHint.style.display = '';
+      fullHint.style.color = '#30d158';
+      fullHint.innerHTML = '⚡ <b>强制热更新</b>：版本号相同，但可强制同步远程文件';
+    }
+    if (installNote) installNote.style.display = 'none';
   } else if (banner) {
     banner.style.display = 'none';
   }
@@ -704,14 +721,32 @@ async function checkForUpdate(force = false) {
       if (hpBtn) hpBtn.style.display = u.requiresFullUpdate ? 'none' : '';
       if (fullNote) fullNote.style.display = u.requiresFullUpdate ? '' : 'none';
     } else if (u.latestVersion) {
-      statusEl.innerHTML = '<span style="color:#f5f5f7">✅ 已是最新</span>';
-      if (linkEl) linkEl.style.display = 'none';
-      // Hide hot update button and full update note when already up to date
-      const hpBtn = $('btn-hotpatch');
-      const fullNote = $('settings-full-update-note');
-      if (hpBtn) hpBtn.style.display = 'none';
-      if (fullNote) fullNote.style.display = 'none';
-    } else {
+      if (u.currentVersion === u.latestVersion) {
+        // Same version: show force hotpatch button
+        statusEl.innerHTML = '<span style="color:#f5f5f7">✅ 已是最新 (' + formatVersionLabel(u.currentVersion) + ')</span>';
+        if (linkEl) linkEl.style.display = 'none';
+        // Show force hot update button when version is same
+        const hpBtn = $('btn-hotpatch');
+        const fullNote = $('settings-full-update-note');
+        if (hpBtn) {
+          hpBtn.style.display = '';
+          hpBtn.textContent = '⚡ 强制热更新';
+          hpBtn.onclick = () => doHotPatch(true);
+        }
+        if (fullNote) {
+          fullNote.style.display = '';
+          fullNote.innerHTML = '<span style="color:#30d158">版本号相同，点击强制热更新可重新同步远程文件</span>';
+        }
+      } else {
+        // No update available
+        statusEl.innerHTML = '<span style="color:#f5f5f7">✅ 已是最新</span>';
+        if (linkEl) linkEl.style.display = 'none';
+        // Hide hot update button and full update note when already up to date
+        const hpBtn = $('btn-hotpatch');
+        const fullNote = $('settings-full-update-note');
+        if (hpBtn) hpBtn.style.display = 'none';
+        if (fullNote) fullNote.style.display = 'none';
+      }
       // Friendly error: don't show raw curl commands to user
       let errMsg = u.error || '检查失败';
       if (errMsg.includes('curl fallback failed') || errMsg.includes('fetch')) {
@@ -774,24 +809,24 @@ function setHotpatchButtons(disabled, text) {
   });
 }
 
-async function doHotPatch() {
+async function doHotPatch(force = false) {
   if (hotpatchRestartPending) {
     toast('请稍候', '后端重启中，恢复后可再次热更新');
     return;
   }
 
-  setHotpatchButtons(true, '⏳ 更新中...');
+  setHotpatchButtons(true, force ? '⏳ 强制更新中...' : '⏳ 更新中...');
 
   const logBox = $('hotpatch-log');
   const logPre = logBox ? logBox.querySelector('pre') : null;
   if (logBox) { logBox.style.display = ''; }
-  if (logPre) logPre.textContent = '正在拉取最新文件...\n';
+  if (logPre) logPre.textContent = force ? '正在强制拉取最新文件...\n' : '正在拉取最新文件...\n';
 
   try {
-    const r = await api('/api/update/hotpatch', { method: 'POST', body: { branch: 'main' } });
+    const r = await api('/api/update/hotpatch', { method: 'POST', body: { branch: 'main', force } });
     if (r.error) {
-      toast('热更新失败', r.error);
-      setHotpatchButtons(false, '⚡ 热更新（不重启容器）');
+      toast(force ? '强制热更新失败' : '热更新失败', r.error);
+      setHotpatchButtons(false, force ? '⚡ 强制热更新' : '⚡ 热更新（不重启容器）');
       return;
     }
 

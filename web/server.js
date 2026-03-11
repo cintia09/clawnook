@@ -3367,13 +3367,14 @@ app.post('/api/update/hotpatch', async (req, res) => {
   }
 
   const branch = (req.body && req.body.branch) || 'main';
-  hotpatchState = { status: 'running', log: '', startedAt: Date.now(), updated: [], failed: [] };
-  res.json({ success: true, message: '热更新已开始' });
+  const force = (req.body && req.body.force) || false;
+  hotpatchState = { status: 'running', log: '', startedAt: Date.now(), updated: [], failed: [], force };
+  res.json({ success: true, message: force ? '强制热更新已开始' : '热更新已开始' });
 
   const log = (msg) => { hotpatchState.log += msg + '\n'; console.log('[hotpatch] ' + msg); };
 
   try {
-    log(`从 GitHub (${branch}) 拉取最新文件...`);
+    log(`${force ? '强制' : ''}从 GitHub (${branch}) 拉取最新文件...`);
     let needCaddyRestart = false;
     let needWebRestart = false;
     let needContainerRestart = false;
@@ -3394,13 +3395,15 @@ app.post('/api/update/hotpatch', async (req, res) => {
 
         const content = await resp.text();
 
-        // Compare with existing file
-        let existingContent = '';
-        try { existingContent = fs.readFileSync(localPath, 'utf8'); } catch {}
+        // Compare with existing file (skip comparison if force mode)
+        if (!force) {
+          let existingContent = '';
+          try { existingContent = fs.readFileSync(localPath, 'utf8'); } catch {}
 
-        if (content === existingContent) {
-          log(`  ✓ ${ghPath}: 无变化`);
-          continue;
+          if (content === existingContent) {
+            log(`  ✓ ${ghPath}: 无变化`);
+            continue;
+          }
         }
 
         // Write new file
@@ -3425,34 +3428,41 @@ app.post('/api/update/hotpatch', async (req, res) => {
       }
     }
 
-    // Update version file (try API first, fallback to version.txt)
-    try {
-      let newVersion = '';
+    // Update version file ONLY if ALL files were successfully updated (no failures)
+    if (hotpatchState.failed.length > 0) {
+      log(`⚠️ 版本号未更新: ${hotpatchState.failed.length} 个文件更新失败，请检查网络或 GitHub 访问`);
+      hotpatchState.status = 'error';
+      return;
+    } else if (hotpatchState.updated.length > 0) {
       try {
-        const versionResp = await fetchWithFallback(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
-          headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'openclaw-pro' },
-          timeout: 10000
-        });
-        if (versionResp.ok) {
-          const rel = await versionResp.json();
-          if (rel.tag_name) newVersion = rel.tag_name;
+        let newVersion = '';
+        try {
+          const versionResp = await fetchWithFallback(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+            headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'openclaw-pro' },
+            timeout: 10000
+          });
+          if (versionResp.ok) {
+            const rel = await versionResp.json();
+            if (rel.tag_name) newVersion = rel.tag_name;
+          }
+        } catch {}
+        if (!newVersion) {
+          try {
+            const rawVer = await fetchWithFallback(`${GITHUB_RAW_BASE}/main/version.txt`, {
+              headers: { 'User-Agent': 'openclaw-pro' },
+              timeout: 8000
+            });
+            if (rawVer.ok) newVersion = (await rawVer.text()).trim();
+          } catch {}
+        }
+        if (newVersion) {
+          fs.writeFileSync(VERSION_FILE, newVersion + '\n');
+          log(`版本号更新为: ${newVersion}`);
         }
       } catch {}
-      if (!newVersion) {
-        // Fallback: read version.txt from raw (already in HOTPATCH_FILES or fetch directly)
-        try {
-          const rawVer = await fetchWithFallback(`${GITHUB_RAW_BASE}/main/version.txt`, {
-            headers: { 'User-Agent': 'openclaw-pro' },
-            timeout: 8000
-          });
-          if (rawVer.ok) newVersion = (await rawVer.text()).trim();
-        } catch {}
-      }
-      if (newVersion) {
-        fs.writeFileSync(VERSION_FILE, newVersion + '\n');
-        log(`版本号更新为: ${newVersion}`);
-      }
-    } catch {}
+    } else {
+      log(`版本号未更新: 无文件变更`);
+    }
 
     // Regenerate Caddyfile and restart Caddy if template changed
     if (needCaddyRestart) {
