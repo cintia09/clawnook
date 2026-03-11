@@ -1110,16 +1110,7 @@ F2B
 
 # 进入容器前的命令提示
 show_command_hint() {
-    local script_name ssh_port_val
-    script_name=$(basename "$0")
-    ssh_port_val=$(jq -r '.ssh_port // 2222' "$CONFIG_FILE" 2>/dev/null || echo 2222)
-    echo -e "${CYAN}────────────────────────────────────────────────${NC}"
-    echo -e "  🔑 SSH: ${BLUE}ssh root@localhost -p ${ssh_port_val}${NC} (仅Key登录)"
-    echo -e "  添加公钥: ${CYAN}./${script_name} sshkey [~/.ssh/id_rsa.pub]${NC}"
-    echo -e "  退出容器后可用: ${BOLD}./${script_name}${NC} <命令>"
-    echo -e "  ${YELLOW}stop${NC} 停止  ${YELLOW}status${NC} 状态  ${YELLOW}config${NC} 配置  ${YELLOW}update${NC} 更新"
-    echo -e "  ${YELLOW}remove${NC} 删除容器  ${YELLOW}clean${NC} 完全清理  ${YELLOW}logs${NC} 日志"
-    echo -e "${CYAN}────────────────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}退出容器后可用:${NC} ${BOLD}./$(basename "$0")${NC} <${YELLOW}stop${NC}|${YELLOW}status${NC}|${YELLOW}config${NC}|${YELLOW}update${NC}|${YELLOW}logs${NC}>"
 }
 
 # 容器已运行时的入口
@@ -1145,20 +1136,10 @@ show_running_panel() {
     if [ -n "$update_hint" ]; then
         echo -e "  $update_hint"
     fi
-    echo -e "  ${YELLOW}[C]${NC} 配置菜单  ${YELLOW}[U]${NC} 更新  ${YELLOW}[回车/10秒]${NC} 进入容器"
     echo ""
 
-    read -t 10 -n 1 CHOICE 2>/dev/null || CHOICE=""
-    echo ""
-
-    if [[ "$CHOICE" == "c" || "$CHOICE" == "C" ]]; then
-        cmd_config
-    elif [[ "$CHOICE" == "u" || "$CHOICE" == "U" ]]; then
-        cmd_update
-    else
-        show_command_hint
-        docker exec -it "$CONTAINER_NAME" bash -l
-    fi
+    show_command_hint
+    docker exec -it "$CONTAINER_NAME" bash -l
 }
 
 # ---- 命令实现 ----

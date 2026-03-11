@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OpenClaw 管理面板</title>
-  <link rel="stylesheet" href="/style.css?v=1.2.06" />
+  <link rel="stylesheet" href="/style.css?v=1.2.07" />
   <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
 </head>
 <body>
@@ -61,7 +61,18 @@
     <!-- Content -->
     <main class="content">
       <!-- Dashboard -->
-      <section class="page active" id="page-dashboard" data-title="仪表盘">
+      <section class="page" id="page-dashboard" data-title="仪表盘">
+        <script>
+          // 立即根据 hash 显示正确的页面，避免刷新时闪烁
+          (function(){
+            var h = (location.hash||'').replace('#','').trim();
+            if(h==='ai') h='openclaw-ai'; if(h==='openclaw') h='openclaw-engine';
+            var validRoutes = ['dashboard','openclaw-engine','openclaw-ai','messaging','browser','trading','plugins','terminal','settings','logs'];
+            var route = validRoutes.indexOf(h) >= 0 ? h : 'dashboard';
+            var el = document.getElementById('page-' + route);
+            if(el) el.classList.add('active');
+          })();
+        </script>
         <!-- Update notification -->
         <div id="update-banner" class="card" style="grid-column:span 12;background:#1f1f22;border:1px solid #4a4a4f;display:none">
           <div class="row" style="justify-content:space-between">
@@ -636,14 +647,14 @@
               <div class="sep"></div>
 
               <div style="padding:4px 0">
-                <div style="font-weight:700;font-size:14px;margin-bottom:8px">工作原理</div>
-                <div class="muted small" style="line-height:1.7;margin-bottom:16px">
-                  远端浏览器安装 <b>OpenClaw Browser Bridge</b> 插件后，插件会通过 WebSocket <b>主动连接</b>到本服务器。
-                  相比传统的 <code>--remote-debugging-port</code> 方案，插件方式：<br>
-                  ✅ 不需要命令行启动 Chrome<br>
-                  ✅ 不需要在远端开放任何端口<br>
-                  ✅ 插件主动连接服务端，可穿越 NAT/防火墙<br>
-                  ✅ 使用配对码认证，更安全
+                <div style="font-weight:700;font-size:14px;margin-bottom:8px">官方插件：OpenClaw Browser Bridge</div>
+                <div class="muted small" style="line-height:1.7;margin-bottom:12px">
+                  远端浏览器安装 <b>OpenClaw Browser Bridge</b> 插件后，插件会通过 WebSocket <b>主动连接</b>到本服务器。<br>
+                  ✅ 不需要命令行启动 Chrome　✅ 不需要在远端开放任何端口　✅ 可穿越 NAT/防火墙　✅ 配对码认证
+                </div>
+                <div style="margin-bottom:16px">
+                  <button class="btn btn-primary" id="btn-browser-ext-download" style="font-size:14px">📥 下载插件 (OpenClaw-Browser-Bridge.zip)</button>
+                  <span class="muted small" style="margin-left:8px">下载后解压，在 Chrome 中加载已解压的扩展程序</span>
                 </div>
               </div>
 
@@ -651,7 +662,8 @@
               <div style="line-height:1.8;font-size:13px">
                 <div style="margin-bottom:12px">
                   <b>步骤 1：获取插件</b><br>
-                  <span class="muted small">在本项目的 <code>web/browser-extension/</code> 目录中包含了完整的插件源码。</span>
+                  <span class="muted small">点击上方「下载插件」按钮下载 ZIP 文件，然后解压到任意目录。<br>
+                  或者在已安装 OpenClaw 的机器上执行：<code style="user-select:all">openclaw browser extension install</code></span>
                 </div>
                 <div style="margin-bottom:12px">
                   <b>步骤 2：加载插件到 Chrome</b><br>
@@ -659,8 +671,8 @@
                     ① 在远端机器的 Chrome 地址栏输入 <code style="user-select:all">chrome://extensions</code> 并回车<br>
                     ② 打开右上角 <b>「开发者模式」</b>开关<br>
                     ③ 点击 <b>「加载已解压的扩展程序」</b><br>
-                    ④ 选择 <code>web/browser-extension/</code> 文件夹<br>
-                    ⑤ 插件加载后，工具栏会出现绿色圆形图标
+                    ④ 选择解压后的插件文件夹<br>
+                    ⑤ 插件加载后，工具栏会出现图标，点击 📌 固定到工具栏
                   </span>
                 </div>
                 <div style="margin-bottom:12px">
@@ -685,7 +697,8 @@
               <div class="sep"></div>
               <div class="muted small" style="padding:8px 12px;background:#1a2a1a;border-radius:6px;color:#3fb950;line-height:1.6">
                 💡 <b>安全说明</b>：插件与服务端之间使用配对码认证，连接仅在局域网内建立。
-                删除配对码会立即断开对应的浏览器连接。建议仅在可信的局域网环境中使用此功能。
+                删除配对码会立即断开对应的浏览器连接。建议仅在可信的局域网环境中使用此功能。<br>
+                📚 详细文档：<a href="https://docs.openclaw.ai/tools/browser" target="_blank" rel="noopener" style="color:#58a6ff">docs.openclaw.ai/tools/browser</a>
               </div>
             </details>
           </div>
@@ -966,6 +979,6 @@
 
   <script src="/vendor/xterm/xterm.js"></script>
   <script src="/vendor/xterm/addon-fit.js"></script>
-  <script src="/app.js?v=1.2.12"></script>
+  <script src="/app.js?v=1.2.13"></script>
 </body>
 </html>

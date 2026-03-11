@@ -375,10 +375,9 @@ function setActiveRoute(route){
 
   // hooks
   if (route === 'dashboard') refreshStatus();
-  if (route === 'openclaw-engine') { refreshOpenClaw(); }
+  if (route === 'openclaw-engine') { refreshOpenClaw(); loadPairingList(); }
   if (route === 'openclaw-ai') { loadAIConfig(); }
   if (route === 'messaging') { loadMessagingConfig(); }
-  if (route === 'openclaw-engine') { refreshOpenClaw(); loadPairingList(); }
   if (route === 'browser') loadBrowserConfig();
   if (route === 'trading') refreshTrading();
   if (route === 'plugins') refreshPlugins();
@@ -3311,6 +3310,11 @@ $('btn-browser-restart')?.addEventListener('click', async ()=>{
 // 刷新
 $('btn-browser-refresh')?.addEventListener('click', loadBrowserConfig);
 
+// 下载浏览器插件
+$('btn-browser-ext-download')?.addEventListener('click', ()=>{
+  window.location.href = '/api/browser-extension/download';
+});
+
 // ------------------------
 // Trading (legacy endpoints retained)
 // ------------------------
@@ -4616,8 +4620,12 @@ $('btn-logout').addEventListener('click', async ()=>{
 // ------------------------
 // Init
 // ------------------------
-setActiveRoute(getRouteFromHash());
-refreshStatus();
+{
+  const _initRoute = getRouteFromHash();
+  setActiveRoute(_initRoute);
+  // setActiveRoute calls refreshStatus for dashboard; for other routes, do it once
+  if (_initRoute !== 'dashboard') refreshStatus();
+}
 setInterval(refreshStatus, 30000);
 setInterval(() => {
   const route = getRouteFromHash();
@@ -4626,7 +4634,10 @@ setInterval(() => {
 
 // Auto check for updates on page load (non-blocking)
 setTimeout(() => checkForUpdate(), 3000);
-setTimeout(() => refreshOpenClaw({ retries: 1 }), 4000);
+// Deferred background OpenClaw status (only if not already loaded by route hook)
+if (getRouteFromHash() !== 'openclaw-engine') {
+  setTimeout(() => refreshOpenClaw({ retries: 1 }), 4000);
+}
 
 // Periodic update check every 30 minutes
 setInterval(() => checkForUpdate(), 30 * 60 * 1000);

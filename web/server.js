@@ -2893,6 +2893,27 @@ app.use('/gateway-proxy', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', requireAuthApi);
 
+// Browser extension download (auth-protected)
+app.get('/api/browser-extension/download', (req, res) => {
+  const extDir = path.join(__dirname, 'browser-extension');
+  if (!fs.existsSync(extDir)) {
+    return res.status(404).json({ error: '浏览器插件目录不存在' });
+  }
+  const tmpZip = path.join(require('os').tmpdir(), `openclaw-browser-bridge-${Date.now()}.zip`);
+  try {
+    execSync(`cd "${extDir}" && zip -r "${tmpZip}" .`, { timeout: 10000 });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="OpenClaw-Browser-Bridge.zip"');
+    const stream = fs.createReadStream(tmpZip);
+    stream.pipe(res);
+    stream.on('end', () => { try { fs.unlinkSync(tmpZip); } catch {} });
+    stream.on('error', () => { try { fs.unlinkSync(tmpZip); } catch {} });
+  } catch (e) {
+    try { fs.unlinkSync(tmpZip); } catch {}
+    res.status(500).json({ error: '打包插件失败: ' + (e.message || '') });
+  }
+});
+
 app.get('/api/terminal/ws-token', (req, res) => {
   const secret = readDockerConfig().webAuth?.secret;
   const sess = secret ? getSession(req, secret) : null;
