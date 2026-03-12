@@ -1066,6 +1066,38 @@ function syncOpenClawButtons(){
   }
 }
 
+// ------------------------
+// Operation Log (oc-log) localStorage cache
+// ------------------------
+const OC_LOG_CACHE_KEY = 'oc_log_cache_v1';
+const OC_LOG_CACHE_MAX = 128 * 1024; // 128KB
+
+function saveOcLogCache(){
+  try {
+    const el = $('oc-log');
+    if (!el) return;
+    let html = el.innerHTML;
+    if (html.length > OC_LOG_CACHE_MAX) {
+      html = html.slice(-OC_LOG_CACHE_MAX);
+    }
+    localStorage.setItem(OC_LOG_CACHE_KEY, html);
+  } catch {}
+}
+
+function loadOcLogCache(){
+  try {
+    const html = localStorage.getItem(OC_LOG_CACHE_KEY);
+    const el = $('oc-log');
+    if (!el || !html) return;
+    el.innerHTML = html;
+    el.scrollTop = el.scrollHeight;
+  } catch {}
+}
+
+function clearOcLogCache(){
+  try { localStorage.removeItem(OC_LOG_CACHE_KEY); } catch {}
+}
+
 function shouldAutoScroll(el, threshold = 24){
   if (!el) return true;
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -1076,6 +1108,7 @@ function appendOcLogLine(line){
   const logEl = $('oc-log');
   if (!logEl) return;
   appendColored(logEl, `${line}\n`, UI_OC_LOG_MAX_LINES, shouldAutoScroll(logEl));
+  saveOcLogCache();
 }
 
 function appendOcLogBlock(text){
@@ -1084,6 +1117,7 @@ function appendOcLogBlock(text){
   const chunk = String(text || '').trim();
   if (!chunk) return;
   appendColored(logEl, `${chunk}\n`, UI_OC_LOG_MAX_LINES, shouldAutoScroll(logEl));
+  saveOcLogCache();
 }
 
 function formatRemainingTime(totalSec){
@@ -1427,6 +1461,7 @@ async function pollTask(taskId){
   if (ocPollTimer) clearInterval(ocPollTimer);
   const logEl = $('oc-log');
   if (logEl) logEl.innerHTML = '';
+  clearOcLogCache();
 
   let lastSeq = 0;
   let errorStreak = 0;
@@ -1576,6 +1611,7 @@ async function pollRepairTask(taskId){
 
     if (st.delta) {
       appendColored($('oc-log'), st.delta, UI_OC_LOG_MAX_LINES, shouldAutoScroll($('oc-log')));
+      saveOcLogCache();
     }
     lastSeq = Number(st.seq || lastSeq || 0);
 
@@ -4508,6 +4544,7 @@ $('btn-term-clear').addEventListener('click', ()=>{
   saveTerminalCache();
 });
 loadTerminalCache();
+loadOcLogCache();
 bindTerminalInteraction();
 
 // ------------------------

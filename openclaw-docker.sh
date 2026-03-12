@@ -668,7 +668,7 @@ ask_port() {
     fi
 
     local input=""
-    read -p "$(echo -e "  ${CYAN}${desc}${NC} 实机端口 → 容器${container_port} [${GREEN}${recommended}${NC}，回车自动]: ")" input || true
+    read -p "$(echo -e "  ${CYAN}${desc}${NC} 宿主机端口 → 容器 ${container_port} [${GREEN}${recommended}${NC}，回车自动]: ")" input || true
 
     if [ -z "$input" ]; then
         PICKED_PORT="$recommended"
@@ -912,11 +912,10 @@ first_time_setup() {
     # 第二步：根据模式逐个询问端口
     # ============================================
     echo ""
-    echo -e "${BOLD}━━━ 端口配置（实机端口 → 容器端口，回车使用推荐值）━━━${NC}"
+    echo -e "${BOLD}━━━ 端口配置（宿主机端口 → 容器内部端口，回车使用推荐值）━━━${NC}"
 
-    # 所有模式都需要 Gateway 和 SSH
-    ask_port 18789 18790 "Gateway" 18789
-    GW_PORT="$PICKED_PORT"
+    # Gateway 内部端口固定 18789（仅容器内回环，不对外）
+    GW_PORT=18789
 
     ask_port 18790 18791 "Gateway TLS（Node远程接入）" 18790
     GW_TLS_PORT="$PICKED_PORT"

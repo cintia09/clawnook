@@ -664,7 +664,7 @@ prompt_deploy_config(){
   if has_tty; then
     local t
 
-    GW_PORT="$(prompt_port_or_default "Gateway 端口" "$GW_PORT")"
+    # Gateway 内部端口固定 18789（仅容器内回环，不对外）
 
     HTTPS_ENABLED="true"
     printf "HTTPS 域名 (可选，留空使用本机IP自签名HTTPS): " > "$TTY_IN"

@@ -1596,22 +1596,8 @@ function Get-DeployConfig {
         BrowserBridgePort    = 0
     }
 
-    # 1. Gateway 端口
-    $gwPort = Find-AvailablePort -PreferredPort ([int]$OPENCLAW_PORT)
-
-    Write-Host "  Gateway 端口 [默认 ${gwPort}]: " -NoNewline -ForegroundColor White
-    $customGw = Read-Host
-    if ($customGw -match '^\d+$' -and [int]$customGw -ge 1 -and [int]$customGw -le 65535) {
-        $gwPort = [int]$customGw
-        # 用户手动输入的端口也需要检查占用
-        if (-not (Test-PortAvailable $gwPort)) {
-            $procInfo = Get-PortProcess $gwPort
-            $procLabel = if ($procInfo) { " ($procInfo)" } else { "" }
-            Write-Warn "端口 $gwPort 已被占用${procLabel}"
-            $gwPort = Find-AvailablePort -PreferredPort $gwPort
-        }
-    }
-    $config.GatewayPort = $gwPort
+    # Gateway 内部端口固定（仅容器内回环，不对外）
+    $config.GatewayPort = [int]$OPENCLAW_PORT
 
     # 2. HTTPS 域名
     Write-Host ""
@@ -1831,8 +1817,8 @@ function Get-DeployConfig {
     # Gateway TLS 端口（Node 远程接入，所有 HTTPS 模式通用）
     $gwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18790 -RangeEnd 18899
     Write-Host ""
-    Write-Host "  💡 Gateway TLS 端口用于远端 Node 通过 TLS 加密连接到 Gateway" -ForegroundColor DarkGray
-    Write-Host "  Gateway TLS 端口（Node远程接入）[默认 ${gwTlsPort}]: " -NoNewline -ForegroundColor White
+    Write-Host "  💡 Gateway TLS 端口用于远端 Node 通过 TLS 加密连接到 Gateway（宿主机端口 → 容器 18790）" -ForegroundColor DarkGray
+    Write-Host "  Gateway TLS 端口（宿主机 → 容器 18790）[默认 ${gwTlsPort}]: " -NoNewline -ForegroundColor White
     $customGwTls = Read-Host
     if ($customGwTls -match '^\d+$' -and [int]$customGwTls -ge 1 -and [int]$customGwTls -le 65535) {
         $gwTlsPort = [int]$customGwTls
