@@ -3936,11 +3936,32 @@ function announceTabsToRelay() {
 
     const currentTabIds = new Set(response.targets.map(t => String(t.id)));
 
-    // Announce new tabs
+    // Only announce NEWLY appeared tabs (never re-announce existing)
     for (const target of response.targets) {
       const tabId = String(target.id);
-      if (relayTabSessionMap.has(tabId)) continue;
-      const sessionId = `bridge-${tabId}-${Date.now()}`;
+      if (relayTabSessionMap.has(tabId)) {
+        // Update title/url via targetInfoChanged (safe, no duplicate risk)
+        const sessionId = relayTabSessionMap.get(tabId);
+        sendToRelay({
+          method: 'forwardCDPEvent',
+          params: {
+            method: 'Target.targetInfoChanged',
+            params: {
+              targetInfo: {
+                targetId: tabId,
+                type: target.type || 'page',
+                title: target.title || '',
+                url: target.url || '',
+                attached: true,
+                browserContextId: 'bridge-default-context',
+                canAccessOpener: false
+              }
+            }
+          }
+        });
+        continue;
+      }
+      const sessionId = `bridge-${tabId}`;
       relayTabSessionMap.set(tabId, sessionId);
       relaySessionTabMap.set(sessionId, tabId);
 
@@ -3956,7 +3977,7 @@ function announceTabsToRelay() {
               title: target.title || '',
               url: target.url || '',
               attached: true,
-              browserContextId: target.browserContextId || 'bridge-default-context',
+              browserContextId: 'bridge-default-context',
               canAccessOpener: false
             },
             waitingForDebugger: false
@@ -4012,9 +4033,12 @@ function connectToGatewayRelay() {
 
   ws.on('open', () => {
     console.log('[relay-proxy] 已连接 gateway relay (port ' + GATEWAY_RELAY_PORT + ')');
+    // Clear tab maps so all tabs get re-announced to potentially new gateway
+    relayTabSessionMap.clear();
+    relaySessionTabMap.clear();
     // Announce current browser tabs
     setTimeout(() => announceTabsToRelay(), 500);
-    // Periodically refresh tab list
+    // Periodically refresh tab list (detect new/closed tabs)
     relayTabPollTimer = setInterval(() => announceTabsToRelay(), 8000);
   });
 
@@ -4110,11 +4134,17 @@ function disconnectFromGatewayRelay() {
     try { gatewayRelayWs.close(); } catch {}
     gatewayRelayWs = null;
   }
-  cleanupRelayProxy();
+  fullCleanupRelayProxy();
 }
 
 function cleanupRelayProxy() {
   if (relayTabPollTimer) { clearInterval(relayTabPollTimer); relayTabPollTimer = null; }
+  // Don't clear tab maps — stable sessionIds survive reconnects
+  // Maps are only cleared on full disconnect (bridge client gone)
+}
+
+function fullCleanupRelayProxy() {
+  cleanupRelayProxy();
   relayTabSessionMap.clear();
   relaySessionTabMap.clear();
   relayBridgeClientCode = null;
@@ -9287,8 +9317,10 @@ if (WebSocketServer) {
         return;
       }
 
-      // CDP 事件转发到 relay proxy
+      // CDP 事件转发到 relay proxy (filter out Target.* to avoid duplicates)
       if (msg.type === 'cdp-event' && msg.tabId && msg.method) {
+        // Never forward Target.attachedToTarget/detachedFromTarget — we manage these ourselves
+        if (msg.method.startsWith('Target.')) return;
         const tabId = String(msg.tabId);
         const sessionId = relayTabSessionMap.get(tabId);
         if (sessionId && gatewayRelayWs && gatewayRelayWs.readyState === 1) {
