@@ -904,6 +904,9 @@ if [ -f "$CONFIG_FILE" ]; then
 
         if [ -s /tmp/Caddyfile ]; then
             echo "[start-services] Caddyfile rendered OK ($(wc -c < /tmp/Caddyfile) bytes)"
+            # 防止重复启动：先杀掉已有的 Caddy 进程
+            pkill -f 'caddy run' 2>/dev/null || true
+            sleep 1
             caddy run --config /tmp/Caddyfile >> "$LOG_DIR/caddy.log" 2>&1 &
             CADDY_PID=$!
             echo "[start-services] Caddy PID: $CADDY_PID"
@@ -955,6 +958,8 @@ while true; do
     # 检查 Caddy
     if [ -n "$CADDY_PID" ] && ! kill -0 $CADDY_PID 2>/dev/null; then
         echo "[health] WARNING: Caddy died, restarting..."
+        pkill -f 'caddy run' 2>/dev/null || true
+        sleep 1
         caddy run --config /tmp/Caddyfile >> "$LOG_DIR/caddy.log" 2>&1 &
         CADDY_PID=$!
     fi
