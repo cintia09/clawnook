@@ -717,10 +717,9 @@ prompt_deploy_config(){
 
   apply_port_conflicts
 
-  # 浏览器控制默认关闭，不再交互提示（可通过环境变量 BROWSER_BRIDGE_ENABLED=true 开启）
   [ -z "$BROWSER_BRIDGE_ENABLED" ] && BROWSER_BRIDGE_ENABLED="false"
 
-  info "最终端口：Gateway=${GW_PORT}, Web=${WEB_PORT}, SSH=${SSH_PORT}, HTTPS=${HTTPS_PORT}$([ "$BROWSER_BRIDGE_ENABLED" = "true" ] && echo ", Bridge=${BRIDGE_PORT}")（端口冲突会自动调整）"
+  info "最终端口：Gateway=${GW_PORT}, Web=${WEB_PORT}, SSH=${SSH_PORT}, HTTPS=${HTTPS_PORT}"
 }
 
 # ─── upgrade detection ────────────────────────────────────────

@@ -638,9 +638,13 @@ async function refreshStatus(){
     statusEl.innerHTML = `Gateway <span class="gw-label ${cls}">${online ? 'Online' : 'Offline'}</span>`;
   }
 
-  // 根据配置隐藏/显示远端浏览器控制
+  // 局域网环境始终显示远端浏览器控制 tab
   const browserNav = document.querySelector('#nav a[data-route="browser"]');
-  if (browserNav) browserNav.style.display = s.browserBridgeEnabled ? '' : 'none';
+  if (browserNav) {
+    const host = location.hostname;
+    const isLan = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|localhost$)/.test(host);
+    browserNav.style.display = (isLan || s.browserBridgeEnabled) ? '' : 'none';
+  }
 
     const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - startedAt;
     dlog('refreshStatus ok', 'elapsedMs=', Math.round(elapsed), 'gateway=', !!s.gateway, 'caddy=', !!s.caddy);
