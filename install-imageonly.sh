@@ -858,9 +858,15 @@ handle_existing_installation(){
   local exists running choice installed_tag latest_matched
   exists="$(docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 || true)"
   running="$(docker ps   --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 || true)"
-  [ -z "$exists" ] && [ ! -f "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE_LEGACY" ] && return 0
+  # 无容器（含已停止）→ 视为全新安装，残留配置/目录不影响判断
+  if [ -z "$exists" ]; then
+    if [ -f "$CONFIG_FILE" ] || [ -f "$CONFIG_FILE_LEGACY" ]; then
+      info "未发现已有容器，但检测到残留配置文件，将按全新安装处理。"
+    fi
+    return 0
+  fi
 
-  warn "检测到已有安装（容器或配置已存在）。"
+  warn "检测到已有安装（容器已存在）。"
   show_upgrade_detection
 
   installed_tag="$(get_installed_release_tag)"
