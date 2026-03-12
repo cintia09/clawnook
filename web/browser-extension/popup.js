@@ -14,6 +14,7 @@ function updateUI(state, cfg) {
   if (cfg) {
     $('serverUrl').value  = cfg.serverUrl  || '';
     $('pairCode').value   = cfg.pairCode   || '';
+    $('token').value      = cfg.token      || '';
     $('deviceName').value = cfg.deviceName || '';
   }
 
@@ -36,6 +37,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 $('btn-connect').addEventListener('click', () => {
   let serverUrl  = $('serverUrl').value.trim();
   const pairCode   = $('pairCode').value.trim();
+  const token      = $('token').value.trim();
   const deviceName = $('deviceName').value.trim();
   if (!serverUrl || !pairCode) {
     $('status-text').textContent = '⚠️ 请填写服务器地址和配对码';
@@ -55,7 +57,7 @@ $('btn-connect').addEventListener('click', () => {
   }
   $('serverUrl').value = serverUrl;
   chrome.runtime.sendMessage({
-    type: 'connect', serverUrl, pairCode, deviceName
+    type: 'connect', serverUrl, pairCode, token, deviceName
   });
   updateUI('connecting');
 });

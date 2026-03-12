@@ -11,23 +11,25 @@
 let ws = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
-let config = { serverUrl: '', pairCode: '', deviceName: '' };
+let config = { serverUrl: '', pairCode: '', token: '', deviceName: '' };
 let connState = 'disconnected'; // disconnected | connecting | connected
 
 // ─── 初始化 ─────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get(['serverUrl', 'pairCode', 'deviceName'], (r) => {
+  chrome.storage.local.get(['serverUrl', 'pairCode', 'token', 'deviceName'], (r) => {
     if (r.serverUrl) config.serverUrl = r.serverUrl;
     if (r.pairCode)  config.pairCode  = r.pairCode;
+    if (r.token)     config.token     = r.token;
     if (r.deviceName) config.deviceName = r.deviceName;
     if (config.serverUrl && config.pairCode) connect();
   });
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.storage.local.get(['serverUrl', 'pairCode', 'deviceName'], (r) => {
+  chrome.storage.local.get(['serverUrl', 'pairCode', 'token', 'deviceName'], (r) => {
     if (r.serverUrl) config.serverUrl = r.serverUrl;
     if (r.pairCode)  config.pairCode  = r.pairCode;
+    if (r.token)     config.token     = r.token;
     if (r.deviceName) config.deviceName = r.deviceName;
     if (config.serverUrl && config.pairCode) connect();
   });
@@ -45,6 +47,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (url && !/^https?:\/\//i.test(url)) url = 'http://' + url;
     config.serverUrl  = url;
     config.pairCode   = msg.pairCode   || '';
+    config.token      = msg.token      || '';
     config.deviceName = msg.deviceName || '';
     chrome.storage.local.set(config);
     _wssFailed = false; // 用户重新连接时重置回退标记
@@ -76,7 +79,9 @@ function buildWsUrl(forceWs, port) {
     base = base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     if (!/^wss?:/.test(base)) base = 'ws://' + base;
   }
-  return `${base}/api/ws/browser-bridge?code=${encodeURIComponent(config.pairCode)}&name=${encodeURIComponent(config.deviceName || 'Chrome')}`;
+  let url = `${base}/api/ws/browser-bridge?code=${encodeURIComponent(config.pairCode)}&name=${encodeURIComponent(config.deviceName || 'Chrome')}`;
+  if (config.token) url += `&token=${encodeURIComponent(config.token)}`;
+  return url;
 }
 
 let _wssFailed = false; // 记住 wss 是否失败过，后续自动使用 ws

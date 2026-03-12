@@ -688,7 +688,7 @@ async function checkForUpdate(force = false) {
       if (fullHint) {
         fullHint.style.display = '';
         fullHint.style.color = '#30d158';
-        fullHint.innerHTML = '\u26A1 <b>\u53EF\u70ED\u66F4\u65B0</b>\uFF1A\u70B9\u51FB\u201C\u70ED\u66F4\u65B0\u201D\u5373\u53EF\uFF0C\u65E0\u9700\u91CD\u88C5\u5BB9\u5668';
+        fullHint.innerHTML = '\u26A1 <b>\u53EF\u70ED\u66F4\u65B0</b>\uFF1A\u70B9\u51FB\u201C\u70ED\u66F4\u65B0\u201D\u5373\u53EF\uFF0C\u65E0\u9700\u91CD\u88C5\u5BB9\u5668<br><span class="muted" style="font-size:11px">\u2139 \u70ED\u66F4\u65B0\u4EC5\u5E94\u7528\u5BB9\u5668\u5185\u6587\u4EF6\uFF0C\u5B89\u88C5\u811A\u672C\u7B49\u5BBF\u4E3B\u673A\u6587\u4EF6\u9700\u91CD\u65B0\u4E0B\u8F7D</span>';
       }
       if (installNote) installNote.style.display = 'none';
     }
@@ -732,7 +732,7 @@ async function checkForUpdate(force = false) {
       if (u.requiresFullUpdate) {
         statusEl.innerHTML = '<span style="color:#ff9f0a">📦 需要完整更新</span>';
       } else {
-        statusEl.innerHTML = '<span style="color:#30d158">⚡ 可热更新</span>';
+        statusEl.innerHTML = '<span style="color:#30d158">⚡ 可热更新</span> <span class="muted" style="font-size:11px">(仅容器内文件)</span>';
       }
       if (linkEl && u.releaseUrl) { linkEl.href = u.releaseUrl; linkEl.style.display = ''; }
       // Show/hide hot update & full update hints on settings page
@@ -3422,11 +3422,17 @@ function skillCard(s) {
 function scanSkillCard(s, idx) {
   // Match with installed skills
   const installed = _installedSkills.find(i => i.name === s.dirName);
-  const hasUpdate = installed && s.contentHash && installed.contentHash && s.contentHash !== installed.contentHash && s.dirName === installed.name;
+  // Only show "has update" when content changed AND installed skill is NOT user-managed
+  // (user-managed skills with same name are likely custom/unrelated; avoid false-positive update prompts)
+  const contentDiffers = installed && s.contentHash && installed.contentHash && s.contentHash !== installed.contentHash && s.dirName === installed.name;
+  const hasUpdate = contentDiffers && installed.source !== 'managed';
+  const nameConflict = contentDiffers && installed.source === 'managed';
   const isLocalScan = !!s._localScan;
   let statusBadge = '';
   if (installed && hasUpdate) {
     statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px;font-weight:700">↑ 有更新</span>';
+  } else if (nameConflict) {
+    statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px">⚠ 同名已安装 (自定义)</span>';
   } else if (installed && isLocalScan) {
     statusBadge = '<span style="color:#2196f3;font-size:11px;margin-left:6px">⟳ 已安装 (可覆盖)</span>';
   } else if (installed) {
@@ -3440,7 +3446,7 @@ function scanSkillCard(s, idx) {
   const errorHtml = (s.errors || []).length
     ? `<div class="muted small" style="color:#f44;margin-top:2px">✗ ${escapeHtml(s.errors.join('; '))}</div>`
     : '';
-  const canInstall = s.valid && (!installed || hasUpdate || isLocalScan);
+  const canInstall = s.valid && (!installed || hasUpdate || nameConflict || isLocalScan);
   return `
     <div class="card" style="margin-bottom:6px;padding:8px 12px;opacity:${!canInstall && !hasUpdate ? '0.6' : '1'}">
       <div class="row" style="align-items:flex-start;gap:8px">

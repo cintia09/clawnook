@@ -674,7 +674,7 @@ function sanitizeApiValue(api, providerName) {
  * @returns {object|null} 模型能力定义，或 null（未找到时）
  */
 function lookupModelCapabilities(providerName, modelId) {
-  if (!_openclawModelCatalog) return null;
+  if (!_openclawModelCatalog) return { _catalogUnavailable: true };
 
   // 1. 直接查找：先用映射后的 provider 名
   const openclawProvider = PROVIDER_TO_OPENCLAW_MAP[providerName.toLowerCase()] || providerName.toLowerCase();
@@ -2899,17 +2899,32 @@ app.get('/api/browser-extension/download', (req, res) => {
   if (!fs.existsSync(extDir)) {
     return res.status(404).json({ error: '浏览器插件目录不存在' });
   }
-  const tmpZip = path.join(require('os').tmpdir(), `openclaw-browser-bridge-${Date.now()}.zip`);
+  const tmpFile = path.join(require('os').tmpdir(), `openclaw-browser-bridge-${Date.now()}`);
+  // Use zip if available, otherwise fall back to tar+gzip (zip may not be installed in container)
+  const hasZip = (() => { try { execSync('which zip', { stdio: 'pipe' }); return true; } catch { return false; } })();
   try {
-    execSync(`cd "${extDir}" && zip -r "${tmpZip}" .`, { timeout: 10000 });
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="OpenClaw-Browser-Bridge.zip"');
-    const stream = fs.createReadStream(tmpZip);
-    stream.pipe(res);
-    stream.on('end', () => { try { fs.unlinkSync(tmpZip); } catch {} });
-    stream.on('error', () => { try { fs.unlinkSync(tmpZip); } catch {} });
+    if (hasZip) {
+      const zipPath = tmpFile + '.zip';
+      execSync(`cd "${extDir}" && zip -r "${zipPath}" .`, { timeout: 10000 });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', 'attachment; filename="OpenClaw-Browser-Bridge.zip"');
+      const stream = fs.createReadStream(zipPath);
+      stream.pipe(res);
+      stream.on('end', () => { try { fs.unlinkSync(zipPath); } catch {} });
+      stream.on('error', () => { try { fs.unlinkSync(zipPath); } catch {} });
+    } else {
+      const tgzPath = tmpFile + '.tar.gz';
+      execSync(`cd "${extDir}" && tar czf "${tgzPath}" .`, { timeout: 10000 });
+      res.setHeader('Content-Type', 'application/gzip');
+      res.setHeader('Content-Disposition', 'attachment; filename="OpenClaw-Browser-Bridge.tar.gz"');
+      const stream = fs.createReadStream(tgzPath);
+      stream.pipe(res);
+      stream.on('end', () => { try { fs.unlinkSync(tgzPath); } catch {} });
+      stream.on('error', () => { try { fs.unlinkSync(tgzPath); } catch {} });
+    }
   } catch (e) {
-    try { fs.unlinkSync(tmpZip); } catch {}
+    try { fs.unlinkSync(tmpFile + '.zip'); } catch {}
+    try { fs.unlinkSync(tmpFile + '.tar.gz'); } catch {}
     res.status(500).json({ error: '打包插件失败: ' + (e.message || '') });
   }
 });
@@ -4594,6 +4609,9 @@ app.post('/api/ai/config', async (req, res) => {
       if (!catalogHit) {
         // 完全未找到 - 可能是全新模型或拼写错误
         errors.push(`${role} "${model}" 未在 OpenClaw 模型目录中找到，请确认模型名称是否正确`);
+      } else if (catalogHit._catalogUnavailable) {
+        // 模型目录未加载（外部 catalog 不可用）- 跳过严格验证，允许保存
+        console.log(`[ai/config] ${model} 模型目录未加载，跳过目录验证`);
       } else if (catalogHit._inferred) {
         // 家族前缀匹配成功（推测匹配）- 需要进行运行时验证
         console.log(`[ai/config] ${model} 家族匹配成功 (${catalogHit._matchedFamily})，将进行运行时验证...`);
@@ -6058,7 +6076,7 @@ const OPENCLAW_OPERATION_MAX_SEC = {
   installing: 5400,
   updating: 5400,
   uninstalling: 1200,
-  restarting_gateway: 480,
+  restarting_gateway: 600,
   repairing_config: 900
 };
 // C9: Grace period must exceed watchdog CHECK_INTERVAL (10s) to avoid race condition
@@ -8930,6 +8948,16 @@ if (WebSocketServer) {
     try { parsedUrl = new URL(req.url, 'http://localhost'); } catch { parsedUrl = { searchParams: new URLSearchParams() }; }
     const code = (parsedUrl.searchParams.get('code') || '').trim().toUpperCase();
     const name = (parsedUrl.searchParams.get('name') || '').trim() || 'Chrome';
+    const token = (parsedUrl.searchParams.get('token') || '').trim();
+
+    // 验证连接密码（如果 Web 面板设置了密码）
+    const dockerCfg = readDockerConfig();
+    const webPassword = dockerCfg.webAuth?.password || '';
+    if (webPassword && token !== webPassword) {
+      console.log(`[browser-bridge] 连接密码验证失败: ip=${normalizedIp}`);
+      try { ws.close(4004, 'invalid token'); } catch {}
+      return;
+    }
 
     // 验证配对码
     const pairsData = readBrowserPairs();

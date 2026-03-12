@@ -48,6 +48,11 @@ button{width:100%;padding:8px;border:none;border-radius:6px;cursor:pointer;font-
 </div>
 
 <div class="field">
+  <label>连接密码（Web 面板登录密码）</label>
+  <input id="token" type="password" placeholder="可选，增强安全性" />
+</div>
+
+<div class="field">
   <label>设备名称（可选）</label>
   <input id="deviceName" placeholder="如: 书房 Mac Mini" />
 </div>
@@ -57,7 +62,8 @@ button{width:100%;padding:8px;border:none;border-radius:6px;cursor:pointer;font-
 
 <div class="sep"></div>
 <div class="hint">
-  💡 在 OpenClaw Web 管理面板的「远端浏览器控制」页面获取配对码，填入上方即可建立连接。连接后 AI 代理可以控制本机浏览器。
+  💡 在 OpenClaw Web 管理面板的「远端浏览器控制」页面获取配对码，填入上方即可建立连接。连接后 AI 代理可以控制本机浏览器。<br><br>
+  🔒 如果使用 HTTPS + IP 地址访问（自签名证书），插件会自动回退到 ws:// 直连端口 3001，无需手动配置。确保安装时已开启浏览器桥接功能。
 </div>
 
 <script src="popup.js"></script>

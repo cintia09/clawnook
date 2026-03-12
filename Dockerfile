@@ -10,7 +10,7 @@ ENV PATH="/root/.venv/bin:/root/.npm-global/bin:$PATH"
 RUN apt-get update && apt-get install -y \
     vim nano \
     curl wget net-tools iputils-ping dnsutils traceroute telnet nmap openssh-client openssh-server \
-    htop procps psmisc tmux screen tree less file unzip tar gzip \
+    htop procps psmisc tmux screen tree less file zip unzip tar gzip \
     git jq python3 python3-pip python3-venv build-essential \
     sudo cron rsync ca-certificates gnupg gettext-base \
     dnsmasq \
