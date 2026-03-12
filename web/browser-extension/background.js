@@ -271,10 +271,23 @@ function executeCdp(targetId, method, params) {
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (_attached.has(tabId)) {
     _attached.delete(tabId);
+    // Notify bridge that tab was removed
+    wsSend({ type: 'tab-removed', tabId: String(tabId) });
   }
 });
 
 // Cleanup on debugger detach
 chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId) _attached.delete(source.tabId);
+});
+
+// Forward CDP events from debugger to bridge
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (!source.tabId) return;
+  wsSend({
+    type: 'cdp-event',
+    tabId: String(source.tabId),
+    method,
+    params: params || {}
+  });
 });
