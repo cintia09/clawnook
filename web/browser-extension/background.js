@@ -38,21 +38,19 @@ chrome.runtime.onStartup.addListener(() => {
 // ─── 来自 popup 的消息 ──────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'getStatus') {
-    sendResponse({ state: connState, config });
+    sendResponse({ state: connState, config, lastError: _lastError });
     return;
   }
   if (msg.type === 'connect') {
     let url = (msg.serverUrl || '').trim();
-    // 自动补全协议前缀
-    if (url && !/^https?:\/\//i.test(url)) url = 'http://' + url;
+    // 自动补全协议前缀（默认 HTTPS）
+    if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
     config.serverUrl  = url;
     config.pairCode   = msg.pairCode   || '';
     config.token      = msg.token      || '';
     config.deviceName = msg.deviceName || '';
     chrome.storage.local.set(config);
-    _wssFailed = false; // 用户重新连接时重置回退标记
-    _wsPort = 0;
-    _wsPortIndex = 0;
+    _reconnectDelay = 5000; // 重置重连延迟
     disconnect();
     connect();
     sendResponse({ ok: true });
@@ -66,74 +64,50 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // ─── WebSocket 连接 ─────────────────────────────────────
-function buildWsUrl(forceWs, port) {
+function buildWsUrl() {
   let base = config.serverUrl.replace(/\/+$/, '');
-  if (forceWs) {
-    // 强制使用 ws:// (绕过自签名证书问题)
-    let host = base.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-    host = host.replace(/:\d+$/, ''); // 去掉任何显式端口
-    if (port) host += ':' + port;
-    base = 'ws://' + host;
-  } else {
-    // http → ws, https → wss
-    base = base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
-    if (!/^wss?:/.test(base)) base = 'ws://' + base;
-  }
+  // http → ws, https → wss
+  base = base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+  if (!/^wss?:/.test(base)) base = 'wss://' + base;
   let url = `${base}/api/ws/browser-bridge?code=${encodeURIComponent(config.pairCode)}&name=${encodeURIComponent(config.deviceName || 'Chrome')}`;
   if (config.token) url += `&token=${encodeURIComponent(config.token)}`;
   return url;
 }
 
-let _wssFailed = false; // 记住 wss 是否失败过，后续自动使用 ws
-let _wsPort = 0;        // 成功连接过的 ws:// 端口，0 表示未确定
-
-// ws:// 回退端口列表: 3001 (专用 Bridge 端口), 80 (Caddy HTTP), 3000 (Node.js 直连)
-const _WS_FALLBACK_PORTS = [3001, 80, 3000];
-let _wsPortIndex = 0; // 当前尝试的端口索引
+let _lastError = '';       // 最近的错误消息（显示在 popup 中）
+let _reconnectDelay = 5000; // 当前重连延迟（渐进增加）
 
 function connect() {
   if (ws) return;
   connState = 'connecting';
+  _lastError = '';
   broadcastState();
 
-  // 优先走 WSS（通过 Caddy HTTPS 转发），失败后自动回退 ws://
-  // 即使是 IP + 自签名证书，如果用户已在浏览器中信任证书，WSS 也能工作
-  const needWs = _wssFailed || /^http:\/\//i.test(config.serverUrl);
-
-  let url;
-  if (needWs && !_wsPort) {
-    // 还没找到可用的 ws 端口，按顺序尝试
-    url = buildWsUrl(true, _WS_FALLBACK_PORTS[_wsPortIndex]);
-  } else if (needWs && _wsPort) {
-    // 已确定可用端口
-    url = buildWsUrl(true, _wsPort);
-  } else {
-    url = buildWsUrl(false);
+  // 始终走 WSS（通过 Caddy HTTPS 转发）
+  // 用户需要先在浏览器中信任自签名证书（访问面板 HTTPS 地址并点击「继续」）
+  const url = buildWsUrl();
 
   try {
     ws = new WebSocket(url);
   } catch (e) {
     console.error('[bridge] ws create error', e);
+    _lastError = '无法创建 WebSocket 连接';
     connState = 'disconnected';
     broadcastState();
     scheduleReconnect();
     return;
   }
 
+  const connectStarted = Date.now();
+
   ws.onopen = () => {
     console.log('[bridge] connected to', url);
-    _connectStarted = 0;
-    // 记住成功连接的 ws 端口
-    if (needWs && !_wsPort) {
-      _wsPort = _WS_FALLBACK_PORTS[_wsPortIndex];
-      console.log('[bridge] ws fallback port confirmed:', _wsPort);
-    }
+    _reconnectDelay = 5000; // 重置重连延迟
+    _lastError = '';
     connState = 'connected';
     broadcastState();
     startHeartbeat();
   };
-
-  var _connectStarted = Date.now();
 
   ws.onmessage = async (evt) => {
     let msg;
@@ -191,24 +165,19 @@ function connect() {
     }
   };
 
-  ws.onclose = () => {
-    console.log('[bridge] disconnected');
-    // 如果 wss 连接在 3 秒内失败且从未成功连接过，自动回退到 ws
-    if (!_wssFailed && _connectStarted > 0 && (Date.now() - _connectStarted < 3000) && /^https:\/\//i.test(config.serverUrl)) {
-      console.log('[bridge] wss failed quickly, falling back to ws://');
-      _wssFailed = true;
-    }
-    // ws 模式下端口探测：如果当前端口失败且还有下一个，快速切换（不等 5 秒）
-    const isProbing = needWs && !_wsPort && _connectStarted > 0 && (Date.now() - _connectStarted < 5000);
+  ws.onclose = (evt) => {
+    console.log('[bridge] disconnected, code:', evt.code);
+    const quickFail = connectStarted > 0 && (Date.now() - connectStarted < 3000);
     cleanup();
-    if (isProbing && _wsPortIndex < _WS_FALLBACK_PORTS.length - 1) {
-      _wsPortIndex++;
-      console.log('[bridge] trying next ws port:', _WS_FALLBACK_PORTS[_wsPortIndex]);
-      setTimeout(() => connect(), 500); // 快速切换到下一个端口
-    } else {
-      if (isProbing) _wsPortIndex = 0; // 所有端口都失败了，下次重来
-      scheduleReconnect();
+    if (quickFail) {
+      // WSS 快速失败通常意味着证书未被信任
+      _lastError = '连接失败 — 请先在浏览器中访问面板 HTTPS 地址并信任证书';
+      // 使用渐进重试(5s → 10s → 20s → 30s max)
+      _reconnectDelay = Math.min(_reconnectDelay * 2, 30000);
+      console.log('[bridge] quick fail, retry in', _reconnectDelay, 'ms');
     }
+    broadcastState();
+    scheduleReconnect();
   };
 
   ws.onerror = (e) => {
@@ -219,6 +188,7 @@ function connect() {
 function disconnect() {
   clearTimeout(reconnectTimer);
   reconnectTimer = null;
+  _lastError = '';
   if (ws) {
     try { ws.close(); } catch {}
   }
@@ -228,7 +198,6 @@ function disconnect() {
 function cleanup() {
   ws = null;
   connState = 'disconnected';
-  broadcastState();
   clearInterval(heartbeatTimer);
   heartbeatTimer = null;
 }
@@ -239,7 +208,7 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
-  }, 5000);
+  }, _reconnectDelay);
 }
 
 function wsSend(obj) {

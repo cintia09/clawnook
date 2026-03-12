@@ -6,10 +6,18 @@ const statusLabels = {
   connected:    '✅ 已连接'
 };
 
-function updateUI(state, cfg) {
+function updateUI(state, cfg, lastError) {
   const el = $('status');
   el.className = 'status ' + state;
-  $('status-text').textContent = statusLabels[state] || state;
+  const errEl = $('error-hint');
+
+  if (state === 'disconnected' && lastError) {
+    $('status-text').textContent = '连接失败';
+    if (errEl) { errEl.textContent = lastError; errEl.style.display = ''; }
+  } else {
+    $('status-text').textContent = statusLabels[state] || state;
+    if (errEl) errEl.style.display = 'none';
+  }
 
   if (cfg) {
     $('serverUrl').value  = cfg.serverUrl  || '';
@@ -25,12 +33,16 @@ function updateUI(state, cfg) {
 
 // 初始化
 chrome.runtime.sendMessage({ type: 'getStatus' }, (resp) => {
-  if (resp) updateUI(resp.state, resp.config);
+  if (resp) updateUI(resp.state, resp.config, resp.lastError);
 });
 
 // 来自 background 的状态变更
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'stateChanged') updateUI(msg.state);
+  if (msg.type === 'stateChanged') {
+    chrome.runtime.sendMessage({ type: 'getStatus' }, (resp) => {
+      if (resp) updateUI(resp.state, resp.config, resp.lastError);
+    });
+  }
 });
 
 // 连接按钮
@@ -43,9 +55,9 @@ $('btn-connect').addEventListener('click', () => {
     $('status-text').textContent = '⚠️ 请填写服务器地址和配对码';
     return;
   }
-  // 自动补全协议前缀
+  // 自动补全协议前缀（默认 HTTPS）
   if (!/^https?:\/\//i.test(serverUrl)) {
-    serverUrl = 'http://' + serverUrl;
+    serverUrl = 'https://' + serverUrl;
   }
   // 基本校验：必须包含 IP 或域名
   try {

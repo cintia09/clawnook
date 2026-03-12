@@ -650,8 +650,8 @@
               <div style="padding:4px 0">
                 <div style="font-weight:700;font-size:14px;margin-bottom:8px">官方插件：OpenClaw Browser Bridge</div>
                 <div class="muted small" style="line-height:1.7;margin-bottom:12px">
-                  远端浏览器安装 <b>OpenClaw Browser Bridge</b> 插件后，插件会通过 WebSocket <b>主动连接</b>到本服务器。<br>
-                  ✅ 不需要命令行启动 Chrome　✅ 不需要在远端开放任何端口　✅ 可穿越 NAT/防火墙　✅ 配对码认证
+                  远端浏览器安装 <b>OpenClaw Browser Bridge</b> 插件后，插件会通过 WSS/WebSocket <b>主动连接</b>到本服务器（经由 Caddy HTTPS 转发）。<br>
+                  ✅ 不需要命令行启动 Chrome　✅ 不需要在远端开放任何端口　✅ 可穿越 NAT/防火墙　✅ 配对码 + 密码双重认证
                 </div>
                 <div style="margin-bottom:16px">
                   <button class="btn btn-primary" id="btn-browser-ext-download" style="font-size:14px">📥 下载插件 (OpenClaw-Browser-Bridge.zip)</button>
@@ -677,17 +677,26 @@
                   </span>
                 </div>
                 <div style="margin-bottom:12px">
-                  <b>步骤 3：配置连接</b><br>
+                  <b>步骤 3：信任证书（自签名证书时需要）</b><br>
+                  <span class="muted small">
+                    ① 在远端 Chrome 中打开面板 HTTPS 地址（如 <code style="user-select:all" id="browser-guide-server-url">https://192.168.x.x</code>）<br>
+                    ② 浏览器会提示"您的连接不是私密连接"，点击 <b>「高级」→「继续前往」</b><br>
+                    ③ 看到面板登录页即代表证书已被信任<br>
+                    ⚠️ 信任操作每个浏览器只需做一次，后续插件可直接通过 WSS 连接
+                  </span>
+                </div>
+                <div style="margin-bottom:12px">
+                  <b>步骤 4：配置连接</b><br>
                   <span class="muted small">
                     ① 在上方「配对码管理」中点击 <b>「生成新配对码」</b>，获得 6 位配对码<br>
                     ② 点击远端 Chrome 工具栏的插件图标，打开弹窗<br>
-                    ③ 填入本服务器地址（如 <code style="user-select:all" id="browser-guide-server-url">http://192.168.x.x:3000</code>）<br>
-                    ④ 填入配对码<br>
+                    ③ 填入本服务器 HTTPS 地址（如 <code style="user-select:all">https://192.168.x.x</code>）<br>
+                    ④ 填入配对码，如果面板设置了登录密码也一并填入<br>
                     ⑤ 点击「连接」，状态变为绿色即成功
                   </span>
                 </div>
                 <div style="margin-bottom:12px">
-                  <b>步骤 4：验证</b><br>
+                  <b>步骤 5：验证</b><br>
                   <span class="muted small">
                     连接成功后，上方「已连接的浏览器」区域会显示该设备。
                     点击「测试」按钮可以获取远端浏览器的标签页列表，确认控制链路正常。
@@ -697,7 +706,7 @@
 
               <div class="sep"></div>
               <div class="muted small" style="padding:8px 12px;background:#1a2a1a;border-radius:6px;color:#3fb950;line-height:1.6">
-                💡 <b>安全说明</b>：插件与服务端之间使用配对码认证，连接仅在局域网内建立。
+                💡 <b>安全说明</b>：插件通过 WSS（加密 WebSocket）连接，使用配对码 + 密码双重认证，连接仅在局域网内建立。
                 删除配对码会立即断开对应的浏览器连接。建议仅在可信的局域网环境中使用此功能。<br>
                 📚 详细文档：<a href="https://docs.openclaw.ai/tools/browser" target="_blank" rel="noopener" style="color:#58a6ff">docs.openclaw.ai/tools/browser</a>
               </div>

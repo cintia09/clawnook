@@ -36,10 +36,11 @@ button{width:100%;padding:8px;border:none;border-radius:6px;cursor:pointer;font-
   <div class="dot"></div>
   <span id="status-text">未连接</span>
 </div>
+<div id="error-hint" style="display:none;font-size:11px;color:#f85149;margin-bottom:8px;line-height:1.4;padding:4px 8px;background:#2a1a1a;border-radius:4px"></div>
 
 <div class="field">
   <label>OpenClaw 服务器地址</label>
-  <input id="serverUrl" placeholder="http://192.168.1.100:3000" />
+  <input id="serverUrl" placeholder="https://192.168.1.100" />
 </div>
 
 <div class="field">
@@ -62,8 +63,8 @@ button{width:100%;padding:8px;border:none;border-radius:6px;cursor:pointer;font-
 
 <div class="sep"></div>
 <div class="hint">
-  💡 在 OpenClaw Web 管理面板的「远端浏览器控制」页面获取配对码，填入上方即可建立连接。连接后 AI 代理可以控制本机浏览器。<br><br>
-  🔒 如果使用 HTTPS + IP 地址访问（自签名证书），插件会自动回退到 ws:// 直连端口 3001，无需手动配置。确保安装时已开启浏览器桥接功能。
+  💡 在 OpenClaw Web 管理面板的「远端浏览器控制」页面获取配对码。<br><br>
+  🔒 插件通过 WSS 连接（经由 Caddy HTTPS 转发）。如使用自签名证书，需先在浏览器中访问面板 HTTPS 地址并点击「继续前往」信任证书，否则插件无法建立连接。
 </div>
 
 <script src="popup.js"></script>
