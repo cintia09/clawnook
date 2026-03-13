@@ -2080,7 +2080,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
   }
   if (restartAccepted) {
     // 轮询等待 Gateway 真正启动完成（最多 10 分钟）
-    // Gateway 冷启动通常需要 2~5 分钟（受 Discord/TLS 等外部连接影响），预留足够余量
+    // Gateway 热重启通常在 5~15 秒内完成，冷启动可能需要更长时间
     const pollStart = Date.now();
     const pollTimeout = 10 * 60 * 1000;
     const pollInterval = 2000;
@@ -3249,15 +3249,17 @@ qa('[data-save-msg]').forEach(btn => {
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 async function loadDeviceManagement() {
-  // 并行加载: setup command + pairing list + security config
-  const [cmdRes, pairRes, secRes] = await Promise.all([
+  // 并行加载: setup command + pairing list + security config + connected nodes
+  const [cmdRes, pairRes, secRes, connRes] = await Promise.all([
     api('/api/node/setup-command'),
     api('/api/openclaw/pairing/list'),
-    api('/api/node/security')
+    api('/api/node/security'),
+    api('/api/node/connected')
   ]);
 
   // 快速连接命令
   const cmdEl = $('device-setup-command');
+  const cmdWinEl = $('device-setup-command-win');
   if (cmdEl) {
     if (cmdRes.success && cmdRes.hasToken) {
       cmdEl.textContent = cmdRes.command;
@@ -3265,6 +3267,16 @@ async function loadDeviceManagement() {
       cmdEl.textContent = cmdRes.command || '# 加载失败';
     }
   }
+  if (cmdWinEl) {
+    if (cmdRes.success && cmdRes.hasToken && cmdRes.commandWindows) {
+      cmdWinEl.textContent = cmdRes.commandWindows;
+    } else {
+      cmdWinEl.textContent = '# Windows 命令加载失败';
+    }
+  }
+
+  // 在线节点列表
+  renderConnectedNodes(connRes);
 
   // 配对审批列表
   renderPairingList(pairRes);
@@ -3280,6 +3292,42 @@ async function loadDeviceManagement() {
     if ($('device-deny-commands')) $('device-deny-commands').value = (secRes.denyCommands || []).join('\n');
     toggleAutoApproveWarning();
   }
+}
+
+function renderConnectedNodes(r) {
+  const listEl = $('connected-nodes-list');
+  if (!listEl) return;
+  if (!r || !r.success) {
+    listEl.innerHTML = '<div class="muted small">读取失败: ' + esc(r?.error || '') + '</div>';
+    return;
+  }
+  const nodes = r.nodes || [];
+  if (!nodes.length) {
+    listEl.innerHTML = '<div class="muted small" style="color:#8b949e">暂无已配对的 Node 节点</div>';
+    return;
+  }
+  listEl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+    '<tr style="border-bottom:1px solid #30363d;color:#8b949e;font-size:12px">' +
+    '<th style="text-align:left;padding:6px 8px">状态</th>' +
+    '<th style="text-align:left;padding:6px 8px">名称</th>' +
+    '<th style="text-align:left;padding:6px 8px">平台</th>' +
+    '<th style="text-align:left;padding:6px 8px">IP</th>' +
+    '<th style="text-align:left;padding:6px 8px">版本</th>' +
+    '</tr>' +
+    nodes.map(n => {
+      const statusDot = n.connected
+        ? '<span style="color:#3fb950" title="在线">●</span>'
+        : '<span style="color:#f85149" title="离线">●</span>';
+      const statusText = n.connected ? '在线' : '离线';
+      return '<tr style="border-bottom:1px solid #21262d">' +
+        `<td style="padding:6px 8px">${statusDot} <span class="muted small">${statusText}</span></td>` +
+        `<td style="padding:6px 8px;font-weight:600">${esc(n.displayName || '')}</td>` +
+        `<td style="padding:6px 8px"><span class="muted small">${esc(n.platform || '')}</span></td>` +
+        `<td style="padding:6px 8px"><code style="font-size:12px">${esc(n.remoteIp || '-')}</code></td>` +
+        `<td style="padding:6px 8px"><span class="muted small">${esc(n.version || '-')}</span></td>` +
+        '</tr>';
+    }).join('') +
+    '</table>';
 }
 
 function renderPairingList(r) {
@@ -3391,9 +3439,14 @@ $('device-auto-approve')?.addEventListener('change', toggleAutoApproveWarning);
 
 // 复制快速连接命令
 $('btn-copy-setup-cmd')?.addEventListener('click', () => {
-  const text = $('device-setup-command')?.textContent || '';
+  // Copy whichever tab is visible
+  const linuxEl = $('device-setup-command');
+  const winEl = $('device-setup-command-win');
+  const isWinVisible = winEl && winEl.style.display !== 'none';
+  const text = isWinVisible ? (winEl?.textContent || '') : (linuxEl?.textContent || '');
+  const label = isWinVisible ? 'Windows PowerShell' : 'Linux/macOS';
   navigator.clipboard.writeText(text).then(
-    () => toast('已复制连接命令'),
+    () => toast(`已复制 ${label} 连接命令`),
     () => toast('复制失败')
   );
 });
@@ -3401,6 +3454,7 @@ $('btn-copy-setup-cmd')?.addEventListener('click', () => {
 // 刷新
 $('btn-device-refresh')?.addEventListener('click', () => loadDeviceManagement());
 $('btn-pairing-refresh')?.addEventListener('click', () => loadDeviceManagement());
+$('btn-connected-refresh')?.addEventListener('click', () => loadDeviceManagement());
 
 // 保存安全配置
 $('btn-device-save-security')?.addEventListener('click', async () => {

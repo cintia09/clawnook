@@ -559,12 +559,29 @@
             </div>
             <div class="sep"></div>
             <div style="font-weight:700;font-size:14px;margin-bottom:8px">🚀 快速连接</div>
-            <div class="muted small" style="margin-bottom:8px">在远端机器上运行以下命令即可自动配对（需先安装 <code>openclaw</code> CLI）。通过 Caddy 独立 TLS 端口加密连接：</div>
+            <div class="muted small" style="margin-bottom:8px">在远端机器上运行以下命令即可自动配对（需先安装 <code>openclaw</code> CLI）。命令会自动配置节点安全策略并通过 TLS 加密连接：</div>
+            <div style="margin-bottom:6px">
+              <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-linux" onclick="document.getElementById('device-setup-command').style.display='';document.getElementById('device-setup-command-win').style.display='none';this.style.fontWeight='700';document.getElementById('tab-cmd-win').style.fontWeight='400'"><b>🐧 Linux / macOS</b></span>
+              <span class="muted small" style="cursor:pointer" id="tab-cmd-win" onclick="document.getElementById('device-setup-command-win').style.display='';document.getElementById('device-setup-command').style.display='none';this.style.fontWeight='700';document.getElementById('tab-cmd-linux').style.fontWeight='400'">🪟 Windows PowerShell</span>
+            </div>
             <div style="position:relative">
               <pre class="terminal" id="device-setup-command" style="height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+              <pre class="terminal" id="device-setup-command-win" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
               <button class="btn btn-sm" id="btn-copy-setup-cmd" style="position:absolute;top:8px;right:8px;font-size:11px;padding:2px 8px" title="复制命令">📋</button>
             </div>
-            <div class="muted small" style="margin-top:6px">💡 命令已包含 TLS 加密和证书兼容设置，复制后直接在远端运行即可。运行后需在下方审批才能接入。</div>
+            <div class="muted small" style="margin-top:6px">💡 命令会自动在远端创建 <code>~/.openclaw/openclaw.json</code> 并设置命令执行策略，然后启动节点连接。运行后需在下方审批才能接入。</div>
+          </div>
+
+          <!-- 在线设备 -->
+          <div class="card" style="grid-column: span 12;">
+            <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+              <div style="font-weight:900;font-size:16px">🖥️ 远端节点状态</div>
+              <button class="btn" id="btn-connected-refresh" style="font-size:12px;padding:2px 10px">刷新</button>
+            </div>
+            <div class="muted small" style="margin-bottom:8px">已配对的 Node 节点及其在线状态</div>
+            <div id="connected-nodes-list" style="min-height:32px">
+              <div class="muted small">加载中...</div>
+            </div>
           </div>
 
           <!-- 设备配对审批 -->
@@ -648,6 +665,16 @@
               <summary style="font-weight:900;font-size:16px;cursor:pointer">📖 Node 模式说明（点击展开）</summary>
               <div class="sep"></div>
               <div style="line-height:1.8;font-size:13px">
+                <div style="margin-bottom:12px;padding:10px 14px;background:#1a2a1a;border:1px solid #3fb950;border-radius:6px;color:#7ee787">
+                  ⚡ <b>重要：命令执行安全策略</b><br>
+                  <span style="color:#c9d1d9;font-size:12px">
+                    快速连接命令会自动在远端节点配置 <code>tools.exec.security</code>（与上方安全配置同步）。<br>
+                    • <code>full</code>：AI 代理可直接执行命令，无需逐次审批（推荐用于可信环境）<br>
+                    • <code>allowlist</code>：每次执行都需要在节点本地审批（远端无人值守时无法审批，<b>会导致命令执行失败</b>）<br>
+                    • <code>deny</code>：禁止所有命令执行<br>
+                    ⚠️ 如果远端节点是无人值守的服务器，<b>必须使用 <code>full</code></b>，否则所有命令都会因 "approval required" 而失败。
+                  </span>
+                </div>
                 <div style="margin-bottom:12px">
                   <b>什么是 Node 模式？</b><br>
                   <span class="muted small">远端机器运行 <code>openclaw node run</code> 后，会自动连接到 Gateway 并注册为一个 Node 节点。
@@ -656,17 +683,15 @@
                 <div style="margin-bottom:12px">
                   <b>支持平台</b><br>
                   <span class="muted small">
-                    ✅ <b>macOS</b> — 完整支持，推荐使用 <code>npm i -g openclaw</code> 安装<br>
-                    ✅ <b>Linux</b> — 完整支持（Ubuntu / Debian / CentOS 等），Docker 容器中也可运行<br>
-                    ✅ <b>Windows</b> — 完整支持，需 Node.js 18+ 环境<br>
-                    ❌ <b>iOS / Android</b> — 不支持。移动端无法运行 Node.js 和 Headless Chrome，因此不能作为远端 Node 节点。移动设备可以通过浏览器访问 Web 管理面板进行管理和监控，但无法被 AI 代理远程操控。
+                    ✅ <b>macOS / Linux</b> — 完整支持，命令相同（上方 Linux/macOS 标签页）<br>
+                    ✅ <b>Windows</b> — 完整支持，需 Node.js 18+ 环境，使用 PowerShell 命令（上方 Windows 标签页）<br>
+                    ❌ <b>iOS / Android</b> — 不支持
                   </span>
                 </div>
                 <div style="margin-bottom:12px">
                   <b>连接方式</b><br>
                   <span class="muted small">
                     🔒 <b>TLS 加密</b> — 通过 Caddy 独立 TLS 端口代理到 Gateway，命令已自动包含证书兼容设置：<br>
-                    <code>NODE_TLS_REJECT_UNAUTHORIZED=0 OPENCLAW_GATEWAY_TOKEN=&lt;token&gt; openclaw node run --host &lt;ip&gt; --port &lt;tls_port&gt; --tls</code><br>
                     💡 TLS 端口在安装时由用户指定，Caddy 自动提供 TLS 证书。
                   </span>
                 </div>

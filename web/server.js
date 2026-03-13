@@ -3899,10 +3899,20 @@ app.get('/api/node/setup-command', (req, res) => {
     const dcfg = readDockerConfig();
     const gatewayTlsPort = Number(dcfg.gateway_tls_port || 18790) || 18790;
     if (!token) {
-      return res.json({ success: true, command: '# Gateway Auth Token 未配置，请先在 openclaw.json 中设置 gateway.auth.token', hasToken: false });
+      return res.json({ success: true, command: '# Gateway Auth Token 未配置，请先在 openclaw.json 中设置 gateway.auth.token', hasToken: false, commandWindows: '' });
     }
-    const command = `NODE_TLS_REJECT_UNAUTHORIZED=0 OPENCLAW_GATEWAY_TOKEN=${shellSingleQuote(token)} openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
-    res.json({ success: true, command, hasToken: true, host, port: gatewayTlsPort });
+    const cfg = readJson(CONFIG_PATH, {});
+    const execSecurity = cfg?.tools?.exec?.security || 'full';
+
+    // Linux/macOS: auto-configure node host exec security via openclaw.json before launch
+    const initCmd = `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'NODEEOF'\n{"tools":{"exec":{"security":"${execSecurity}"}}}\nNODEEOF`;
+    const runCmd = `NODE_TLS_REJECT_UNAUTHORIZED=0 OPENCLAW_GATEWAY_TOKEN=${shellSingleQuote(token)} openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
+    const command = `${initCmd}\n${runCmd}`;
+
+    // Windows PowerShell: equivalent command
+    const commandWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\n$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; $env:OPENCLAW_GATEWAY_TOKEN='${token}'; openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
+
+    res.json({ success: true, command, commandWindows, hasToken: true, host, port: gatewayTlsPort });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -3976,6 +3986,48 @@ app.post('/api/node/unpair', (req, res) => {
     fs.writeFileSync(DEVICE_PAIRING_PAIRED_PATH, JSON.stringify(paired, null, 2));
     console.log(`[node][unpair] deviceId=${deviceId}`);
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/node/connected — 获取当前已连接的远端设备列表
+app.get('/api/node/connected', async (req, res) => {
+  try {
+    const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+    const nodeEntries = Object.values(paired).filter(e => e.clientMode === 'node');
+
+    // Check which nodes are actually connected via gateway ws
+    const gwToken = getGatewayAuthToken();
+    let connectedNodes = [];
+    if (gwToken) {
+      try {
+        const wsResult = runCommandText(
+          `curl --noproxy '*' -s --connect-timeout 2 --max-time 5 ` +
+          `-H "Authorization: Bearer ${gwToken}" ` +
+          `"http://127.0.0.1:18789/v1/nodes" 2>/dev/null || true`, 6000);
+        if (wsResult) {
+          const parsed = JSON.parse(wsResult.trim());
+          if (Array.isArray(parsed?.nodes)) connectedNodes = parsed.nodes;
+        }
+      } catch { /* gateway might not support REST node list */ }
+    }
+    const connectedSet = new Set(connectedNodes.map(n => n.nodeId || n.id));
+
+    const nodes = nodeEntries.map(entry => {
+      const live = connectedNodes.find(n => (n.nodeId || n.id) === entry.deviceId);
+      return {
+        deviceId: entry.deviceId,
+        displayName: entry.displayName || entry.deviceId?.slice(0, 8),
+        platform: entry.platform || 'unknown',
+        connected: connectedSet.has(entry.deviceId) || false,
+        remoteIp: live?.remoteIp || entry.remoteIp || '',
+        version: live?.version || '',
+        capabilities: live?.caps || live?.commands || [],
+        approvedAtMs: entry.approvedAtMs || 0,
+      };
+    });
+    res.json({ success: true, nodes });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -6013,7 +6065,7 @@ const OPENCLAW_OPERATION_MAX_SEC = {
 // C9: Grace period must exceed watchdog CHECK_INTERVAL (10s) to avoid race condition
 // where the reconcile clears the restarting_gateway lock before the watchdog polls it.
 // Previously 5s — caused the watchdog to never see restart requests (DFMEA O4).
-const OPENCLAW_RESTART_RECONCILE_GRACE_SEC = 30;
+const OPENCLAW_RESTART_RECONCILE_GRACE_SEC = 15;
 
 function ensureOpenClawRuntimeStateDirs() {
   try {
