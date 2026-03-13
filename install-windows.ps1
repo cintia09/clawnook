@@ -3174,7 +3174,7 @@ function Main {
                 )
                 $upgradeConfigFile = ($upgradeConfigCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
                 $upgradeConfig = $null
-                if (Test-Path $upgradeConfigFile) {
+                if ($upgradeConfigFile -and (Test-Path $upgradeConfigFile)) {
                     try {
                         $upgradeConfig = Get-Content $upgradeConfigFile -Raw | ConvertFrom-Json
                         Write-OK "读取到旧容器配置: $upgradeConfigFile"
