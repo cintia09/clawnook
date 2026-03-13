@@ -4036,45 +4036,91 @@ app.get('/api/node/connected', async (req, res) => {
     const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
     const nodeEntries = Object.values(paired).filter(e => e.clientMode === 'node');
 
-    // Detect connected remote IPs from active TCP connections to Caddy TLS ports (443, 18790)
-    // and direct gateway port (18789). Remote nodes connect via Caddy TLS termination.
-    const connectedIps = new Set();
+    // Method 1: Try Gateway HTTP API for connected nodes (most reliable)
+    let gatewayNodes = null;
     try {
-      const netstatOut = runCommandText(
-        `netstat -tnp 2>/dev/null | grep ESTABLISHED | grep -E ':(443|18789|18790)\\b' || true`, 3000);
-      for (const line of String(netstatOut || '').split('\n')) {
-        // Match remote address column (column 5): ip:port
-        const parts = line.trim().split(/\s+/);
-        if (parts.length >= 5) {
-          const remote = parts[4] || '';
-          const remoteIp = remote.replace(/:\d+$/, '').replace(/^::ffff:/, '');
-          if (remoteIp && remoteIp !== '127.0.0.1' && remoteIp !== '::1' && remoteIp !== '0.0.0.0') {
-            connectedIps.add(remoteIp);
-          }
-        }
+      const token = getGatewayAuthToken();
+      const headers = { 'Accept': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const gwResp = await new Promise((resolve, reject) => {
+        const gwReq = require('http').get('http://127.0.0.1:18789/api/nodes', { headers, timeout: 3000 }, (resp) => {
+          let data = '';
+          resp.on('data', chunk => data += chunk);
+          resp.on('end', () => {
+            try { resolve(JSON.parse(data)); } catch { resolve(null); }
+          });
+        });
+        gwReq.on('error', () => resolve(null));
+        gwReq.on('timeout', () => { gwReq.destroy(); resolve(null); });
+      });
+      if (gwResp && Array.isArray(gwResp.nodes || gwResp)) {
+        gatewayNodes = gwResp.nodes || gwResp;
       }
-    } catch { /* netstat unavailable */ }
+    } catch { /* Gateway API unavailable */ }
 
-    // Also try openclaw devices list --json for richer data (includes displayName etc.)
+    // Method 2: Try CLI for richer data (includes displayName, connected status)
     let cliDevices = [];
     try {
       const cliOut = runCommandText(
         `cd ${OPENCLAW_SOURCE_DIR} && node openclaw.mjs devices list --json --timeout 3000 2>/dev/null || true`, 5000);
       if (cliOut) {
-        const parsed = JSON.parse(cliOut.trim());
-        if (Array.isArray(parsed?.paired)) cliDevices = parsed.paired.filter(d => d.clientMode === 'node');
+        const jsonStart = cliOut.indexOf('{');
+        const jsonText = jsonStart >= 0 ? cliOut.slice(jsonStart) : cliOut;
+        const parsed = JSON.parse(jsonText.trim());
+        if (Array.isArray(parsed?.nodes)) cliDevices = parsed.nodes.filter(d => d.clientMode === 'node');
+        else if (Array.isArray(parsed?.paired)) cliDevices = parsed.paired.filter(d => d.clientMode === 'node');
+        else if (Array.isArray(parsed?.devices)) cliDevices = parsed.devices.filter(d => d.clientMode === 'node');
       }
     } catch { /* CLI unavailable */ }
+
+    // Build a lookup from Gateway API and CLI responses
+    const gwMap = new Map();
+    if (gatewayNodes) {
+      for (const n of gatewayNodes) {
+        const id = n.deviceId || n.id || '';
+        if (id) gwMap.set(id, n);
+      }
+    }
     const cliMap = new Map(cliDevices.map(d => [d.deviceId, d]));
 
+    // Method 3: Fallback to netstat IP matching (least reliable with Caddy proxying)
+    const connectedIps = new Set();
+    if (!gatewayNodes) {
+      try {
+        const netstatOut = runCommandText(
+          `netstat -tnp 2>/dev/null | grep ESTABLISHED | grep -E ':(443|18789|18790)\\b' || ss -tnp 2>/dev/null | grep ESTAB | grep -E ':(443|18789|18790)' || true`, 3000);
+        for (const line of String(netstatOut || '').split('\n')) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 5) {
+            const remote = parts[4] || '';
+            const remoteIp = remote.replace(/:\d+$/, '').replace(/^::ffff:/, '');
+            if (remoteIp && remoteIp !== '127.0.0.1' && remoteIp !== '::1' && remoteIp !== '0.0.0.0') {
+              connectedIps.add(remoteIp);
+            }
+          }
+        }
+      } catch { /* netstat unavailable */ }
+    }
+
     const nodes = nodeEntries.map(entry => {
+      const gw = gwMap.get(entry.deviceId);
       const cli = cliMap.get(entry.deviceId);
-      const ip = cli?.remoteIp || entry.remoteIp || '';
-      const isConnected = !!(ip && connectedIps.has(ip));
+      const ip = gw?.remoteIp || cli?.remoteIp || entry.remoteIp || '';
+
+      // Determine connected state: prefer Gateway API > CLI > netstat IP fallback
+      let isConnected = false;
+      if (gw) {
+        isConnected = !!(gw.connected || gw.online || gw.status === 'connected' || gw.status === 'online');
+      } else if (cli) {
+        isConnected = !!(cli.connected || cli.online || cli.status === 'connected' || cli.status === 'online');
+      } else if (ip && connectedIps.size > 0) {
+        isConnected = connectedIps.has(ip);
+      }
+
       return {
         deviceId: entry.deviceId,
-        displayName: cli?.displayName || entry.displayName || entry.clientId || entry.deviceId?.slice(0, 12),
-        platform: cli?.platform || entry.platform || 'unknown',
+        displayName: gw?.displayName || cli?.displayName || entry.displayName || entry.clientId || entry.deviceId?.slice(0, 12),
+        platform: gw?.platform || cli?.platform || entry.platform || 'unknown',
         connected: isConnected,
         remoteIp: ip,
         approvedAtMs: entry.approvedAtMs || 0,
@@ -7974,7 +8020,7 @@ app.get('/api/openclaw/pairing/list', async (_req, res) => {
 app.post('/api/openclaw/pairing/approve', async (req, res) => {
   const { requestId } = req.body || {};
   if (!requestId || typeof requestId !== 'string') return res.status(400).json({ success: false, error: '缺少 requestId' });
-  if (!/^[0-9a-f-]{36}$/.test(requestId)) return res.status(400).json({ success: false, error: 'requestId 格式无效' });
+  if (!/^[0-9a-fA-F-]{8,64}$/.test(requestId)) return res.status(400).json({ success: false, error: 'requestId 格式无效' });
   try {
     const pending = readJson(DEVICE_PAIRING_PENDING_PATH, {});
     const entry = pending[requestId];
