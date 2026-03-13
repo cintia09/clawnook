@@ -1132,6 +1132,18 @@ function keepLastLines(text, maxLines = 200) {
 
 function extractLogTimestampMs(line) {
   const text = String(line || '');
+  const startedAtMatch = text.match(/\bstartedAt=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?)\b/i);
+  if (startedAtMatch?.[1]) {
+    const startedText = String(startedAtMatch[1]);
+    const hasOffset = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(startedText);
+    if (hasOffset) {
+      const ts = Date.parse(startedText.replace(' ', 'T'));
+      if (Number.isFinite(ts)) return ts;
+    } else {
+      const ts = parseLocalLogTimestampToMs(startedText);
+      if (Number.isFinite(ts)) return ts;
+    }
+  }
   const localMatch = text.match(/\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/);
   if (localMatch?.[1]) {
     const ts = parseLocalLogTimestampToMs(localMatch[1]);
@@ -1274,6 +1286,7 @@ function mergeLogBlocksByTimeline(blocksText, { foldWatchdog = true, maxLines = 
   const entries = [];
   const knownSourcePattern = /^(watchdog|web-panel|gateway|gateway-runtime|gateway-legacy|openclaw-install|openclaw-repair|install|logs)$/i;
   const taskStartTs = new Map();
+  const sourceStartTs = new Map();
   const lastTsBySource = new Map();
   let source = 'logs';
   let seq = 0;
@@ -1299,13 +1312,18 @@ function mergeLogBlocksByTimeline(blocksText, { foldWatchdog = true, maxLines = 
       if (Number.isFinite(ts)) taskStartTs.set(markerMatch[2], ts);
     }
     let inferredTs = extractLogTimestampMs(normalized);
+    if (inferredTs > 0 && /\bstartedAt=\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/i.test(normalized) && source) {
+      sourceStartTs.set(source, inferredTs);
+    }
     // C10: extract task= and elapsed= independently (they may appear in either order)
     if (!inferredTs) {
       const taskIdMatch = normalized.match(/\btask=([^\s]+)/i);
       const elapsedMatch = normalized.match(/\belapsed=(\d+)s/i)
         || normalized.match(/安装进行中[.…]*\s*(\d+)s/);
-      if (taskIdMatch?.[1] && elapsedMatch?.[1]) {
-        const baseTs = taskStartTs.get(taskIdMatch[1]);
+      if (elapsedMatch?.[1]) {
+        const taskBaseTs = taskIdMatch?.[1] ? taskStartTs.get(taskIdMatch[1]) : 0;
+        const sourceBaseTs = source ? sourceStartTs.get(source) : 0;
+        const baseTs = taskBaseTs || sourceBaseTs;
         if (Number.isFinite(baseTs)) {
           inferredTs = baseTs + (Number(elapsedMatch[1]) * 1000);
         }
