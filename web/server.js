@@ -3909,10 +3909,16 @@ app.get('/api/node/setup-command', (req, res) => {
     const runCmd = `NODE_TLS_REJECT_UNAUTHORIZED=0 OPENCLAW_GATEWAY_TOKEN=${shellSingleQuote(token)} openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
     const command = `${initCmd}\n${runCmd}`;
 
+    // Background variant: nohup + auto-reconnect loop
+    const bgCmd = `${initCmd}\nnohup bash -c 'while true; do ${runCmd}; echo "[openclaw-node] exited, reconnecting in 5s..."; sleep 5; done' > ~/.openclaw/node-host.log 2>&1 &\necho "✅ Node 已在后台启动，日志: ~/.openclaw/node-host.log"`;
+
     // Windows PowerShell: equivalent command
     const commandWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\n$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; $env:OPENCLAW_GATEWAY_TOKEN='${token}'; openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
 
-    res.json({ success: true, command, commandWindows, hasToken: true, host, port: gatewayTlsPort });
+    // Windows background variant
+    const bgCmdWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\nStart-Process powershell -ArgumentList '-NoExit','-Command',"while (\\$true) { \\$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; \\$env:OPENCLAW_GATEWAY_TOKEN='${token}'; openclaw node run --host ${host} --port ${gatewayTlsPort} --tls; Start-Sleep 5 }" -WindowStyle Hidden\nWrite-Host '✅ Node 已在后台启动'`;
+
+    res.json({ success: true, command, commandWindows, bgCmd, bgCmdWindows, hasToken: true, host, port: gatewayTlsPort });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -3997,33 +4003,47 @@ app.get('/api/node/connected', async (req, res) => {
     const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
     const nodeEntries = Object.values(paired).filter(e => e.clientMode === 'node');
 
-    // Check which nodes are actually connected via gateway ws
-    const gwToken = getGatewayAuthToken();
-    let connectedNodes = [];
-    if (gwToken) {
-      try {
-        const wsResult = runCommandText(
-          `curl --noproxy '*' -s --connect-timeout 2 --max-time 5 ` +
-          `-H "Authorization: Bearer ${gwToken}" ` +
-          `"http://127.0.0.1:18789/v1/nodes" 2>/dev/null || true`, 6000);
-        if (wsResult) {
-          const parsed = JSON.parse(wsResult.trim());
-          if (Array.isArray(parsed?.nodes)) connectedNodes = parsed.nodes;
+    // Detect connected remote IPs from active TCP connections to Caddy TLS ports (443, 18790)
+    // and direct gateway port (18789). Remote nodes connect via Caddy TLS termination.
+    const connectedIps = new Set();
+    try {
+      const netstatOut = runCommandText(
+        `netstat -tnp 2>/dev/null | grep ESTABLISHED | grep -E ':(443|18789|18790)\\b' || true`, 3000);
+      for (const line of String(netstatOut || '').split('\n')) {
+        // Match remote address column (column 5): ip:port
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 5) {
+          const remote = parts[4] || '';
+          const remoteIp = remote.replace(/:\d+$/, '').replace(/^::ffff:/, '');
+          if (remoteIp && remoteIp !== '127.0.0.1' && remoteIp !== '::1' && remoteIp !== '0.0.0.0') {
+            connectedIps.add(remoteIp);
+          }
         }
-      } catch { /* gateway might not support REST node list */ }
-    }
-    const connectedSet = new Set(connectedNodes.map(n => n.nodeId || n.id));
+      }
+    } catch { /* netstat unavailable */ }
+
+    // Also try openclaw devices list --json for richer data (includes displayName etc.)
+    let cliDevices = [];
+    try {
+      const cliOut = runCommandText(
+        `cd ${OPENCLAW_SOURCE_DIR} && node openclaw.mjs devices list --json --timeout 3000 2>/dev/null || true`, 5000);
+      if (cliOut) {
+        const parsed = JSON.parse(cliOut.trim());
+        if (Array.isArray(parsed?.paired)) cliDevices = parsed.paired.filter(d => d.clientMode === 'node');
+      }
+    } catch { /* CLI unavailable */ }
+    const cliMap = new Map(cliDevices.map(d => [d.deviceId, d]));
 
     const nodes = nodeEntries.map(entry => {
-      const live = connectedNodes.find(n => (n.nodeId || n.id) === entry.deviceId);
+      const cli = cliMap.get(entry.deviceId);
+      const ip = cli?.remoteIp || entry.remoteIp || '';
+      const isConnected = !!(ip && connectedIps.has(ip));
       return {
         deviceId: entry.deviceId,
-        displayName: entry.displayName || entry.deviceId?.slice(0, 8),
-        platform: entry.platform || 'unknown',
-        connected: connectedSet.has(entry.deviceId) || false,
-        remoteIp: live?.remoteIp || entry.remoteIp || '',
-        version: live?.version || '',
-        capabilities: live?.caps || live?.commands || [],
+        displayName: cli?.displayName || entry.displayName || entry.clientId || entry.deviceId?.slice(0, 12),
+        platform: cli?.platform || entry.platform || 'unknown',
+        connected: isConnected,
+        remoteIp: ip,
         approvedAtMs: entry.approvedAtMs || 0,
       };
     });

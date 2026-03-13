@@ -561,15 +561,27 @@
             <div style="font-weight:700;font-size:14px;margin-bottom:8px">🚀 快速连接</div>
             <div class="muted small" style="margin-bottom:8px">在远端机器上运行以下命令即可自动配对（需先安装 <code>openclaw</code> CLI）。命令会自动配置节点安全策略并通过 TLS 加密连接：</div>
             <div style="margin-bottom:6px">
-              <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-linux" onclick="document.getElementById('device-setup-command').style.display='';document.getElementById('device-setup-command-win').style.display='none';this.style.fontWeight='700';document.getElementById('tab-cmd-win').style.fontWeight='400'"><b>🐧 Linux / macOS</b></span>
-              <span class="muted small" style="cursor:pointer" id="tab-cmd-win" onclick="document.getElementById('device-setup-command-win').style.display='';document.getElementById('device-setup-command').style.display='none';this.style.fontWeight='700';document.getElementById('tab-cmd-linux').style.fontWeight='400'">🪟 Windows PowerShell</span>
+              <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-linux" onclick="document.getElementById('device-setup-command').style.display='';document.getElementById('device-setup-command-win').style.display='';document.querySelectorAll('.cmd-bg').forEach(e=>e.style.display='none');this.style.fontWeight='700';document.getElementById('tab-cmd-win').style.fontWeight='400';document.getElementById('tab-cmd-bg').style.fontWeight='400';document.getElementById('device-setup-command-win').style.display='none'"><b>🐧 Linux / macOS（前台）</b></span>
+              <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-bg" onclick="document.querySelectorAll('.cmd-fg,.cmd-bg').forEach(e=>e.style.display='none');document.getElementById('device-setup-command-bg').style.display='';this.style.fontWeight='700';document.getElementById('tab-cmd-linux').style.fontWeight='400';document.getElementById('tab-cmd-win').style.fontWeight='400'">🐧 后台运行（推荐）</span>
+              <span class="muted small" style="cursor:pointer" id="tab-cmd-win" onclick="document.querySelectorAll('.cmd-fg,.cmd-bg').forEach(e=>e.style.display='none');document.getElementById('device-setup-command-win').style.display='';this.style.fontWeight='700';document.getElementById('tab-cmd-linux').style.fontWeight='400';document.getElementById('tab-cmd-bg').style.fontWeight='400'">🪟 Windows PowerShell</span>
             </div>
             <div style="position:relative">
-              <pre class="terminal" id="device-setup-command" style="height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
-              <pre class="terminal" id="device-setup-command-win" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+              <pre class="terminal cmd-fg" id="device-setup-command" style="height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+              <pre class="terminal cmd-bg" id="device-setup-command-bg" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+              <pre class="terminal cmd-fg cmd-bg" id="device-setup-command-win" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
               <button class="btn btn-sm" id="btn-copy-setup-cmd" style="position:absolute;top:8px;right:8px;font-size:11px;padding:2px 8px" title="复制命令">📋</button>
             </div>
             <div class="muted small" style="margin-top:6px">💡 命令会自动在远端创建 <code>~/.openclaw/openclaw.json</code> 并设置命令执行策略，然后启动节点连接。运行后需在下方审批才能接入。</div>
+            <div style="margin-top:8px;padding:10px 14px;background:#1a2a1a;border:1px solid #3fb950;border-radius:6px;font-size:12px;line-height:1.7;color:#c9d1d9">
+              <b style="color:#7ee787">🔄 后台运行与自动重连</b><br>
+              • <b>推荐使用"后台运行"</b>命令：使用 <code>nohup</code> + 重连循环，Gateway 重启或网络中断后会自动重连（5秒间隔）<br>
+              • 日志输出到 <code>~/.openclaw/node-host.log</code>，可用 <code>tail -f ~/.openclaw/node-host.log</code> 查看<br>
+              • 关闭 SSH 后进程不会退出（<code>nohup</code> 会话独立）<br>
+              • 停止节点：<code>kill $(pgrep -f "openclaw node run")</code><br>
+              • <b>前台模式</b>适合调试：可直接看到输出，<code>Ctrl+C</code> 停止<br>
+              • <b>Gateway 重启</b>后节点会自动重连（后台模式），前台模式需手动重新运行<br>
+              • <b>Windows</b>：后台运行使用 <code>Start-Process -WindowStyle Hidden</code>
+            </div>
           </div>
 
           <!-- 在线设备 -->
@@ -693,6 +705,17 @@
                   <span class="muted small">
                     🔒 <b>TLS 加密</b> — 通过 Caddy 独立 TLS 端口代理到 Gateway，命令已自动包含证书兼容设置：<br>
                     💡 TLS 端口在安装时由用户指定，Caddy 自动提供 TLS 证书。
+                  </span>
+                </div>
+                <div style="margin-bottom:12px">
+                  <b>🔄 后台运行与自动重连</b><br>
+                  <span class="muted small">
+                    • <b>推荐使用"后台运行"命令</b>，使用 <code>nohup</code> + 重连循环包装<br>
+                    • Gateway 重启后，节点会在 5 秒内自动重连<br>
+                    • 关闭 SSH 会话后进程不会退出（<code>nohup</code> 独立会话）<br>
+                    • 日志输出到 <code>~/.openclaw/node-host.log</code>，可用 <code>tail -f ~/.openclaw/node-host.log</code> 实时查看<br>
+                    • 停止节点：<code>kill $(pgrep -f "openclaw node run")</code><br>
+                    • 如使用前台模式，Gateway 重启后需手动重新运行命令
                   </span>
                 </div>
                 <div style="margin-bottom:12px">

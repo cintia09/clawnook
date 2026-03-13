@@ -3275,6 +3275,7 @@ async function loadDeviceManagement() {
   // 快速连接命令
   const cmdEl = $('device-setup-command');
   const cmdWinEl = $('device-setup-command-win');
+  const cmdBgEl = $('device-setup-command-bg');
   if (cmdEl) {
     if (cmdRes.success && cmdRes.hasToken) {
       cmdEl.textContent = cmdRes.command;
@@ -3287,6 +3288,13 @@ async function loadDeviceManagement() {
       cmdWinEl.textContent = cmdRes.commandWindows;
     } else {
       cmdWinEl.textContent = '# Windows 命令加载失败';
+    }
+  }
+  if (cmdBgEl) {
+    if (cmdRes.success && cmdRes.hasToken && cmdRes.bgCmd) {
+      cmdBgEl.textContent = cmdRes.bgCmd;
+    } else {
+      cmdBgEl.textContent = '# 后台命令加载失败';
     }
   }
 
@@ -3327,7 +3335,6 @@ function renderConnectedNodes(r) {
     '<th style="text-align:left;padding:6px 8px">名称</th>' +
     '<th style="text-align:left;padding:6px 8px">平台</th>' +
     '<th style="text-align:left;padding:6px 8px">IP</th>' +
-    '<th style="text-align:left;padding:6px 8px">版本</th>' +
     '</tr>' +
     nodes.map(n => {
       const statusDot = n.connected
@@ -3339,7 +3346,6 @@ function renderConnectedNodes(r) {
         `<td style="padding:6px 8px;font-weight:600">${esc(n.displayName || '')}</td>` +
         `<td style="padding:6px 8px"><span class="muted small">${esc(n.platform || '')}</span></td>` +
         `<td style="padding:6px 8px"><code style="font-size:12px">${esc(n.remoteIp || '-')}</code></td>` +
-        `<td style="padding:6px 8px"><span class="muted small">${esc(n.version || '-')}</span></td>` +
         '</tr>';
     }).join('') +
     '</table>';
@@ -3457,9 +3463,20 @@ $('btn-copy-setup-cmd')?.addEventListener('click', () => {
   // Copy whichever tab is visible
   const linuxEl = $('device-setup-command');
   const winEl = $('device-setup-command-win');
+  const bgEl = $('device-setup-command-bg');
   const isWinVisible = winEl && winEl.style.display !== 'none';
-  const text = isWinVisible ? (winEl?.textContent || '') : (linuxEl?.textContent || '');
-  const label = isWinVisible ? 'Windows PowerShell' : 'Linux/macOS';
+  const isBgVisible = bgEl && bgEl.style.display !== 'none';
+  let text = '', label = '';
+  if (isBgVisible) {
+    text = bgEl?.textContent || '';
+    label = '后台运行';
+  } else if (isWinVisible) {
+    text = winEl?.textContent || '';
+    label = 'Windows PowerShell';
+  } else {
+    text = linuxEl?.textContent || '';
+    label = 'Linux/macOS';
+  }
   navigator.clipboard.writeText(text).then(
     () => toast(`已复制 ${label} 连接命令`),
     () => toast('复制失败')
