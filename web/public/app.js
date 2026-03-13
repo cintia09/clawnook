@@ -2087,26 +2087,41 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     // 初始等待：给旧进程退出、新进程启动留时间，避免误判旧进程为"已成功"
     const initialDelay = 2500;
     let gwUp = false;
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 20; // 40s of continuous failures → give up
     appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 10 分钟）...');
     await new Promise(r => setTimeout(r, initialDelay));
     while (Date.now() - pollStart < pollTimeout) {
       await new Promise(r => setTimeout(r, pollInterval));
       try {
         const st = await api('/api/openclaw', { timeoutMs: 15000 });
+        if (st.error) {
+          consecutiveErrors++;
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            appendOcLogLine(`⚠️ API 连续 ${consecutiveErrors} 次返回错误，停止轮询`);
+            break;
+          }
+          continue;
+        }
+        consecutiveErrors = 0;
         const stillRestarting = !!(st.gatewayStarting) || st.operationState?.type === 'restarting_gateway';
         if (st.gatewayRunning && !stillRestarting) {
           gwUp = true;
           break;
         }
       } catch {
-        // 网络错误（Gateway 重启中导致），继续等待
+        consecutiveErrors++;
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          appendOcLogLine(`⚠️ 网络连续 ${consecutiveErrors} 次失败，停止轮询`);
+          break;
+        }
       }
     }
     if (gwUp) {
       appendOcLogLine('✅ Gateway 重启成功');
       toast('重启成功', 'Gateway 已恢复运行');
     } else {
-      appendOcLogLine('⚠️ Gateway 重启超时（10 分钟），请检查状态');
+      appendOcLogLine('⚠️ Gateway 重启超时或轮询中断，请检查状态');
       toast('重启超时', 'Gateway 未在预期时间内恢复，请手动检查');
     }
     ocGatewayRestartRunningRemote = false;
@@ -4686,6 +4701,23 @@ $('btn-term-clear').addEventListener('click', ()=>{
 });
 loadTerminalCache();
 loadOcLogCache();
+// 页面加载时检测 localStorage 中残留的"等待重启"日志，若 Gateway 已恢复则补偿完成消息
+(function reconcileStaleRestartLog() {
+  const logEl = $('oc-log');
+  if (!logEl) return;
+  const text = logEl.textContent || '';
+  const hasWaiting = text.includes('等待 Gateway 启动完成');
+  const hasResult = text.includes('Gateway 重启成功') || text.includes('Gateway 重启超时') || text.includes('停止轮询');
+  if (hasWaiting && !hasResult) {
+    api('/api/openclaw', { timeoutMs: 10000 }).then(st => {
+      if (st && !st.error && st.gatewayRunning) {
+        appendOcLogLine('✅ Gateway 已恢复运行（页面刷新后检测）');
+      } else if (st && !st.error && !st.gatewayRunning) {
+        appendOcLogLine('⚠️ Gateway 当前未运行，请检查状态');
+      }
+    }).catch(() => {});
+  }
+})();
 bindTerminalInteraction();
 
 // ------------------------
