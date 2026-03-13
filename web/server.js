@@ -2126,6 +2126,15 @@ function getInstalledOpenClawVersion() {
     collectVersion(readVersionFromPackageJson(packagePath));
   }
 
+  // Fast path: if any package.json provided a version, skip slow execSync probes
+  if (versions.length > 0) {
+    let newest = versions[0];
+    for (const version of versions.slice(1)) {
+      if (compareSemver(version, newest) > 0) newest = version;
+    }
+    return newest;
+  }
+
   const candidates = [
     runCommandText('node /root/.openclaw/openclaw-source/openclaw.mjs --version 2>&1 || node /root/.openclaw/openclaw-source/openclaw.mjs -v 2>&1 || true', 2600),
     runCommandText('/root/.npm-global/bin/openclaw --version 2>&1 || true', 2200),
@@ -2169,15 +2178,22 @@ function inspectOpenClawRuntimeArtifacts() {
   const distEntryMjs = '/root/.openclaw/openclaw-source/dist/entry.mjs';
   const distIndexJs = '/root/.openclaw/openclaw-source/dist/index.js';
   const distIndexMjs = '/root/.openclaw/openclaw-source/dist/index.mjs';
-  let sourceEntryOk = runCommandOk(`test -f "${sourceEntry}"`, 1200);
-  let runtimeEntryOk = runCommandOk(`test -f "${distEntryJs}" || test -f "${distEntryMjs}" || test -f "${distIndexJs}" || test -f "${distIndexMjs}"`, 1200);
-  let npmBinaryOk = runCommandOk('command -v openclaw >/dev/null 2>&1 || test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw', 1200);
-  if (!sourceEntryOk || !runtimeEntryOk || !npmBinaryOk) {
-    runCommandText('sleep 0.35', 1200);
-    sourceEntryOk = sourceEntryOk || runCommandOk(`test -f "${sourceEntry}"`, 1200);
-    runtimeEntryOk = runtimeEntryOk || runCommandOk(`test -f "${distEntryJs}" || test -f "${distEntryMjs}" || test -f "${distIndexJs}" || test -f "${distIndexMjs}"`, 1200);
-    npmBinaryOk = npmBinaryOk || runCommandOk('command -v openclaw >/dev/null 2>&1 || test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -x /usr/bin/openclaw || test -x /opt/homebrew/bin/openclaw', 1200);
+  const npmBinaryPaths = [
+    '/root/.npm-global/bin/openclaw',
+    '/usr/local/bin/openclaw',
+    '/usr/bin/openclaw',
+    '/opt/homebrew/bin/openclaw'
+  ];
+
+  // Use fs.existsSync instead of execSync('test -f ...') for instant file checks
+  const sourceEntryOk = fs.existsSync(sourceEntry);
+  const runtimeEntryOk = fs.existsSync(distEntryJs) || fs.existsSync(distEntryMjs) || fs.existsSync(distIndexJs) || fs.existsSync(distIndexMjs);
+  let npmBinaryOk = npmBinaryPaths.some(p => fs.existsSync(p));
+  if (!npmBinaryOk) {
+    // Fallback: check PATH-based resolution (only if no known binary path found)
+    npmBinaryOk = runCommandOk('command -v openclaw >/dev/null 2>&1', 1200);
   }
+
   const ok = npmBinaryOk || (sourceEntryOk && runtimeEntryOk);
   let issue = '';
   if (!ok) {
@@ -2186,16 +2202,25 @@ function inspectOpenClawRuntimeArtifacts() {
     else if (!runtimeEntryOk) issue = 'missing-runtime-entry';
   }
   let runtimeEntry = '';
-  if (runCommandOk(`test -f "${distEntryJs}"`, 800)) runtimeEntry = distEntryJs;
-  else if (runCommandOk(`test -f "${distEntryMjs}"`, 800)) runtimeEntry = distEntryMjs;
-  else if (runCommandOk(`test -f "${distIndexJs}"`, 800)) runtimeEntry = distIndexJs;
-  else if (runCommandOk(`test -f "${distIndexMjs}"`, 800)) runtimeEntry = distIndexMjs;
+  if (fs.existsSync(distEntryJs)) runtimeEntry = distEntryJs;
+  else if (fs.existsSync(distEntryMjs)) runtimeEntry = distEntryMjs;
+  else if (fs.existsSync(distIndexJs)) runtimeEntry = distIndexJs;
+  else if (fs.existsSync(distIndexMjs)) runtimeEntry = distIndexMjs;
+
+  let npmBinaryPath = '';
+  for (const p of npmBinaryPaths) {
+    if (fs.existsSync(p)) { npmBinaryPath = p; break; }
+  }
+  if (!npmBinaryPath && npmBinaryOk) {
+    npmBinaryPath = runCommandText('command -v openclaw 2>/dev/null || true', 1000) || '/root/.npm-global/bin/openclaw';
+  }
+
   return {
     ok,
     issue,
     sourceEntry,
     distEntry: runtimeEntry,
-    npmBinary: runCommandText('command -v openclaw 2>/dev/null || true', 1000) || (npmBinaryOk ? '/root/.npm-global/bin/openclaw' : '')
+    npmBinary: npmBinaryPath
   };
 }
 
@@ -3993,7 +4018,7 @@ app.post('/api/node/unpair', (req, res) => {
   try {
     const { deviceId } = req.body || {};
     if (!deviceId || typeof deviceId !== 'string') return res.status(400).json({ success: false, error: '缺少 deviceId' });
-    if (!/^[0-9a-f-]{36}$/.test(deviceId)) return res.status(400).json({ success: false, error: 'deviceId 格式无效' });
+    if (!/^[0-9a-fA-F-]{8,64}$/.test(deviceId)) return res.status(400).json({ success: false, error: 'deviceId 格式无效' });
     const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
     if (!paired[deviceId]) return res.status(404).json({ success: false, error: '未找到该设备' });
     delete paired[deviceId];

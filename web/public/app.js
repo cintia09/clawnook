@@ -1290,11 +1290,12 @@ async function refreshOpenClaw(opts = {}){
   }
   const retries = Math.max(0, Number(opts.retries ?? 0));
   const openclawStatusTimeoutMs = Math.max(2000, Number(opts.timeoutMs ?? 30000));
+  const forceParam = opts.force ? '?force=1' : '';
   let d = null;
   let lastErr = '';
 
   for (let i = 0; i <= retries; i++) {
-    d = await api('/api/openclaw', { timeoutMs: openclawStatusTimeoutMs });
+    d = await api(`/api/openclaw${forceParam}`, { timeoutMs: openclawStatusTimeoutMs });
     if (d && !d.error && Object.prototype.hasOwnProperty.call(d, 'installed')) break;
     lastErr = d?.error || '接口返回异常';
     if (i < retries) {
@@ -1550,7 +1551,7 @@ async function pollTask(taskId){
         setOpenClawStatusLine('更新状态：Gateway 启动中', { active: true, startedAt: Date.now(), totalSec: 60 });
         scheduleGatewayStartupLogPulls(220);
       }
-      refreshOpenClaw();
+      refreshOpenClaw({ force: true });
       refreshStatus();
       return; // C8: 任务结束，不再调度下一次轮询
     }
@@ -1639,7 +1640,7 @@ $('btn-oc-refresh').addEventListener('click', async ()=>{
     appendOcLogLine(`❌ 状态刷新失败：${r.error}`);
     toast('状态刷新失败', r.error);
   } else {
-    const ver = r?.version ? `v${r.version}` : '未知';
+    const ver = r?.version ? formatVersionLabel(r.version) : '未知';
     const gw = r?.gatewayRunning ? '运行中' : '未启动';
     appendOcLogLine(`✅ 状态已刷新（版本：${ver}，Gateway：${gw}）`);
   }
@@ -2223,7 +2224,7 @@ $('btn-oc-install-version')?.addEventListener('click', async () => {
   if (ocInstallRunning || ocUninstallRunning) {
     return toast('任务进行中', '安装/更新任务正在执行，请稍候');
   }
-  const ok = window.confirm(`确认安装 OpenClaw v${version}？\n将使用 A/B 备份更新模式，Gateway 仅在切换版本时短暂停止。`);
+  const ok = window.confirm(`确认安装 OpenClaw ${formatVersionLabel(version)}？\n将使用 A/B 备份更新模式，Gateway 仅在切换版本时短暂停止。`);
   if (!ok) return toast('已取消', '未执行安装');
 
   ocInstallRunning = true;
@@ -2234,7 +2235,7 @@ $('btn-oc-install-version')?.addEventListener('click', async () => {
     const _logEl = $('oc-log');
     if (_logEl) _logEl.innerHTML = '';
     clearOcLogCache();
-    appendOcLogLine(`📦 开始安装指定版本: v${version}`);
+    appendOcLogLine(`📦 开始安装指定版本: ${formatVersionLabel(version)}`);
     const r = await api('/api/openclaw/install-version', { method: 'POST', body: { version }, timeoutMs: 90000 });
     if (!r?.taskId) {
       const detail = r?.error || '安装任务创建失败';
@@ -2242,9 +2243,9 @@ $('btn-oc-install-version')?.addEventListener('click', async () => {
       toast('安装失败', detail);
       return;
     }
-    toast('开始安装', `正在安装 v${version}...`);
+    toast('开始安装', `正在安装 ${formatVersionLabel(version)}...`);
     appendOcLogLine('✅ 安装任务已启动');
-    appendOcLogLine(`📋 目标版本: v${version}`);
+    appendOcLogLine(`📋 目标版本: ${formatVersionLabel(version)}`);
     taskStarted = true;
     pollTask(r.taskId);
   } catch (e) {
