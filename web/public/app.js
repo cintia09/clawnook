@@ -1289,12 +1289,14 @@ async function refreshOpenClaw(opts = {}){
     syncOpenClawButtons();
   }
   const retries = Math.max(0, Number(opts.retries ?? 0));
+  const forceCheck = !!opts.force;
   const openclawStatusTimeoutMs = Math.max(2000, Number(opts.timeoutMs ?? 30000));
   let d = null;
   let lastErr = '';
+  const apiUrl = forceCheck ? '/api/openclaw?force=1' : '/api/openclaw';
 
   for (let i = 0; i <= retries; i++) {
-    d = await api('/api/openclaw', { timeoutMs: openclawStatusTimeoutMs });
+    d = await api(apiUrl, { timeoutMs: openclawStatusTimeoutMs });
     if (d && !d.error && Object.prototype.hasOwnProperty.call(d, 'installed')) break;
     lastErr = d?.error || '接口返回异常';
     if (i < retries) {
@@ -1469,9 +1471,6 @@ async function refreshOpenClaw(opts = {}){
 
 async function pollTask(taskId){
   if (ocPollTimer) clearInterval(ocPollTimer);
-  const logEl = $('oc-log');
-  if (logEl) logEl.innerHTML = '';
-  clearOcLogCache();
 
   let lastSeq = 0;
   let errorStreak = 0;
@@ -1546,26 +1545,14 @@ async function pollTask(taskId){
         : (taskOp === 'updating' ? 'OpenClaw 已更新，Gateway 正在自动重启' : 'OpenClaw 已安装，Gateway 正在自动重启');
       toast(st.status === 'success' ? '完成' : '失败', st.status === 'success' ? successDetail : (st.error || st.log || '请查看日志'));
       if (st.status === 'success' && taskOp !== 'uninstalling') {
-        appendOcLogLine('⏳ 安装/更新已完成，等待 Gateway 自动重启...');
+        appendOcLogLine('⏳ Gateway 正在自动重启，状态栏将实时更新...');
         ocPostInstallWarmupUntil = Date.now() + (5 * 60 * 1000);
         ocLastGatewaySnapshot = '';
         setStatusBadge('oc-gateway', 'pending', '启动中', true);
         setOpenClawStatusLine('更新状态：Gateway 启动中', { active: true, startedAt: Date.now(), totalSec: 60 });
         scheduleGatewayStartupLogPulls(220);
-        await new Promise(r => setTimeout(r, 5000));
-        const pollStart = Date.now();
-        let gwUp = false;
-        while (Date.now() - pollStart < 5 * 60 * 1000) {
-          await new Promise(r => setTimeout(r, 3000));
-          try {
-            const ps = await api('/api/openclaw', { timeoutMs: 15000 });
-            const stillStarting = !!(ps.gatewayStarting) || ps.operationState?.type === 'restarting_gateway';
-            if (ps.gatewayRunning && !stillStarting) { gwUp = true; break; }
-          } catch {}
-        }
-        appendOcLogLine(gwUp ? '✅ Gateway 启动成功' : '⚠️ Gateway 启动超时，请检查状态');
       }
-      refreshOpenClaw();
+      refreshOpenClaw({ force: true });
       refreshStatus();
       return; // C8: 任务结束，不再调度下一次轮询
     }
@@ -1648,8 +1635,19 @@ async function pollRepairTask(taskId){
 }
 
 $('btn-oc-refresh').addEventListener('click', async ()=>{
-  const r = await refreshOpenClaw({ retries: 1 });
-  if (r?.error) toast('状态刷新失败', r.error);
+  appendOcLogLine('🔄 正在刷新状态...');
+  let r = await refreshOpenClaw({ retries: 0, force: true, timeoutMs: 45000 });
+  if (r?.error) {
+    r = await refreshOpenClaw({ retries: 1 });
+  }
+  if (r?.error) {
+    appendOcLogLine(`❌ 状态刷新失败：${r.error}`);
+    toast('状态刷新失败', r.error);
+  } else {
+    const ver = r?.version ? `v${r.version}` : '未知';
+    const gw = r?.gatewayRunning ? '运行中' : '未启动';
+    appendOcLogLine(`✅ 状态已刷新（版本：${ver}，Gateway：${gw}）`);
+  }
 });
 
 // --- Config Export ---
@@ -1868,6 +1866,9 @@ $('btn-oc-install').addEventListener('click', async ()=>{
   syncOpenClawButtons();
   let taskStarted = false;
   try{
+    const _logEl = $('oc-log');
+    if (_logEl) _logEl.innerHTML = '';
+    clearOcLogCache();
     if (!ocInstalled) {
       ocInstallPhase = 'install';
       appendOcLogLine('📦 开始安装 OpenClaw...');
@@ -2143,6 +2144,9 @@ $('btn-oc-uninstall')?.addEventListener('click', async ()=>{
   syncOpenClawButtons();
   let taskStarted = false;
   try {
+    const _logEl = $('oc-log');
+    if (_logEl) _logEl.innerHTML = '';
+    clearOcLogCache();
     appendOcLogLine('🗑️ 开始卸载 OpenClaw...');
     const r = await api('/api/openclaw/uninstall', { method:'POST' });
     if (!r?.taskId) {
@@ -2217,6 +2221,9 @@ $('btn-oc-install-version')?.addEventListener('click', async () => {
   syncOpenClawButtons();
   let taskStarted = false;
   try {
+    const _logEl = $('oc-log');
+    if (_logEl) _logEl.innerHTML = '';
+    clearOcLogCache();
     appendOcLogLine(`📦 开始安装指定版本: v${version}`);
     const r = await api('/api/openclaw/install-version', { method: 'POST', body: { version }, timeoutMs: 90000 });
     if (!r?.taskId) {
