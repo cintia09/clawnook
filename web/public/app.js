@@ -357,6 +357,10 @@ function getRouteFromHash(){
 
 function setActiveRoute(route){
   if (route !== 'openclaw-engine') stopGatewayStartupLogPulls();
+  if (route !== 'browser' && deviceMgmtPollTimer) {
+    clearInterval(deviceMgmtPollTimer);
+    deviceMgmtPollTimer = null;
+  }
 
   // nav active
   qa('#nav a').forEach(a => {
@@ -377,7 +381,7 @@ function setActiveRoute(route){
   if (route === 'openclaw-engine') { refreshOpenClaw(); }
   if (route === 'openclaw-ai') { loadAIConfig(); }
   if (route === 'messaging') { loadMessagingConfig(); }
-  if (route === 'browser') loadDeviceManagement();
+  if (route === 'browser') startDeviceManagementPolling();
   if (route === 'plugins') refreshPlugins();
   if (route === 'terminal') {
     bindTerminalInteraction();
@@ -826,6 +830,7 @@ if ($('btn-hotpatch')) {
 }
 
 let hotpatchRestartPending = false;
+let deviceMgmtPollTimer = null;
 
 function setHotpatchButtons(disabled, text) {
   const btns = qa('[id^="btn-hotpatch"]');
@@ -3361,6 +3366,9 @@ qa('[data-save-msg]').forEach(btn => {
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 async function loadDeviceManagement() {
+  if (window.__deviceMgmtRefreshing) return;
+  window.__deviceMgmtRefreshing = true;
+  try {
   // 并行加载: setup command + pairing list + security config + connected nodes
   const [cmdRes, pairRes, secRes, connRes] = await Promise.all([
     api('/api/node/setup-command'),
@@ -3412,6 +3420,19 @@ async function loadDeviceManagement() {
     if ($('device-deny-commands')) $('device-deny-commands').value = (secRes.denyCommands || []).join('\n');
     toggleAutoApproveWarning();
   }
+  } finally {
+    window.__deviceMgmtRefreshing = false;
+  }
+}
+
+function startDeviceManagementPolling() {
+  loadDeviceManagement();
+  if (deviceMgmtPollTimer) return;
+  deviceMgmtPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    if (getRouteFromHash() !== 'browser') return;
+    loadDeviceManagement();
+  }, 5000);
 }
 
 function friendlyPlatform(p) {
@@ -3431,23 +3452,29 @@ function renderConnectedNodes(r) {
     listEl.innerHTML = '<div class="muted small" style="color:#8b949e">暂无已配对的 Node 节点</div>';
     return;
   }
+  const showIpColumn = nodes.some(n => !!String(n.ipAddress || '').trim());
   listEl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
     '<tr style="border-bottom:1px solid #30363d;color:#8b949e;font-size:12px">' +
     '<th style="text-align:left;padding:6px 8px">状态</th>' +
     '<th style="text-align:left;padding:6px 8px">名称</th>' +
     '<th style="text-align:left;padding:6px 8px">平台</th>' +
-    '<th style="text-align:left;padding:6px 8px">连接时间</th>' +
+    (showIpColumn ? '<th style="text-align:left;padding:6px 8px">IP</th>' : '') +
+    '<th style="text-align:left;padding:6px 8px">时间</th>' +
     '</tr>' +
     nodes.map(n => {
       const statusDot = n.connected
         ? '<span style="color:#3fb950" title="在线">●</span>'
         : '<span style="color:#f85149" title="离线">●</span>';
       const statusText = n.connected ? '在线' : '离线';
-      const connTime = n.connectedAtMs ? new Date(n.connectedAtMs).toLocaleString() : '-';
+      const statusTimeMs = n.connected ? n.connectedAtMs : n.offlineAtMs;
+      const timeLabel = n.connected ? '连接时间' : '离线时间';
+      const connTime = statusTimeMs ? `${timeLabel}：${new Date(statusTimeMs).toLocaleString()}` : '-';
+      const ipText = String(n.ipAddress || '').trim();
       return '<tr style="border-bottom:1px solid #21262d">' +
         `<td style="padding:6px 8px">${statusDot} <span class="muted small">${statusText}</span></td>` +
         `<td style="padding:6px 8px;font-weight:600">${esc(n.displayName || '')}</td>` +
         `<td style="padding:6px 8px"><span class="muted small">${esc(friendlyPlatform(n.platform))}</span></td>` +
+        (showIpColumn ? `<td style="padding:6px 8px"><span class="muted small">${esc(ipText || '-')}</span></td>` : '') +
         `<td style="padding:6px 8px"><span class="muted small">${connTime}</span></td>` +
         '</tr>';
     }).join('') +

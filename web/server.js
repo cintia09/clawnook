@@ -328,6 +328,12 @@ const OPENCLAW_STATE_ROOT = '/root/.openclaw';
 const OPENCLAW_LOCK_DIR = `${OPENCLAW_STATE_ROOT}/locks`;
 const DEVICE_PAIRING_PENDING_PATH = '/root/.openclaw/devices/pending.json';
 const DEVICE_PAIRING_PAIRED_PATH = '/root/.openclaw/devices/paired.json';
+const DEVICE_IDENTITY_PATH = '/root/.openclaw/identity/device.json';
+const DEVICE_AUTH_STORE_PATH = '/root/.openclaw/identity/device-auth.json';
+const NODE_STATUS_CACHE_PATH = '/root/.openclaw/node-status-cache.json';
+const NODE_STATUS_POLL_INTERVAL_MS = 5000;
+const NODE_STATUS_MAX_STALE_MS = 4500;
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -600,9 +606,14 @@ const PROVIDER_TO_OPENCLAW_MAP = {
 
 // 加载 OpenClaw 内置模型目录
 function loadOpenClawModelCatalog() {
-  const catalogPath = '/root/.npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-ai/dist/models.generated.js';
+  // 支持多个可能的安装路径：npm-global 安装 和 openclaw-source 源码安装
+  const catalogPaths = [
+    '/root/.openclaw/openclaw-source/node_modules/@mariozechner/pi-ai/dist/models.generated.js',
+    '/root/.npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-ai/dist/models.generated.js',
+  ];
+  const catalogPath = catalogPaths.find(p => fs.existsSync(p.replace('/dist/models.generated.js', '')));
   try {
-    if (!fs.existsSync(catalogPath.replace('/dist/models.generated.js', ''))) {
+    if (!catalogPath) {
       // 尝试从缓存中加载
       const cachePath = '/root/.openclaw/model-catalog-cache.json';
       if (fs.existsSync(cachePath)) {
@@ -3925,6 +3936,269 @@ function getGatewayAuthToken() {
   } catch { return ''; }
 }
 
+function normalizeDeviceMetadataForAuth(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  return trimmed.normalize('NFKD').replace(/[^\x20-\x7E]/g, '').toLowerCase();
+}
+
+function publicKeyRawBase64UrlFromPem(publicKeyPem) {
+  const key = crypto.createPublicKey(publicKeyPem);
+  const der = key.export({ format: 'der', type: 'spki' });
+  const raw = Buffer.isBuffer(der) && der.subarray(0, ED25519_SPKI_PREFIX.length).equals(ED25519_SPKI_PREFIX)
+    ? der.subarray(ED25519_SPKI_PREFIX.length)
+    : Buffer.from(der);
+  return base64urlEncode(raw);
+}
+
+function signDevicePayload(privateKeyPem, payload) {
+  const key = crypto.createPrivateKey(privateKeyPem);
+  return base64urlEncode(crypto.sign(null, Buffer.from(payload, 'utf8'), key));
+}
+
+function buildDeviceAuthPayloadV3(params) {
+  return [
+    'v3',
+    params.deviceId,
+    params.clientId,
+    params.clientMode,
+    params.role,
+    params.scopes.join(','),
+    String(params.signedAtMs),
+    params.token || '',
+    params.nonce,
+    normalizeDeviceMetadataForAuth(params.platform),
+    normalizeDeviceMetadataForAuth(params.deviceFamily || '')
+  ].join('|');
+}
+
+function loadGatewayDeviceIdentityAuth() {
+  const identity = readJson(DEVICE_IDENTITY_PATH, {});
+  if (!identity || typeof identity !== 'object') return null;
+  if (!identity.deviceId || !identity.publicKeyPem || !identity.privateKeyPem) return null;
+
+  const authStore = readJson(DEVICE_AUTH_STORE_PATH, {});
+  const deviceAuthToken = normalizeGatewayAuthToken(authStore?.tokens?.operator?.token || '');
+  const authToken = getGatewayAuthToken() || deviceAuthToken;
+  if (!authToken) return null;
+
+  return {
+    identity: {
+      deviceId: String(identity.deviceId),
+      publicKeyPem: String(identity.publicKeyPem),
+      privateKeyPem: String(identity.privateKeyPem)
+    },
+    authToken
+  };
+}
+
+function buildControlUiConnectParams(nonce) {
+  const authState = loadGatewayDeviceIdentityAuth();
+  if (!authState || !nonce) return null;
+  const scopes = ['operator.admin', 'operator.read', 'operator.approvals', 'operator.pairing'];
+  const signedAtMs = Date.now();
+  const payload = buildDeviceAuthPayloadV3({
+    deviceId: authState.identity.deviceId,
+    clientId: 'openclaw-control-ui',
+    clientMode: 'webchat',
+    role: 'operator',
+    scopes,
+    signedAtMs,
+    token: authState.authToken,
+    nonce,
+    platform: process.platform,
+    deviceFamily: ''
+  });
+
+  return {
+    minProtocol: 3,
+    maxProtocol: 3,
+    client: {
+      id: 'openclaw-control-ui',
+      displayName: 'OpenClaw Web Panel',
+      version: '2026.3.12',
+      platform: process.platform,
+      mode: 'webchat'
+    },
+    caps: [],
+    role: 'operator',
+    scopes,
+    auth: { token: authState.authToken },
+    device: {
+      id: authState.identity.deviceId,
+      publicKey: publicKeyRawBase64UrlFromPem(authState.identity.publicKeyPem),
+      signature: signDevicePayload(authState.identity.privateKeyPem, payload),
+      signedAt: signedAtMs,
+      nonce
+    }
+  };
+}
+
+function logNodeProbeDebug(...args) {
+  if (process.env.OPENCLAW_NODE_PROBE_DEBUG === '1') {
+    console.log(...args);
+  }
+}
+
+function createGatewayControlUiClient(timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const WsClient = require('ws');
+    const cfg = readDockerConfig();
+    const gatewayPort = Number(cfg.port || 18789) || 18789;
+    let settled = false;
+    let ws = null;
+    let connectId = null;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { ws?.close(); } catch {}
+      reject(new Error('gateway control-ui connect timeout'));
+    }, Math.max(1500, timeoutMs));
+
+    const finishReject = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws?.close(); } catch {}
+      reject(err instanceof Error ? err : new Error(String(err || 'gateway control-ui connect failed')));
+    };
+
+    try {
+      ws = new WsClient(`ws://127.0.0.1:${gatewayPort}`, {
+        headers: { Origin: 'http://127.0.0.1' }
+      });
+    } catch (e) {
+      finishReject(e);
+      return;
+    }
+
+    ws.on('close', () => {
+      if (!settled) finishReject(new Error('gateway control-ui socket closed before ready'));
+    });
+    ws.on('error', (e) => {
+      if (!settled) finishReject(e);
+    });
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(String(data));
+        if (msg.event === 'connect.challenge') {
+          const nonce = typeof msg.payload?.nonce === 'string' ? msg.payload.nonce.trim() : '';
+          const connectParams = buildControlUiConnectParams(nonce);
+          if (!connectParams) {
+            finishReject(new Error('gateway control-ui identity unavailable'));
+            return;
+          }
+          connectId = crypto.randomUUID();
+          ws.send(JSON.stringify({ type: 'req', id: connectId, method: 'connect', params: connectParams }));
+          return;
+        }
+        if (msg.id === connectId) {
+          if (!msg.ok) {
+            finishReject(new Error(msg.error?.message || msg.error?.code || 'gateway connect rejected'));
+            return;
+          }
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          const request = (method, params, requestTimeoutMs = timeoutMs) => new Promise((resolveReq, rejectReq) => {
+            const id = crypto.randomUUID();
+            const reqTimer = setTimeout(() => {
+              handlers.delete(id);
+              rejectReq(new Error(`${method} timeout`));
+            }, Math.max(1500, requestTimeoutMs));
+            handlers.set(id, { resolveReq, rejectReq, reqTimer });
+            ws.send(JSON.stringify({ type: 'req', id, method, params }));
+          });
+          const close = () => { try { ws.close(); } catch {} };
+          const handlers = new Map();
+          ws.on('message', (innerData) => {
+            try {
+              const innerMsg = JSON.parse(String(innerData));
+              const pending = handlers.get(innerMsg.id);
+              if (!pending) return;
+              handlers.delete(innerMsg.id);
+              clearTimeout(pending.reqTimer);
+              if (innerMsg.ok) pending.resolveReq(innerMsg.payload);
+              else pending.rejectReq(new Error(innerMsg.error?.message || innerMsg.error?.code || `${innerMsg.id} failed`));
+            } catch {}
+          });
+          resolve({ request, close });
+        }
+      } catch {}
+    });
+  });
+}
+
+async function fetchNodeIpv4Address(nodeId, platform) {
+  if (!nodeId) return '';
+  let client = null;
+  try {
+    client = await createGatewayControlUiClient(5000);
+    const binsPayload = await client.request('node.invoke', {
+      nodeId,
+      command: 'system.which',
+      params: { bins: ['ip', 'ifconfig'] },
+      timeoutMs: 10000,
+      idempotencyKey: crypto.randomUUID()
+    }, 12000);
+    const binsResult = binsPayload && typeof binsPayload === 'object' ? (binsPayload.payload || binsPayload) : {};
+    const bins = binsResult && typeof binsResult.bins === 'object' ? binsResult.bins : binsResult;
+    const ipBin = typeof bins?.ip === 'string' ? bins.ip.trim() : '';
+    const ifconfigBin = typeof bins?.ifconfig === 'string' ? bins.ifconfig.trim() : '';
+    let command = null;
+    if (ipBin) {
+      command = [ipBin, '-4', 'addr', 'show'];
+    } else if (ifconfigBin) {
+      command = [ifconfigBin];
+    } else {
+      return '';
+    }
+
+    const preparedPayload = await client.request('node.invoke', {
+      nodeId,
+      command: 'system.run.prepare',
+      params: { command },
+      timeoutMs: 15000,
+      idempotencyKey: crypto.randomUUID()
+    }, 16000);
+    const prepared = preparedPayload && typeof preparedPayload === 'object' ? (preparedPayload.payload || preparedPayload) : null;
+    const plan = prepared && typeof prepared.plan === 'object' ? prepared.plan : null;
+    if (!plan || !Array.isArray(plan.argv)) return '';
+
+    const runPayload = await client.request('node.invoke', {
+      nodeId,
+      command: 'system.run',
+      params: {
+        command: plan.argv,
+        rawCommand: plan.commandText,
+        cwd: plan.cwd,
+        timeoutMs: 10000
+      },
+      timeoutMs: 20000,
+      idempotencyKey: crypto.randomUUID()
+    }, 22000);
+    const run = runPayload && typeof runPayload === 'object' ? (runPayload.payload || runPayload) : {};
+    const output = [run.stdout, run.stderr, run.output].filter(v => typeof v === 'string' && v.trim()).join('\n');
+    const normalizedPlatform = String(platform || '').toLowerCase();
+    if (ipBin) {
+      const matches = Array.from(String(output).matchAll(/\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b/g)).map((m) => m[1]);
+      const picked = matches.find((ip) => ip !== '127.0.0.1');
+      return picked || '';
+    }
+    if (ifconfigBin && normalizedPlatform.startsWith('darwin')) {
+      const matches = Array.from(String(output).matchAll(/\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b/g)).map((m) => m[1]);
+      const picked = matches.find((ip) => ip !== '127.0.0.1');
+      return picked || '';
+    }
+    return '';
+  } catch {
+    return '';
+  } finally {
+    try { client?.close(); } catch {}
+  }
+}
+
 // GET /api/node/setup-command — 生成一键连接命令
 app.get('/api/node/setup-command', (req, res) => {
   try {
@@ -4032,7 +4306,7 @@ app.post('/api/node/unpair', (req, res) => {
 });
 
 // --- Gateway WebSocket 查询节点在线状态 ---
-// 优先以 control-ui 身份连接并调用 node.list（需 dangerouslyDisableDeviceAuth=true）
+// 优先以真实 device identity 的 control-ui 身份连接并调用 node.list
 // 失败时降级为 cli 身份连接，通过 presence 快照检测节点在线
 function queryGatewayNodeList(timeoutMs = 5000) {
   return new Promise((resolve) => {
@@ -4048,28 +4322,32 @@ function queryGatewayNodeList(timeoutMs = 5000) {
       ws = new WsClient(`ws://127.0.0.1:${gatewayPort}`, {
         headers: { Origin: 'http://127.0.0.1' }
       });
-    } catch { finish(null); return; }
+    } catch (e) { console.log('[node] WS connect failed:', e.message); finish(null); return; }
 
-    const timer = setTimeout(() => { finish(null); try { ws.close(); } catch {} }, timeoutMs);
-    ws.on('close', () => { clearTimeout(timer); finish(null); });
-    ws.on('error', () => { clearTimeout(timer); finish(null); try { ws.close(); } catch {} });
+    const timer = setTimeout(() => { console.log('[node] queryGatewayNodeList timeout'); finish(null); try { ws.close(); } catch {} }, timeoutMs);
+    let usedFallback = false;
+    ws.on('close', () => { if (!usedFallback) { clearTimeout(timer); finish(null); } });
+    ws.on('error', (e) => { console.log('[node] WS error:', e.message); if (!usedFallback) { clearTimeout(timer); finish(null); } try { ws.close(); } catch {} });
 
-    let connectId, listId, usedFallback = false;
+    let connectId, listId;
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(String(data));
-        // 1) connect.challenge → 尝试 control-ui 连接
+        // 1) connect.challenge → 尝试带 device identity 的 control-ui 连接
         if (msg.event === 'connect.challenge') {
+          const nonce = typeof msg.payload?.nonce === 'string' ? msg.payload.nonce.trim() : '';
+          const connectParams = buildControlUiConnectParams(nonce);
+          if (!connectParams) {
+            console.log('[node] control-ui identity unavailable → cli fallback');
+            usedFallback = true;
+            try { ws.close(); } catch {}
+            queryGatewayNodeListFallback(gatewayPort, token, timeoutMs - 1000).then(v => { clearTimeout(timer); finish(v); });
+            return;
+          }
           connectId = crypto.randomUUID();
           ws.send(JSON.stringify({
             type: 'req', id: connectId, method: 'connect',
-            params: {
-              minProtocol: 3, maxProtocol: 3,
-              client: { id: 'openclaw-control-ui', version: '2026.3.12', platform: 'linux', mode: 'webchat' },
-              caps: [], role: 'operator',
-              scopes: ['operator.admin', 'operator.read', 'operator.approvals', 'operator.pairing'],
-              auth: { token: token || undefined }
-            }
+            params: connectParams
           }));
           return;
         }
@@ -4080,7 +4358,9 @@ function queryGatewayNodeList(timeoutMs = 5000) {
             listId = crypto.randomUUID();
             ws.send(JSON.stringify({ type: 'req', id: listId, method: 'node.list', params: {} }));
           } else {
-            // control-ui 被拒绝（如 device identity required）→ 降级为 cli 连接
+            // control-ui 被拒绝（如 device identity required）→ 降级为 cli fallback
+            logNodeProbeDebug('[node] control-ui rejected:', msg.error?.code || 'unknown', '→ cli fallback');
+            usedFallback = true;
             try { ws.close(); } catch {}
             queryGatewayNodeListFallback(gatewayPort, token, timeoutMs - 1000).then(v => { clearTimeout(timer); finish(v); });
           }
@@ -4088,10 +4368,17 @@ function queryGatewayNodeList(timeoutMs = 5000) {
         }
         // 3) node.list 响应
         if (msg.id === listId) {
-          clearTimeout(timer);
-          const nodes = msg.ok && Array.isArray(msg.payload?.nodes) ? msg.payload.nodes : null;
-          finish(nodes);
-          try { ws.close(); } catch {}
+          if (msg.ok) {
+            clearTimeout(timer);
+            const nodes = Array.isArray(msg.payload?.nodes) ? msg.payload.nodes : null;
+            finish(nodes);
+            try { ws.close(); } catch {}
+          } else {
+            logNodeProbeDebug('[node] node.list failed:', msg.error?.code || 'unknown', '→ cli fallback');
+            usedFallback = true;
+            try { ws.close(); } catch {}
+            queryGatewayNodeListFallback(gatewayPort, token, timeoutMs - 1000).then(v => { clearTimeout(timer); finish(v); });
+          }
         }
       } catch {}
     });
@@ -4132,10 +4419,11 @@ function queryGatewayNodeListFallback(gatewayPort, token, timeoutMs) {
         }
         if (msg.id === connectId) {
           clearTimeout(timer);
-          if (!msg.ok) { finish(null); try { ws.close(); } catch {} return; }
+          if (!msg.ok) { logNodeProbeDebug('[node] cli fallback connect failed:', msg.error?.code); finish(null); try { ws.close(); } catch {} return; }
           // 从 presence 快照中提取 mode=node, reason=connect 条目
           const presence = msg.payload?.snapshot?.presence || [];
           const nodePresence = presence.filter(p => p.mode === 'node' && p.reason === 'connect');
+          logNodeProbeDebug('[node] cli fallback presence:', presence.length, 'total,', nodePresence.length, 'nodes');
           // 转换为 node.list 兼容格式（presence 中只有 host/mode/platform，无 nodeId）
           const nodes = nodePresence.map(p => ({
             displayName: p.host || '',
@@ -4151,38 +4439,125 @@ function queryGatewayNodeListFallback(gatewayPort, token, timeoutMs) {
   });
 }
 
+function normalizeNodeStatusSnapshot(raw) {
+  const snapshot = raw && typeof raw === 'object' ? raw : {};
+  const nodes = snapshot.nodes && typeof snapshot.nodes === 'object' ? snapshot.nodes : {};
+  return {
+    checkedAt: Number(snapshot.checkedAt || 0),
+    lastSuccessAt: Number(snapshot.lastSuccessAt || 0),
+    nodes,
+  };
+}
+
+let nodeStatusSnapshot = normalizeNodeStatusSnapshot(readJson(NODE_STATUS_CACHE_PATH, {}));
+let nodeStatusPollInFlight = null;
+
+function saveNodeStatusSnapshot() {
+  try {
+    writeJsonFileAtomic(NODE_STATUS_CACHE_PATH, nodeStatusSnapshot, 0o600);
+  } catch (e) {
+    console.warn('[node] save node status snapshot failed:', e.message);
+  }
+}
+
+async function refreshNodeStatusSnapshot() {
+  if (nodeStatusPollInFlight) return nodeStatusPollInFlight;
+  nodeStatusPollInFlight = (async () => {
+    const now = Date.now();
+    try {
+      const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+      const nodeEntries = Object.values(paired).filter(e => e.clientMode === 'node');
+      const gwNodes = await queryGatewayNodeList(4000);
+      const gwNodeMapById = new Map();
+      const gwNodeMapByName = new Map();
+      if (Array.isArray(gwNodes)) {
+        for (const n of gwNodes) {
+          if (n.nodeId) gwNodeMapById.set(n.nodeId, n);
+          if (n.displayName) gwNodeMapByName.set(n.displayName, n);
+        }
+      }
+
+      const nextNodes = {};
+      for (const entry of nodeEntries) {
+        const prev = nodeStatusSnapshot.nodes?.[entry.deviceId] || {};
+        const gwNode = gwNodeMapById.get(entry.deviceId) ||
+                       gwNodeMapByName.get(entry.displayName) ||
+                       gwNodeMapByName.get(entry.clientId);
+        const connected = gwNode?.connected === true;
+        const connectedSource = gwNode?._fromPresence ? 'presence' : (gwNode ? 'node.list' : 'none');
+        const connectedAtMs = connected
+          ? (gwNode?.connectedAtMs || (prev.connected ? Number(prev.connectedAtMs || 0) : now) || now)
+          : Number(prev.connectedAtMs || 0);
+        const offlineAtMs = connected
+          ? Number(prev.offlineAtMs || 0)
+          : (prev.connected ? now : Number(prev.offlineAtMs || 0));
+        let ipAddress = '';
+        if (connected) {
+          const shouldRefreshIp = !prev.connected || !String(prev.ipAddress || '').trim();
+          if (shouldRefreshIp && gwNode?.nodeId) {
+            ipAddress = await fetchNodeIpv4Address(gwNode.nodeId, gwNode?.platform || entry.platform || '');
+          } else {
+            ipAddress = String(prev.ipAddress || '').trim();
+          }
+        }
+        nextNodes[entry.deviceId] = {
+          deviceId: entry.deviceId,
+          displayName: gwNode?.displayName || entry.displayName || entry.clientId || entry.deviceId?.slice(0, 12),
+          platform: gwNode?.platform || entry.platform || 'unknown',
+          connected,
+          connectedAtMs,
+          offlineAtMs,
+          ipAddress,
+          approvedAtMs: entry.approvedAtMs || 0,
+          connectedSource,
+          lastProbeAtMs: now,
+          updatedAtMs: now,
+        };
+      }
+
+      nodeStatusSnapshot = {
+        checkedAt: now,
+        lastSuccessAt: now,
+        nodes: nextNodes,
+      };
+      saveNodeStatusSnapshot();
+      return nodeStatusSnapshot;
+    } catch (e) {
+      nodeStatusSnapshot.checkedAt = now;
+      console.warn('[node] refresh snapshot failed:', e.message);
+      return nodeStatusSnapshot;
+    } finally {
+      nodeStatusPollInFlight = null;
+    }
+  })();
+  return nodeStatusPollInFlight;
+}
+
+setTimeout(() => { void refreshNodeStatusSnapshot(); }, 1500);
+setInterval(() => { void refreshNodeStatusSnapshot(); }, NODE_STATUS_POLL_INTERVAL_MS);
+
 // GET /api/node/connected — 获取当前已连接的远端设备列表
 app.get('/api/node/connected', async (req, res) => {
   try {
     const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
     const nodeEntries = Object.values(paired).filter(e => e.clientMode === 'node');
-
-    // 通过 Gateway WS 查询节点在线状态
-    const gwNodes = await queryGatewayNodeList(4000);
-
-    // 建立 nodeId → gateway node 映射（node.list 格式）
-    // 以及 displayName → gateway node 映射（presence 降级格式）
-    const gwNodeMapById = new Map();
-    const gwNodeMapByName = new Map();
-    if (gwNodes) {
-      for (const n of gwNodes) {
-        if (n.nodeId) gwNodeMapById.set(n.nodeId, n);
-        if (n.displayName) gwNodeMapByName.set(n.displayName, n);
-      }
+    const snapshotAgeMs = Date.now() - Number(nodeStatusSnapshot.checkedAt || 0);
+    if (!nodeStatusSnapshot.lastSuccessAt || snapshotAgeMs > NODE_STATUS_MAX_STALE_MS) {
+      await refreshNodeStatusSnapshot();
     }
 
     const nodes = nodeEntries.map(entry => {
-      // 优先按 nodeId 匹配（node.list 格式），其次按 displayName 匹配（presence 降级）
-      const gwNode = gwNodeMapById.get(entry.deviceId) ||
-                     gwNodeMapByName.get(entry.displayName) ||
-                     gwNodeMapByName.get(entry.clientId);
+      const cached = nodeStatusSnapshot.nodes?.[entry.deviceId] || {};
       return {
         deviceId: entry.deviceId,
-        displayName: gwNode?.displayName || entry.displayName || entry.clientId || entry.deviceId?.slice(0, 12),
-        platform: gwNode?.platform || entry.platform || 'unknown',
-        connected: gwNode?.connected === true,
-        connectedAtMs: gwNode?.connectedAtMs || 0,
+        displayName: cached.displayName || entry.displayName || entry.clientId || entry.deviceId?.slice(0, 12),
+        platform: cached.platform || entry.platform || 'unknown',
+        connected: cached.connected === true,
+        connectedAtMs: Number(cached.connectedAtMs || 0),
+        offlineAtMs: Number(cached.offlineAtMs || 0),
+        ipAddress: String(cached.ipAddress || '').trim(),
         approvedAtMs: entry.approvedAtMs || 0,
+        connectedSource: cached.connectedSource || 'none',
       };
     });
     res.json({ success: true, nodes });
@@ -7541,6 +7916,7 @@ app.get('/api/openclaw/migration/export', async (req, res) => {
       'feishu': path.join(OPENCLAW_BASE, 'feishu'),
       'canvas': path.join(OPENCLAW_BASE, 'canvas'),
       'delivery-queue': path.join(OPENCLAW_BASE, 'delivery-queue'),
+      'skills': path.join(OPENCLAW_BASE, 'skills'),
       'config-backups': path.join(OPENCLAW_BASE, 'config-backups'),
     };
     const tmpDir = `/tmp/openclaw-migration-${Date.now()}`;
@@ -7652,7 +8028,7 @@ app.post('/api/openclaw/migration/import', (req, res) => {
           restoredFiles.push(name);
         }
         // Restore directories
-        const RESTORE_DIRS = ['identity', 'devices', 'cron', 'agents', 'workspace', 'feishu', 'canvas', 'delivery-queue', 'config-backups'];
+        const RESTORE_DIRS = ['identity', 'devices', 'cron', 'agents', 'workspace', 'feishu', 'canvas', 'delivery-queue', 'skills', 'config-backups'];
         for (const dirName of RESTORE_DIRS) {
           const srcDir = path.join(tmpDir, dirName);
           if (!fs.existsSync(srcDir)) continue;
@@ -8319,6 +8695,15 @@ app.get('/api/openclaw/gateway/logs', (req, res) => {
 // ============================================================
 function sanitizeLogLine(line) {
   if (typeof line !== 'string') return null;
+  if (/\[ws\]\s+closed before connect\b/i.test(line) && /(origin=https?:\/\/(?:127\.0\.0\.1|localhost)\b|host=(?:127\.0\.0\.1|localhost):\d+\b)/i.test(line)) {
+    return null;
+  }
+  if (/\[node\]\s+(?:control-ui rejected:|node\.list failed:|cli fallback presence:|cli fallback connect failed:|refresh snapshot:|control-ui connect ok, calling node\.list)/i.test(line)) {
+    return null;
+  }
+  if (/\[ws\]\s+⇄\s+res\s+✗\s+node\.invoke\b.*invalid node\.invoke params: must have required property 'idempotencyKey'/i.test(line)) {
+    return null;
+  }
   // 过滤掉频繁的 webchat connected/disconnected 日志
   if (/\[ws\]\s+webchat\s+(connected|disconnected)/i.test(line)) {
     return null;
