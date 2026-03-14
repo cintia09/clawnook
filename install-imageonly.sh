@@ -424,6 +424,47 @@ build_download_urls(){
   printf '%s\n' "${out[@]}"
 }
 
+curl_supports_retry_all_errors(){
+  curl --help all 2>/dev/null | grep -q -- '--retry-all-errors'
+}
+
+download_with_resume(){
+  local url="$1"
+  local output="$2"
+  local attempt rc=0
+  local -a curl_args
+
+  curl_args=(
+    -C -
+    --progress-bar
+    -fL
+    --connect-timeout 15
+    --max-time 1800
+    --retry 3
+    --retry-delay 3
+  )
+
+  if curl_supports_retry_all_errors; then
+    curl_args+=(--retry-all-errors)
+  fi
+
+  for attempt in 1 2 3; do
+    if curl "${curl_args[@]}" -o "$output" "$url"; then
+      return 0
+    fi
+
+    rc=$?
+    echo ""
+    warn "下载中断：${url}（第 ${attempt}/3 次，curl exit ${rc}）"
+    if [ "$attempt" -lt 3 ]; then
+      info "保留已下载分片，${attempt} 次失败后继续断点续传"
+      sleep $(( attempt * 2 ))
+    fi
+  done
+
+  return "$rc"
+}
+
 check_local_tarball(){
   local target="$TMP_DIR/$IMAGE_TARBALL"
   local target_meta="$target.meta"
@@ -539,7 +580,7 @@ download_tarball(){
       info "说明：下面 curl 百分比显示的是本次新增下载进度，不是总体百分比。"
     fi
     printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$part_meta" 2>/dev/null || true
-    if curl -C - --progress-bar -fL --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 3 -o "$part" "$u"; then
+    if download_with_resume "$u" "$part"; then
       echo ""
       if gzip -t "$part" >/dev/null 2>&1; then
         mv -f "$part" "$target"
@@ -552,7 +593,7 @@ download_tarball(){
       rm -f "$part" "$part_meta" || true
     else
       echo ""
-      warn "该下载源失败：$u（保留当前分片供下次继续）"
+      warn "该下载源失败：${u}（保留当前分片供下次继续）"
     fi
   done < <(build_download_urls "$primary_url")
 
@@ -763,10 +804,22 @@ fi
 # ─── detect local IP ─────────────────────────────────────────
 
 detect_local_ip(){
-  local ip
+  local ip iface
   ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
   if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
     ip="$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}' || true)"
+  fi
+  if [ -z "$ip" ] && command -v route >/dev/null 2>&1 && command -v ipconfig >/dev/null 2>&1; then
+    iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}' || true)"
+    if [ -n "$iface" ]; then
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+    fi
+  fi
+  if [ -z "$ip" ] && command -v ifconfig >/dev/null 2>&1; then
+    ip="$(ifconfig 2>/dev/null | awk '
+      /^[a-z0-9]/ { iface=$1; sub(":$", "", iface) }
+      /inet / && $2 != "127.0.0.1" && iface != "lo" && iface != "lo0" { print $2; exit }
+    ' || true)"
   fi
   [ -z "$ip" ] && ip="127.0.0.1"
   printf '%s' "$ip"
@@ -781,7 +834,7 @@ prompt_deploy_config(){
     # Gateway 内部端口固定 18789（仅容器内回环，不对外）
 
     HTTPS_ENABLED="true"
-    printf "HTTPS 域名 (可选，留空使用本机IP自签名HTTPS): " > "$TTY_IN"
+    printf "HTTPS 域名 (可选，留空自动检测本机局域网IP并使用自签名HTTPS): " > "$TTY_IN"
     IFS= read -r DOMAIN < "$TTY_IN" || true
     DOMAIN="${DOMAIN:-}"
 
@@ -790,6 +843,9 @@ prompt_deploy_config(){
       CERT_MODE="internal"
       HTTP_PORT=0
       info "域名留空，自动启用 IP 自签名 HTTPS：$DOMAIN"
+      if [ "$DOMAIN" = "127.0.0.1" ]; then
+        warn "未检测到可用局域网 IP，当前回退到 127.0.0.1；如需局域网访问，请手动输入域名或 IP"
+      fi
     elif echo "$DOMAIN" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
       CERT_MODE="internal"
       HTTP_PORT=0
