@@ -3248,7 +3248,7 @@ function Main {
                 if ($upgradeConfigText) {
                     try {
                         $upgradeConfig = $upgradeConfigText | ConvertFrom-Json
-                        Write-OK "读取到旧容器配置: $upgradeStateVolume:/root/.openclaw/docker-config.json"
+                        Write-OK "读取到旧容器配置: ${upgradeStateVolume}:/root/.openclaw/docker-config.json"
                     } catch {
                         Write-Warn "读取旧配置失败，将重新配置"
                     }
