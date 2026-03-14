@@ -7522,43 +7522,56 @@ app.get('/api/openclaw/config/repair/:taskId', (req, res) => {
 app.get('/api/openclaw/migration/export', async (req, res) => {
   try {
     const OPENCLAW_BASE = path.dirname(CONFIG_PATH);
-    // All files needed for full container migration
+    const { execSync } = require('child_process');
+    // Individual files to copy
     const FILE_MAP = {
       'openclaw.json': CONFIG_PATH,
       'openclaw.json.bak': `${CONFIG_PATH}.bak`,
       '.enc_key': path.join(OPENCLAW_BASE, '.enc_key'),
       'docker-config.json': path.join(OPENCLAW_BASE, 'docker-config.json'),
-      'identity/device.json': path.join(OPENCLAW_BASE, 'identity/device.json'),
-      'identity/device-auth.json': path.join(OPENCLAW_BASE, 'identity/device-auth.json'),
-      'devices/paired.json': path.join(OPENCLAW_BASE, 'devices/paired.json'),
-      'cron/jobs.json': path.join(OPENCLAW_BASE, 'cron/jobs.json'),
       'exec-approvals.json': path.join(OPENCLAW_BASE, 'exec-approvals.json'),
-      'agents/main/agent/auth-profiles.json': path.join(OPENCLAW_BASE, 'agents/main/agent/auth-profiles.json'),
-      'agents/main/agent/models.json': path.join(OPENCLAW_BASE, 'agents/main/agent/models.json'),
+      'subagents/runs.json': path.join(OPENCLAW_BASE, 'subagents/runs.json'),
+      'users/ssh_user': path.join(OPENCLAW_BASE, 'users/ssh_user'),
+    };
+    // Directories to copy recursively
+    const DIR_MAP = {
+      'identity': path.join(OPENCLAW_BASE, 'identity'),
+      'devices': path.join(OPENCLAW_BASE, 'devices'),
+      'ssh': path.join(OPENCLAW_BASE, 'ssh'),
+      'cron': path.join(OPENCLAW_BASE, 'cron'),
+      'agents': path.join(OPENCLAW_BASE, 'agents'),
+      'workspace': path.join(OPENCLAW_BASE, 'workspace'),
+      'feishu': path.join(OPENCLAW_BASE, 'feishu'),
+      'config-backups': path.join(OPENCLAW_BASE, 'config-backups'),
     };
     const tmpDir = `/tmp/openclaw-migration-${Date.now()}`;
     fs.mkdirSync(tmpDir, { recursive: true });
-    let fileCount = 0;
     const included = [];
+    // Copy individual files
     for (const [name, src] of Object.entries(FILE_MAP)) {
       if (fs.existsSync(src)) {
         const dest = path.join(tmpDir, name);
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.copyFileSync(src, dest);
-        fileCount++;
         included.push(name);
       }
     }
-    // Also copy config-backups if they exist
-    const backupDir = path.join(OPENCLAW_BASE, 'config-backups');
-    if (fs.existsSync(backupDir)) {
-      const { execSync } = require('child_process');
-      const destBackup = path.join(tmpDir, 'config-backups');
-      fs.mkdirSync(destBackup, { recursive: true });
-      execSync(`cp -r ${JSON.stringify(backupDir)}/. ${JSON.stringify(destBackup)}/`, { stdio: 'pipe', timeout: 15000 });
-      included.push('config-backups/');
+    // Copy directories (exclude .git inside workspace to save space)
+    for (const [name, src] of Object.entries(DIR_MAP)) {
+      if (fs.existsSync(src)) {
+        const dest = path.join(tmpDir, name);
+        fs.mkdirSync(dest, { recursive: true });
+        try {
+          if (name === 'workspace') {
+            execSync(`cp -r ${JSON.stringify(src)}/. ${JSON.stringify(dest)}/ && rm -rf ${JSON.stringify(dest)}/.git`, { stdio: 'pipe', timeout: 30000 });
+          } else {
+            execSync(`cp -r ${JSON.stringify(src)}/. ${JSON.stringify(dest)}/`, { stdio: 'pipe', timeout: 30000 });
+          }
+          included.push(name + '/');
+        } catch {}
+      }
     }
-    if (fileCount === 0) {
+    if (included.length === 0) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
       return res.status(404).json({ error: '没有可导出的数据文件' });
     }
@@ -7620,42 +7633,41 @@ app.post('/api/openclaw/migration/import', (req, res) => {
         const backupTs = Date.now();
         const preImportBackup = `/tmp/openclaw-pre-migration-backup-${backupTs}`;
         try {
-          execSync(`cp -r ${JSON.stringify(OPENCLAW_BASE)} ${JSON.stringify(preImportBackup)}`, { stdio: 'pipe', timeout: 15000 });
+          execSync(`cp -r ${JSON.stringify(OPENCLAW_BASE)} ${JSON.stringify(preImportBackup)}`, { stdio: 'pipe', timeout: 30000 });
         } catch {}
-        // Restore all files from archive
+        // Restore individual files
         const restoredFiles = [];
-        const RESTORE_MAP = {
+        const RESTORE_FILES = {
           'openclaw.json': CONFIG_PATH,
           'openclaw.json.bak': `${CONFIG_PATH}.bak`,
           '.enc_key': path.join(OPENCLAW_BASE, '.enc_key'),
           'docker-config.json': path.join(OPENCLAW_BASE, 'docker-config.json'),
-          'identity/device.json': path.join(OPENCLAW_BASE, 'identity/device.json'),
-          'identity/device-auth.json': path.join(OPENCLAW_BASE, 'identity/device-auth.json'),
-          'devices/paired.json': path.join(OPENCLAW_BASE, 'devices/paired.json'),
-          'cron/jobs.json': path.join(OPENCLAW_BASE, 'cron/jobs.json'),
           'exec-approvals.json': path.join(OPENCLAW_BASE, 'exec-approvals.json'),
-          'agents/main/agent/auth-profiles.json': path.join(OPENCLAW_BASE, 'agents/main/agent/auth-profiles.json'),
-          'agents/main/agent/models.json': path.join(OPENCLAW_BASE, 'agents/main/agent/models.json'),
+          'subagents/runs.json': path.join(OPENCLAW_BASE, 'subagents/runs.json'),
+          'users/ssh_user': path.join(OPENCLAW_BASE, 'users/ssh_user'),
         };
-        for (const [name, target] of Object.entries(RESTORE_MAP)) {
+        for (const [name, target] of Object.entries(RESTORE_FILES)) {
           const srcFile = path.join(tmpDir, name);
           if (!fs.existsSync(srcFile)) continue;
           fs.mkdirSync(path.dirname(target), { recursive: true });
           fs.copyFileSync(srcFile, target);
-          // Restore original permissions for sensitive files
-          if (name === '.enc_key' || name.startsWith('identity/') || name.startsWith('devices/')) {
-            try { fs.chmodSync(target, 0o600); } catch {}
-          }
+          if (name === '.enc_key') try { fs.chmodSync(target, 0o600); } catch {}
           restoredFiles.push(name);
         }
-        // Restore config-backups if present
-        const srcBackups = path.join(tmpDir, 'config-backups');
-        if (fs.existsSync(srcBackups)) {
-          const destBackups = path.join(OPENCLAW_BASE, 'config-backups');
-          fs.mkdirSync(destBackups, { recursive: true });
+        // Restore directories
+        const RESTORE_DIRS = ['identity', 'devices', 'ssh', 'cron', 'agents', 'workspace', 'feishu', 'config-backups'];
+        for (const dirName of RESTORE_DIRS) {
+          const srcDir = path.join(tmpDir, dirName);
+          if (!fs.existsSync(srcDir)) continue;
+          const destDir = path.join(OPENCLAW_BASE, dirName);
+          fs.mkdirSync(destDir, { recursive: true });
           try {
-            execSync(`cp -r ${JSON.stringify(srcBackups)}/. ${JSON.stringify(destBackups)}/`, { stdio: 'pipe', timeout: 15000 });
-            restoredFiles.push('config-backups/');
+            execSync(`cp -r ${JSON.stringify(srcDir)}/. ${JSON.stringify(destDir)}/`, { stdio: 'pipe', timeout: 30000 });
+            // Fix permissions for sensitive dirs
+            if (['identity', 'devices', 'ssh'].includes(dirName)) {
+              execSync(`chmod -R 600 ${JSON.stringify(destDir)}/* 2>/dev/null || true`, { stdio: 'pipe', timeout: 5000 });
+            }
+            restoredFiles.push(dirName + '/');
           } catch {}
         }
         fs.rmSync(tmpDir, { recursive: true, force: true });

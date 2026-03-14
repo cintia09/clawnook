@@ -1741,6 +1741,101 @@ $('config-import-file')?.addEventListener('change', async (e) => {
   }
 });
 
+// --- Migration Export ---
+$('btn-migration-export')?.addEventListener('click', async () => {
+  const btn = $('btn-migration-export');
+  if (btn) { btn.disabled = true; btn.textContent = '打包中...'; }
+  appendOcLogLine('[migration] 正在导出全量迁移数据（配置+密钥+身份+设备+工作空间+会话历史）...');
+  try {
+    const resp = await fetch('/api/openclaw/migration/export', { credentials: 'same-origin' });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || '导出失败');
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get('content-disposition') || '';
+    const fnMatch = cd.match(/filename="?([^"]+)"?/);
+    const defaultName = fnMatch ? fnMatch[1] : 'openclaw-migration.tar.gz';
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: defaultName,
+          types: [{ description: 'tar.gz 压缩包', accept: { 'application/gzip': ['.tar.gz', '.tgz'] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        toast('迁移导出', '已保存迁移包: ' + handle.name);
+        appendOcLogLine('[migration] 迁移包已导出: ' + handle.name + ' (' + (blob.size / 1024 / 1024).toFixed(1) + ' MB)');
+      } catch (PickerErr) {
+        if (PickerErr.name === 'AbortError') appendOcLogLine('[migration] 用户取消保存');
+        else throw PickerErr;
+      }
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = defaultName;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast('迁移导出', '已下载迁移包');
+      appendOcLogLine('[migration] 迁移包已下载: ' + defaultName + ' (' + (blob.size / 1024 / 1024).toFixed(1) + ' MB)');
+    }
+  } catch (e) {
+    toast('导出失败', e.message);
+    appendOcLogLine('[migration] 导出失败: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🚚 迁移导出'; }
+  }
+});
+
+// --- Migration Import ---
+$('btn-migration-import')?.addEventListener('click', () => {
+  const fileInput = $('migration-import-file');
+  if (!fileInput) return;
+  fileInput.accept = '';
+  fileInput.click();
+});
+
+$('migration-import-file')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  e.target.value = '';
+  if (!file.name.endsWith('.tar.gz') && !file.name.endsWith('.tgz')) {
+    toast('格式错误', '请选择 .tar.gz 迁移包');
+    return;
+  }
+  if (!confirm('⚠️ 迁移导入将覆盖当前容器的全部 OpenClaw 数据：\n\n' +
+    '• 配置文件（模型、渠道、安全策略）\n' +
+    '• 加密密钥（.enc_key）\n' +
+    '• 设备身份和已配对 Node\n' +
+    '• SSH 密钥\n' +
+    '• 工作空间和 Agent 会话\n' +
+    '• 定时任务\n\n' +
+    '导入前会自动备份当前数据到 /tmp/。\n' +
+    '导入后必须重启 Gateway 才能生效。\n\n确定继续？')) return;
+  const btn = $('btn-migration-import');
+  if (btn) { btn.disabled = true; btn.textContent = '导入中...'; }
+  appendOcLogLine('[migration] 正在导入迁移数据: ' + file.name + ' (' + (file.size / 1024 / 1024).toFixed(1) + ' MB)...');
+  try {
+    const resp = await fetch('/api/openclaw/migration/import', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/gzip' },
+      body: file
+    });
+    const r = await resp.json();
+    if (!resp.ok || r.error) throw new Error(r.error || '导入失败');
+    toast('迁移导入成功', '已恢复 ' + (r.restoredFiles || []).length + ' 项数据');
+    appendOcLogLine('[migration] 导入完成: ' + (r.restoredFiles || []).join(', '));
+    appendOcLogLine('[migration] 原数据已备份到: ' + (r.preImportBackup || ''));
+    appendOcLogLine('[migration] ⚠️ 请点击「重启 Gateway」使迁移数据生效！');
+  } catch (e) {
+    toast('导入失败', e.message);
+    appendOcLogLine('[migration] 导入失败: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🚚 迁移导入'; }
+  }
+});
 
 $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
   if (ocInstallRunning || ocInstallTaskRunningRemote || ocStartRunning || ocGatewayRestartRunningRemote) {
