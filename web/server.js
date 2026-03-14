@@ -7523,25 +7523,24 @@ app.get('/api/openclaw/migration/export', async (req, res) => {
   try {
     const OPENCLAW_BASE = path.dirname(CONFIG_PATH);
     const { execSync } = require('child_process');
-    // Individual files to copy
+    // Individual files to copy (openclaw app data only, no container infra)
     const FILE_MAP = {
       'openclaw.json': CONFIG_PATH,
       'openclaw.json.bak': `${CONFIG_PATH}.bak`,
       '.enc_key': path.join(OPENCLAW_BASE, '.enc_key'),
-      'docker-config.json': path.join(OPENCLAW_BASE, 'docker-config.json'),
       'exec-approvals.json': path.join(OPENCLAW_BASE, 'exec-approvals.json'),
       'subagents/runs.json': path.join(OPENCLAW_BASE, 'subagents/runs.json'),
-      'users/ssh_user': path.join(OPENCLAW_BASE, 'users/ssh_user'),
     };
     // Directories to copy recursively
     const DIR_MAP = {
       'identity': path.join(OPENCLAW_BASE, 'identity'),
       'devices': path.join(OPENCLAW_BASE, 'devices'),
-      'ssh': path.join(OPENCLAW_BASE, 'ssh'),
       'cron': path.join(OPENCLAW_BASE, 'cron'),
       'agents': path.join(OPENCLAW_BASE, 'agents'),
       'workspace': path.join(OPENCLAW_BASE, 'workspace'),
       'feishu': path.join(OPENCLAW_BASE, 'feishu'),
+      'canvas': path.join(OPENCLAW_BASE, 'canvas'),
+      'delivery-queue': path.join(OPENCLAW_BASE, 'delivery-queue'),
       'config-backups': path.join(OPENCLAW_BASE, 'config-backups'),
     };
     const tmpDir = `/tmp/openclaw-migration-${Date.now()}`;
@@ -7641,10 +7640,8 @@ app.post('/api/openclaw/migration/import', (req, res) => {
           'openclaw.json': CONFIG_PATH,
           'openclaw.json.bak': `${CONFIG_PATH}.bak`,
           '.enc_key': path.join(OPENCLAW_BASE, '.enc_key'),
-          'docker-config.json': path.join(OPENCLAW_BASE, 'docker-config.json'),
           'exec-approvals.json': path.join(OPENCLAW_BASE, 'exec-approvals.json'),
           'subagents/runs.json': path.join(OPENCLAW_BASE, 'subagents/runs.json'),
-          'users/ssh_user': path.join(OPENCLAW_BASE, 'users/ssh_user'),
         };
         for (const [name, target] of Object.entries(RESTORE_FILES)) {
           const srcFile = path.join(tmpDir, name);
@@ -7655,7 +7652,7 @@ app.post('/api/openclaw/migration/import', (req, res) => {
           restoredFiles.push(name);
         }
         // Restore directories
-        const RESTORE_DIRS = ['identity', 'devices', 'ssh', 'cron', 'agents', 'workspace', 'feishu', 'config-backups'];
+        const RESTORE_DIRS = ['identity', 'devices', 'cron', 'agents', 'workspace', 'feishu', 'canvas', 'delivery-queue', 'config-backups'];
         for (const dirName of RESTORE_DIRS) {
           const srcDir = path.join(tmpDir, dirName);
           if (!fs.existsSync(srcDir)) continue;
@@ -7664,7 +7661,7 @@ app.post('/api/openclaw/migration/import', (req, res) => {
           try {
             execSync(`cp -r ${JSON.stringify(srcDir)}/. ${JSON.stringify(destDir)}/`, { stdio: 'pipe', timeout: 30000 });
             // Fix permissions for sensitive dirs
-            if (['identity', 'devices', 'ssh'].includes(dirName)) {
+            if (['identity', 'devices'].includes(dirName)) {
               execSync(`chmod -R 600 ${JSON.stringify(destDir)}/* 2>/dev/null || true`, { stdio: 'pipe', timeout: 5000 });
             }
             restoredFiles.push(dirName + '/');

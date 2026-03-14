@@ -1804,13 +1804,14 @@ $('migration-import-file')?.addEventListener('change', async (e) => {
     toast('格式错误', '请选择 .tar.gz 迁移包');
     return;
   }
-  if (!confirm('⚠️ 迁移导入将覆盖当前容器的全部 OpenClaw 数据：\n\n' +
+  if (!confirm('⚠️ 迁移导入将覆盖当前容器的 OpenClaw 应用数据：\n\n' +
     '• 配置文件（模型、渠道、安全策略）\n' +
     '• 加密密钥（.enc_key）\n' +
     '• 设备身份和已配对 Node\n' +
-    '• SSH 密钥\n' +
-    '• 工作空间和 Agent 会话\n' +
-    '• 定时任务\n\n' +
+    '• 工作空间（SOUL.md 等 Agent 人格文件、脚本）\n' +
+    '• Agent 会话历史\n' +
+    '• 定时任务和执行记录\n\n' +
+    '不会覆盖容器配置（SSH、端口、域名等）。\n' +
     '导入前会自动备份当前数据到 /tmp/。\n' +
     '导入后必须重启 Gateway 才能生效。\n\n确定继续？')) return;
   const btn = $('btn-migration-import');
