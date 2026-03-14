@@ -27,6 +27,8 @@ export HOME
 export DISPLAY=:99
 
 SOURCE_ROOT="/root/.openclaw/openclaw-source"
+PERSIST_SOURCE_ROOT="$SOURCE_ROOT"
+OPENCLAW_RUNTIME_TMP_ROOT="${OPENCLAW_RUNTIME_TMP_ROOT:-/tmp/openclaw-runtime}"
 GATEWAY_CMD="node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs gateway run --force --allow-unconfigured"
 GATEWAY_LOG="/root/.openclaw/logs/openclaw-gateway.log"
 OPENCLAW_RUNTIME_VERSION="${OPENCLAW_VERSION:-}"
@@ -119,9 +121,79 @@ log_watchdog_snapshot() {
   log "[wd][snapshot] ${label} self=$$ $(current_process_parent_summary) peers=$(watchdog_process_snapshot) op=$(current_operation_type)"
 }
 
+detect_mount_fstype() {
+  local target="$1"
+  df -T "$target" 2>/dev/null | awk 'NR==2 {print $2}' | head -1
+}
+
+path_requires_local_runtime() {
+  local fstype
+  fstype=$(detect_mount_fstype "$1")
+  case "$fstype" in
+    9p|drvfs|virtiofs|fuse.osxfs|fuse.portal)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+sync_runtime_source_to_local() {
+  local src="$1"
+  local dst="$2"
+  if command -v rsync >/dev/null 2>&1; then
+    mkdir -p "$dst"
+    rsync -a --delete "$src/" "$dst/"
+    return $?
+  fi
+
+  rm -rf "$dst"
+  mkdir -p "$dst"
+  cp -a "$src/." "$dst/"
+}
+
+runtime_source_mirror_is_current() {
+  local src="$1"
+  local dst="$2"
+  [ -f "$src/package.json" ] || return 1
+  [ -f "$dst/package.json" ] || return 1
+  [ -f "$dst/openclaw.mjs" ] || return 1
+  cmp -s "$src/package.json" "$dst/package.json"
+}
+
+prepare_runtime_source_root() {
+  SOURCE_ROOT="$PERSIST_SOURCE_ROOT"
+
+  if [ ! -f "$PERSIST_SOURCE_ROOT/openclaw.mjs" ]; then
+    return 0
+  fi
+
+  mkdir -p "$OPENCLAW_RUNTIME_TMP_ROOT/tmp"
+  export TMPDIR="$OPENCLAW_RUNTIME_TMP_ROOT/tmp"
+
+  if ! path_requires_local_runtime "$PERSIST_SOURCE_ROOT"; then
+    return 0
+  fi
+
+  local runtime_source_dir="$OPENCLAW_RUNTIME_TMP_ROOT/openclaw-source"
+  if runtime_source_mirror_is_current "$PERSIST_SOURCE_ROOT" "$runtime_source_dir"; then
+    SOURCE_ROOT="$runtime_source_dir"
+    log "Reusing local runtime source mirror: $SOURCE_ROOT"
+    return 0
+  fi
+
+  if sync_runtime_source_to_local "$PERSIST_SOURCE_ROOT" "$runtime_source_dir"; then
+    SOURCE_ROOT="$runtime_source_dir"
+    log "Using local runtime source mirror: $SOURCE_ROOT"
+    return 0
+  fi
+
+  log "WARN: failed to mirror OpenClaw source locally, fallback to persistent source"
+  return 0
+}
+
 detect_runtime_version() {
   local candidates file ver
-  candidates="$SOURCE_ROOT/package.json /root/.npm-global/lib/node_modules/openclaw/package.json /usr/local/lib/node_modules/openclaw/package.json /usr/lib/node_modules/openclaw/package.json"
+  candidates="$SOURCE_ROOT/package.json $PERSIST_SOURCE_ROOT/package.json /root/.npm-global/lib/node_modules/openclaw/package.json /usr/local/lib/node_modules/openclaw/package.json /usr/lib/node_modules/openclaw/package.json"
   OPENCLAW_RUNTIME_VERSION=""
   unset OPENCLAW_VERSION OPENCLAW_SERVICE_VERSION
   for file in $candidates; do
@@ -400,6 +472,28 @@ collect_gateway_pids() {
   } | sed '/^$/d' | sort -u
 }
 
+pid_is_gateway_process() {
+  local pid="$1"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+
+  local comm cmdline
+  comm=$(cat "/proc/$pid/comm" 2>/dev/null || ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ')
+  case "$comm" in
+    openclaw|openclaw-gateway|openclaw-gatewa)
+      return 0
+      ;;
+  esac
+
+  cmdline=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || ps -o args= -p "$pid" 2>/dev/null)
+  case "$cmdline" in
+    *"openclaw.mjs gateway run"*|*"openclaw gateway run"*|*"gateway run --allow-unconfigured --force"*|*"gateway run --force --allow-unconfigured"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 pid_in_list() {
   local target="$1"
   shift || true
@@ -460,9 +554,10 @@ gateway_reported_no_listeners() {
 }
 
 is_gateway_process_alive() {
-  if [[ -n "$LAST_PID" ]] && kill -0 "$LAST_PID" 2>/dev/null; then
+  if [[ -n "$LAST_PID" ]] && pid_is_gateway_process "$LAST_PID"; then
     return 0
   fi
+  LAST_PID=""
   [[ -n "$(get_gateway_pid)" ]]
 }
 
@@ -596,6 +691,7 @@ wait_for_ready() {
 }
 
 start_once() {
+  prepare_runtime_source_root
   detect_runtime_version >/dev/null 2>&1 || true
   local launch_cmd=""
   local openclaw_bin=""
@@ -834,7 +930,7 @@ while true; do
     continue
   fi
 
-  if [ ! -f "$SOURCE_ROOT/openclaw.mjs" ] && ! command -v openclaw >/dev/null 2>&1 && [ ! -x /root/.npm-global/bin/openclaw ] && [ ! -x /usr/local/bin/openclaw ]; then
+  if [ ! -f "$PERSIST_SOURCE_ROOT/openclaw.mjs" ] && [ ! -f "$SOURCE_ROOT/openclaw.mjs" ] && ! command -v openclaw >/dev/null 2>&1 && [ ! -x /root/.npm-global/bin/openclaw ] && [ ! -x /usr/local/bin/openclaw ]; then
     log_throttled "runtime-missing" "$IDLE_RUNTIME_LOG_INTERVAL" "OpenClaw runtime entry missing (source/binary), watchdog idle"
     sleep "$CHECK_INTERVAL"
     continue
@@ -844,8 +940,16 @@ while true; do
     log "Gateway is DOWN — restarting"
     handle_restart
   elif ! is_port_listening; then
+    gateway_pid=""
+    gateway_pid=$(get_gateway_pid)
+    if [ -z "$gateway_pid" ]; then
+      LAST_PID=""
+      log "Gateway PID missing while port $PORT is not listening — restarting"
+      handle_restart
+      continue
+    fi
     uptime=0
-    uptime=$(ps -o etimes= -p "$(get_gateway_pid)" 2>/dev/null | tr -d ' ')
+    uptime=$(ps -o etimes= -p "$gateway_pid" 2>/dev/null | tr -d ' ')
     uptime=${uptime:-0}
     if [[ $uptime -ge $STARTUP_TIMEOUT ]]; then
       log "Gateway stuck — alive for ${uptime}s but port $PORT not listening. Force restarting..."

@@ -509,7 +509,9 @@ CERT_MODE="letsencrypt"
 CADDY_PID=""
 GATEWAY_WATCHDOG_SCRIPT="/usr/local/bin/openclaw-gateway-watchdog.sh"
 OPENCLAW_STATE_ROOT="/root/.openclaw"
-OPENCLAW_SOURCE_DIR="$OPENCLAW_STATE_ROOT/openclaw-source"
+OPENCLAW_PERSIST_SOURCE_DIR="$OPENCLAW_STATE_ROOT/openclaw-source"
+OPENCLAW_SOURCE_DIR="$OPENCLAW_PERSIST_SOURCE_DIR"
+OPENCLAW_RUNTIME_TMP_ROOT="${OPENCLAW_RUNTIME_TMP_ROOT:-/tmp/openclaw-runtime}"
 OPENCLAW_RUNTIME_JS="$OPENCLAW_SOURCE_DIR/openclaw.mjs"
 OPENCLAW_RUNTIME_VERSION=""
 
@@ -545,9 +547,82 @@ is_primary_watchdog_running() {
     [ -n "$(collect_primary_watchdog_pids)" ]
 }
 
+detect_mount_fstype() {
+    local target="$1"
+    df -T "$target" 2>/dev/null | awk 'NR==2 {print $2}' | head -1
+}
+
+path_requires_local_runtime() {
+    local fstype
+    fstype=$(detect_mount_fstype "$1")
+    case "$fstype" in
+        9p|drvfs|virtiofs|fuse.osxfs|fuse.portal)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+sync_runtime_source_to_local() {
+    local src="$1"
+    local dst="$2"
+    if command -v rsync >/dev/null 2>&1; then
+        mkdir -p "$dst"
+        rsync -a --delete "$src/" "$dst/"
+        return $?
+    fi
+
+    rm -rf "$dst"
+    mkdir -p "$dst"
+    cp -a "$src/." "$dst/"
+}
+
+runtime_source_mirror_is_current() {
+    local src="$1"
+    local dst="$2"
+    [ -f "$src/package.json" ] || return 1
+    [ -f "$dst/package.json" ] || return 1
+    [ -f "$dst/openclaw.mjs" ] || return 1
+    cmp -s "$src/package.json" "$dst/package.json"
+}
+
+prepare_runtime_source_root() {
+    OPENCLAW_SOURCE_DIR="$OPENCLAW_PERSIST_SOURCE_DIR"
+    OPENCLAW_RUNTIME_JS="$OPENCLAW_SOURCE_DIR/openclaw.mjs"
+
+    if [ ! -f "$OPENCLAW_PERSIST_SOURCE_DIR/openclaw.mjs" ]; then
+        return 0
+    fi
+
+    mkdir -p "$OPENCLAW_RUNTIME_TMP_ROOT/tmp"
+    export TMPDIR="$OPENCLAW_RUNTIME_TMP_ROOT/tmp"
+
+    if ! path_requires_local_runtime "$OPENCLAW_PERSIST_SOURCE_DIR"; then
+        return 0
+    fi
+
+    local runtime_source_dir="$OPENCLAW_RUNTIME_TMP_ROOT/openclaw-source"
+    if runtime_source_mirror_is_current "$OPENCLAW_PERSIST_SOURCE_DIR" "$runtime_source_dir"; then
+        OPENCLAW_SOURCE_DIR="$runtime_source_dir"
+        OPENCLAW_RUNTIME_JS="$OPENCLAW_SOURCE_DIR/openclaw.mjs"
+        echo "[start-services] Reusing local runtime source mirror: $OPENCLAW_SOURCE_DIR"
+        return 0
+    fi
+
+    if sync_runtime_source_to_local "$OPENCLAW_PERSIST_SOURCE_DIR" "$runtime_source_dir"; then
+        OPENCLAW_SOURCE_DIR="$runtime_source_dir"
+        OPENCLAW_RUNTIME_JS="$OPENCLAW_SOURCE_DIR/openclaw.mjs"
+        echo "[start-services] Using local runtime source mirror: $OPENCLAW_SOURCE_DIR"
+        return 0
+    fi
+
+    echo "[start-services] WARN: failed to mirror OpenClaw source locally, fallback to persistent source"
+    return 0
+}
+
 ensure_openclaw_source_from_global_package() {
     mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$OPENCLAW_STATE_ROOT/cache/openclaw" "$OPENCLAW_STATE_ROOT/locks" "$OPENCLAW_STATE_ROOT/home"
-    if [ -f "$OPENCLAW_SOURCE_DIR/openclaw.mjs" ]; then
+    if [ -f "$OPENCLAW_PERSIST_SOURCE_DIR/openclaw.mjs" ]; then
         return 0
     fi
     if ! command -v npm >/dev/null 2>&1; then
@@ -557,16 +632,16 @@ ensure_openclaw_source_from_global_package() {
     npm_root=$(npm root -g 2>/dev/null || true)
     pkg_dir="$npm_root/openclaw"
     if [ -d "$pkg_dir" ] && [ -f "$pkg_dir/openclaw.mjs" ]; then
-        echo "[start-services] Seeding OpenClaw source from global npm package into $OPENCLAW_SOURCE_DIR"
-        rm -rf "$OPENCLAW_SOURCE_DIR"
-        mkdir -p "$OPENCLAW_SOURCE_DIR"
-        cp -a "$pkg_dir"/. "$OPENCLAW_SOURCE_DIR"/
-        ln -sfn "$OPENCLAW_SOURCE_DIR" "$OPENCLAW_STATE_ROOT/openclaw"
+        echo "[start-services] Seeding OpenClaw source from global npm package into $OPENCLAW_PERSIST_SOURCE_DIR"
+        rm -rf "$OPENCLAW_PERSIST_SOURCE_DIR"
+        mkdir -p "$OPENCLAW_PERSIST_SOURCE_DIR"
+        cp -a "$pkg_dir"/. "$OPENCLAW_PERSIST_SOURCE_DIR"/
+        ln -sfn "$OPENCLAW_PERSIST_SOURCE_DIR" "$OPENCLAW_STATE_ROOT/openclaw"
     fi
 }
 
 has_openclaw_cli() {
-    [ -f "$OPENCLAW_RUNTIME_JS" ] || command -v openclaw >/dev/null 2>&1 || [ -x "/root/.npm-global/bin/openclaw" ] || [ -x "/usr/local/bin/openclaw" ]
+    [ -f "$OPENCLAW_PERSIST_SOURCE_DIR/openclaw.mjs" ] || command -v openclaw >/dev/null 2>&1 || [ -x "/root/.npm-global/bin/openclaw" ] || [ -x "/usr/local/bin/openclaw" ]
 }
 
 refresh_openclaw_availability() {
@@ -579,7 +654,7 @@ refresh_openclaw_availability() {
 
 detect_openclaw_runtime_version() {
     local candidates=""
-    candidates="$OPENCLAW_SOURCE_DIR/package.json /root/.npm-global/lib/node_modules/openclaw/package.json /usr/local/lib/node_modules/openclaw/package.json /usr/lib/node_modules/openclaw/package.json"
+    candidates="$OPENCLAW_SOURCE_DIR/package.json $OPENCLAW_PERSIST_SOURCE_DIR/package.json /root/.npm-global/lib/node_modules/openclaw/package.json /usr/local/lib/node_modules/openclaw/package.json /usr/lib/node_modules/openclaw/package.json"
     local f v
     for f in $candidates; do
         [ -f "$f" ] || continue
@@ -662,6 +737,7 @@ refresh_openclaw_availability
 
 start_gateway() {
     ensure_openclaw_source_from_global_package
+    prepare_runtime_source_root
     refresh_openclaw_availability
     detect_openclaw_runtime_version >/dev/null 2>&1 || true
     if [ "$HAS_OPENCLAW" != "true" ]; then
@@ -680,6 +756,7 @@ start_gateway() {
 
 start_gateway_watchdog() {
     ensure_openclaw_source_from_global_package
+    prepare_runtime_source_root
     detect_openclaw_runtime_version >/dev/null 2>&1 || true
     if [ ! -x "$GATEWAY_WATCHDOG_SCRIPT" ]; then
         echo "[start-services] watchdog script missing ($GATEWAY_WATCHDOG_SCRIPT), fallback to direct gateway start"
