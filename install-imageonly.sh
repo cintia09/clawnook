@@ -352,6 +352,7 @@ write_config(){
 {
   "port": ${GW_PORT},
   "gateway_tls_port": ${GW_TLS_PORT},
+  "gateway_tls_public_port": ${GW_TLS_PORT},
   "web_port": ${WEB_PORT},
   "ssh_port": ${SSH_PORT},
   "http_port": ${HTTP_PORT},
@@ -369,6 +370,7 @@ EOF
 {
   "port": ${GW_PORT},
   "gateway_tls_port": ${GW_TLS_PORT},
+  "gateway_tls_public_port": ${GW_TLS_PORT},
   "web_port": ${WEB_PORT},
   "ssh_port": ${SSH_PORT},
   "http_port": ${HTTP_PORT},

@@ -4230,7 +4230,7 @@ app.get('/api/node/setup-command', (req, res) => {
     const token = getGatewayAuthToken();
     const host = (req.headers['x-forwarded-host'] || req.headers.host || '').replace(/:\d+$/, '') || '127.0.0.1';
     const dcfg = readDockerConfig();
-    const gatewayTlsPort = Number(dcfg.gateway_tls_port || 18790) || 18790;
+    const gatewayTlsPort = Number(dcfg.gateway_tls_public_port || dcfg.gateway_tls_port || 18790) || 18790;
     if (!token) {
       return res.json({ success: true, command: '# Gateway Auth Token 未配置，请先在 openclaw.json 中设置 gateway.auth.token', hasToken: false, commandWindows: '' });
     }

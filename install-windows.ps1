@@ -4128,6 +4128,7 @@ function Main {
             $dockerConfigJson = @{
                 port       = $deployConfig.GatewayPort
                 gateway_tls_port = $deployConfig.GatewayTlsPort
+                gateway_tls_public_port = $deployConfig.GatewayTlsPort
                 web_port   = $deployConfig.WebPort
                 http_port  = $deployConfig.HttpPort
                 https_port = $deployConfig.HttpsPort
