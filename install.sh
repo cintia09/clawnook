@@ -27,7 +27,7 @@ fetch_imageonly_script(){
 }
 
 run_imageonly_installer(){
-  local target_dir tmp_script
+  local target_dir tmp_root tmp_script
   target_dir="${TARGET_DIR:-$(pwd)}"
 
   if [ -f "$target_dir/install-imageonly.sh" ]; then
@@ -40,7 +40,9 @@ run_imageonly_installer(){
     exec env TARGET_DIR="$target_dir" bash "$target_dir/openclaw-pro/install-imageonly.sh"
   fi
 
-  tmp_script="$(mktemp /tmp/openclaw-imageonly.XXXXXX.sh)"
+  tmp_root="${TMPDIR:-/tmp}"
+  tmp_root="${tmp_root%/}"
+  tmp_script="$(mktemp "${tmp_root}/openclaw-imageonly.XXXXXX")"
   if fetch_imageonly_script "$tmp_script"; then
     chmod +x "$tmp_script"
     if [ -r /dev/tty ] && [ -w /dev/tty ] && [ ! -t 0 ]; then
