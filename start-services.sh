@@ -513,6 +513,38 @@ OPENCLAW_SOURCE_DIR="$OPENCLAW_STATE_ROOT/openclaw-source"
 OPENCLAW_RUNTIME_JS="$OPENCLAW_SOURCE_DIR/openclaw.mjs"
 OPENCLAW_RUNTIME_VERSION=""
 
+collect_watchdog_pids() {
+    pgrep -f "[o]penclaw-gateway-watchdog.sh" 2>/dev/null || true
+}
+
+collect_primary_watchdog_pids() {
+    local pid ppid
+    for pid in $(collect_watchdog_pids); do
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        if [ "$ppid" = "1" ]; then
+            echo "$pid"
+        fi
+    done
+}
+
+describe_watchdog_pids() {
+    local input_pids="$1"
+    local pid ppid etimes args rows
+    rows=""
+    for pid in $input_pids; do
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        etimes=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
+        args=$(ps -o args= -p "$pid" 2>/dev/null | sed 's/[[:space:]]\+/ /g' | sed 's/^ //; s/ $//')
+        [ -n "$rows" ] && rows="$rows | "
+        rows="${rows}pid=${pid},ppid=${ppid:-?},etimes=${etimes:-?},args=${args:-unknown}"
+    done
+    [ -n "$rows" ] && echo "$rows" || echo "none"
+}
+
+is_primary_watchdog_running() {
+    [ -n "$(collect_primary_watchdog_pids)" ]
+}
+
 ensure_openclaw_source_from_global_package() {
     mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$OPENCLAW_STATE_ROOT/cache/openclaw" "$OPENCLAW_STATE_ROOT/locks" "$OPENCLAW_STATE_ROOT/home"
     if [ -f "$OPENCLAW_SOURCE_DIR/openclaw.mjs" ]; then
@@ -655,8 +687,10 @@ start_gateway_watchdog() {
         return 0
     fi
 
-    if pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
-        echo "[start-services] Gateway watchdog already running"
+    local wd_pids
+    wd_pids=$(collect_primary_watchdog_pids)
+    if [ -n "$wd_pids" ]; then
+        echo "[start-services] Gateway watchdog already running: $(describe_watchdog_pids "$wd_pids")"
         return 0
     fi
 
@@ -667,18 +701,24 @@ start_gateway_watchdog() {
 }
 
 ensure_gateway_watchdog_running() {
-    if pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
+    local wd_pids all_wd_pids
+    wd_pids=$(collect_primary_watchdog_pids)
+    if [ -n "$wd_pids" ]; then
         return 0
+    fi
+
+    all_wd_pids=$(collect_watchdog_pids)
+    if [ -n "$all_wd_pids" ]; then
+        echo "[start-services] WARNING: only nested watchdog-like processes detected, primary missing: $(describe_watchdog_pids "$all_wd_pids")"
     fi
 
     echo "[start-services] WARNING: watchdog process not detected, trying to start now..."
     start_gateway_watchdog
     sleep 1
 
-    if pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1; then
-        local wd_pid
-        wd_pid=$(pgrep -f "[o]penclaw-gateway-watchdog.sh" | head -1)
-        echo "[start-services] watchdog recovered, pid=$wd_pid"
+    wd_pids=$(collect_primary_watchdog_pids)
+    if [ -n "$wd_pids" ]; then
+        echo "[start-services] watchdog recovered: $(describe_watchdog_pids "$wd_pids")"
         return 0
     fi
 
@@ -700,16 +740,22 @@ ensure_gateway_watchdog_running() {
 }
 
 dedupe_gateway_watchdogs() {
-    local pids count keep
-    pids=$(pgrep -f "[o]penclaw-gateway-watchdog.sh" 2>/dev/null || true)
+    local pids count keep current_op
+    pids=$(collect_primary_watchdog_pids)
     [ -z "$pids" ] && return 0
     count=$(echo "$pids" | wc -w | tr -d ' ')
     if [ "$count" -le 1 ]; then
         return 0
     fi
 
+    current_op="$(current_operation_type)"
+    if is_openclaw_operation_active "$current_op"; then
+        echo "[start-services] WARNING: detected ${count} primary watchdog processes during operation=$current_op, skip dedupe: $(describe_watchdog_pids "$pids")"
+        return 0
+    fi
+
     keep=$(echo "$pids" | awk '{print $1}')
-    echo "[start-services] WARNING: detected ${count} watchdog processes, keeping pid=${keep}"
+    echo "[start-services] WARNING: detected ${count} primary watchdog processes, keeping pid=${keep}: $(describe_watchdog_pids "$pids")"
     for pid in $pids; do
         [ "$pid" = "$keep" ] && continue
         kill -USR2 "$pid" 2>/dev/null || true

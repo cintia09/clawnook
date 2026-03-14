@@ -87,6 +87,38 @@ log_throttled() {
   log "$msg"
 }
 
+watchdog_process_snapshot() {
+  local pids pid rows ppid etimes args
+  pids=$(pgrep -f "[o]penclaw-gateway-watchdog.sh" 2>/dev/null || true)
+  [ -z "$pids" ] && {
+    echo "none"
+    return 0
+  }
+
+  rows=""
+  for pid in $pids; do
+    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    etimes=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
+    args=$(ps -o args= -p "$pid" 2>/dev/null | sed 's/[[:space:]]\+/ /g' | sed 's/^ //; s/ $//')
+    [ -n "$rows" ] && rows="$rows | "
+    rows="${rows}pid=${pid},ppid=${ppid:-?},etimes=${etimes:-?},args=${args:-unknown}"
+  done
+
+  echo "$rows"
+}
+
+current_process_parent_summary() {
+  local ppid args
+  ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')
+  args=$(ps -o args= -p "$ppid" 2>/dev/null | sed 's/[[:space:]]\+/ /g' | sed 's/^ //; s/ $//')
+  echo "ppid=${ppid:-?},parent=${args:-unknown}"
+}
+
+log_watchdog_snapshot() {
+  local label="$1"
+  log "[wd][snapshot] ${label} self=$$ $(current_process_parent_summary) peers=$(watchdog_process_snapshot) op=$(current_operation_type)"
+}
+
 detect_runtime_version() {
   local candidates file ver
   candidates="$SOURCE_ROOT/package.json /root/.npm-global/lib/node_modules/openclaw/package.json /usr/local/lib/node_modules/openclaw/package.json /usr/lib/node_modules/openclaw/package.json"
@@ -728,11 +760,13 @@ acquire_lock() {
     local cmdline
     cmdline=$(ps -o args= -p "$old_pid" 2>/dev/null || true)
     if echo "$cmdline" | grep -q "openclaw-gateway-watchdog.sh"; then
+      log_watchdog_snapshot "lock-held-by-live-watchdog old_pid=$old_pid"
       log "Another watchdog instance detected (pid=$old_pid), exiting"
       return 1
     fi
   fi
 
+  log_watchdog_snapshot "stale-lock-cleanup old_pid=${old_pid:-none}"
   log "Detected stale watchdog lock, cleaning up"
   rm -rf "$LOCK_DIR" >/dev/null 2>&1 || true
   if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -762,6 +796,7 @@ _watchdog_sigterm_handler() {
 }
 _watchdog_signal_handler() {
   local sig="$1"
+  log_watchdog_snapshot "signal-${sig}"
   log "[wd][signal] received SIG${sig} (pid=$$), exiting"
   rm -rf "$LOCK_DIR" >/dev/null 2>&1 || true
   exit 0
@@ -780,6 +815,7 @@ trap 'log "[wd][error] unexpected error at line $LINENO (pid=$$): last command e
 mkdir -p "$BACKUP_DIR"
 
 log "Watchdog v2 started (poll=${POLL_INTERVAL}s, timeout=${STARTUP_TIMEOUT}s, port=$PORT)"
+log_watchdog_snapshot "startup"
 log_event "start" "poll=${POLL_INTERVAL}s timeout=${STARTUP_TIMEOUT}s port=$PORT"
 
 while true; do
