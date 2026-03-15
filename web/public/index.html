@@ -565,17 +565,22 @@
             <div class="sep"></div>
             <div style="font-weight:700;font-size:14px;margin-bottom:8px">🚀 快速连接</div>
             <div class="muted small" style="margin-bottom:8px">在远端机器上运行以下命令即可自动配对（需先安装 <code>openclaw</code> CLI）。命令会自动配置节点安全策略并通过 TLS 加密连接：</div>
-            <div style="margin-bottom:6px">
-              <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-linux" onclick="document.getElementById('device-setup-command').style.display='';document.getElementById('device-setup-command-win').style.display='';document.querySelectorAll('.cmd-bg').forEach(e=>e.style.display='none');this.style.fontWeight='700';document.getElementById('tab-cmd-win').style.fontWeight='400';document.getElementById('tab-cmd-bg').style.fontWeight='400';document.getElementById('device-setup-command-win').style.display='none'"><b>🐧 Linux / macOS（前台）</b></span>
-              <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-bg" onclick="document.querySelectorAll('.cmd-fg,.cmd-bg').forEach(e=>e.style.display='none');document.getElementById('device-setup-command-bg').style.display='';this.style.fontWeight='700';document.getElementById('tab-cmd-linux').style.fontWeight='400';document.getElementById('tab-cmd-win').style.fontWeight='400'">🐧 后台运行（推荐）</span>
-              <span class="muted small" style="cursor:pointer" id="tab-cmd-win" onclick="document.querySelectorAll('.cmd-fg,.cmd-bg').forEach(e=>e.style.display='none');document.getElementById('device-setup-command-win').style.display='';this.style.fontWeight='700';document.getElementById('tab-cmd-linux').style.fontWeight='400';document.getElementById('tab-cmd-bg').style.fontWeight='400'">🪟 Windows PowerShell</span>
-            </div>
-            <div style="position:relative">
-              <pre class="terminal cmd-fg" id="device-setup-command" style="height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
-              <pre class="terminal cmd-bg" id="device-setup-command-bg" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
-              <pre class="terminal cmd-fg cmd-bg" id="device-setup-command-win" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
-              <button class="btn btn-sm" id="btn-copy-setup-cmd" style="position:absolute;top:8px;right:8px;font-size:11px;padding:2px 8px" title="复制命令">📋</button>
-            </div>
+            <details style="margin-top:8px">
+              <summary class="muted small" style="cursor:pointer;user-select:none">点击展开连接命令</summary>
+              <div style="margin-top:8px;margin-bottom:6px">
+                <span class="muted small" style="cursor:pointer;margin-right:12px;font-weight:700" id="tab-cmd-linux" onclick="setDeviceCommandTab('linux')"><b>🐧 Linux / macOS（前台）</b></span>
+                <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-bg" onclick="setDeviceCommandTab('linux-bg')">🐧 后台运行（推荐）</span>
+                <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-win" onclick="setDeviceCommandTab('win')">🪟 Windows PowerShell</span>
+                <span class="muted small" style="cursor:pointer" id="tab-cmd-win-bg" onclick="setDeviceCommandTab('win-bg')">🪟 Windows 后台运行</span>
+              </div>
+              <div style="position:relative">
+                <pre class="terminal cmd-pane" id="device-setup-command" style="height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+                <pre class="terminal cmd-pane" id="device-setup-command-bg" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+                <pre class="terminal cmd-pane" id="device-setup-command-win" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+                <pre class="terminal cmd-pane" id="device-setup-command-win-bg" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
+                <button class="btn btn-sm" id="btn-copy-setup-cmd" style="position:absolute;top:8px;right:8px;font-size:11px;padding:2px 8px" title="复制命令">📋</button>
+              </div>
+            </details>
             <div class="muted small" style="margin-top:6px">💡 命令会自动在远端创建 <code>~/.openclaw/openclaw.json</code> 并设置命令执行策略，然后启动节点连接。运行后需在下方审批才能接入。</div>
             <details style="margin-top:8px;padding:10px 14px;background:#1a2a1a;border:1px solid #3fb950;border-radius:6px;font-size:12px;line-height:1.7;color:#c9d1d9">
               <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px"><span style="transition:transform .2s">▶</span> <b style="color:#7ee787">🔄 后台运行与自动重连</b></summary>
@@ -659,11 +664,11 @@
               <div style="grid-column: span 6;" class="field">
                 <div class="label"><span>命令执行安全策略 <span class="muted small">(Gateway 配置)</span></span></div>
                 <select class="input" id="device-exec-security">
-                  <option value="allowlist">allowlist（每次确认，推荐）</option>
+                  <option value="full">full（默认，自动允许）</option>
+                  <option value="allowlist">allowlist（需要节点本地逐次审批）</option>
                   <option value="deny">deny（禁止执行）</option>
-                  <option value="full">full（自动允许）</option>
                 </select>
-                <div class="muted small" style="margin-top:4px">控制 AI 代理在远端节点上执行命令时的审批策略</div>
+                <div class="muted small" style="margin-top:4px">控制 AI 代理在远端节点上执行命令的放行方式；无人值守节点建议使用 <code>full</code></div>
               </div>
               <div style="grid-column: span 6;" class="field">
                 <div class="label"><span>禁止执行的命令 <span class="muted small">(Gateway 配置)</span></span></div>
@@ -688,10 +693,10 @@
                   ⚡ <b>重要：命令执行安全策略</b><br>
                   <span style="color:#c9d1d9;font-size:12px">
                     快速连接命令会自动在远端节点配置 <code>tools.exec.security</code>（与上方安全配置同步）。<br>
-                    • <code>full</code>：AI 代理可直接执行命令，无需逐次审批（推荐用于可信环境）<br>
-                    • <code>allowlist</code>：每次执行都需要在节点本地审批（远端无人值守时无法审批，<b>会导致命令执行失败</b>）<br>
+                    • <code>full</code>：AI 代理可直接执行命令，无需逐次审批；这是当前页面默认值，适合无人值守节点<br>
+                    • <code>allowlist</code>：每次执行都需要在节点本地审批；如果节点不在你手边，命令会因 <b>approval required</b> 失败<br>
                     • <code>deny</code>：禁止所有命令执行<br>
-                    ⚠️ 如果远端节点是无人值守的服务器，<b>必须使用 <code>full</code></b>，否则所有命令都会因 "approval required" 而失败。
+                    ⚠️ Gateway 页面里没有单独的“命令审批通过”按钮；若选择 <code>allowlist</code>，批准动作发生在节点本机。
                   </span>
                 </div>
                 <div style="margin-bottom:12px">

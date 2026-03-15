@@ -314,6 +314,8 @@ const NODE_STATUS_POLL_INTERVAL_MS = 5000;
 const NODE_STATUS_MAX_STALE_MS = 4500;
 const NODE_STATUS_GATEWAY_RECONNECT_GRACE_MS = 30000;
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+const CONTROL_UI_BACKEND_CLIENT_ID = 'openclaw-control-ui';
+const CONTROL_UI_BACKEND_DISPLAY_NAME = 'OpenClaw Web Panel Backend';
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -1666,8 +1668,16 @@ function writeOpenClawConfig(cfg) {
   if (result.changed) {
     console.log(`[config] sanitize: removed ${result.removed.length} invalid key(s): ${result.removed.join(', ')}`);
   }
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 });
-  return result;
+  const nextContent = JSON.stringify(cfg, null, 2);
+  let currentContent = '';
+  try {
+    currentContent = fs.readFileSync(CONFIG_PATH, 'utf8');
+  } catch {}
+  if (currentContent === nextContent) {
+    return { ...result, written: false };
+  }
+  fs.writeFileSync(CONFIG_PATH, nextContent, { encoding: 'utf8', mode: 0o600 });
+  return { ...result, written: true };
 }
 
 function buildNormalizedPairedScopes(role, scopes = []) {
@@ -4076,9 +4086,123 @@ function publicKeyRawBase64UrlFromPem(publicKeyPem) {
   return base64urlEncode(raw);
 }
 
+function deriveDeviceIdFromPublicKeyPem(publicKeyPem) {
+  const rawPublicKey = base64urlDecode(publicKeyRawBase64UrlFromPem(publicKeyPem));
+  return crypto.createHash('sha256').update(rawPublicKey).digest('hex');
+}
+
 function signDevicePayload(privateKeyPem, payload) {
   const key = crypto.createPrivateKey(privateKeyPem);
   return base64urlEncode(crypto.sign(null, Buffer.from(payload, 'utf8'), key));
+}
+
+function ensureGatewayDeviceIdentityAuth() {
+  const identity = readJson(DEVICE_IDENTITY_PATH, {});
+  const authStore = readJson(DEVICE_AUTH_STORE_PATH, {});
+  if (identity?.deviceId && identity?.publicKeyPem && identity?.privateKeyPem && authStore?.tokens?.operator?.token) {
+    const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+    const originalDeviceId = String(identity.deviceId);
+    const deviceId = deriveDeviceIdFromPublicKeyPem(String(identity.publicKeyPem));
+    const scopes = Array.isArray(authStore?.tokens?.operator?.scopes)
+      ? authStore.tokens.operator.scopes.map((scope) => String(scope || '').trim()).filter(Boolean)
+      : buildNormalizedPairedScopes('operator', ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing']);
+    const now = Date.now();
+    if (originalDeviceId !== deviceId) {
+      delete paired[originalDeviceId];
+      writeJson(DEVICE_IDENTITY_PATH, {
+        deviceId,
+        publicKeyPem: String(identity.publicKeyPem),
+        privateKeyPem: String(identity.privateKeyPem)
+      });
+    }
+    const current = paired[deviceId] && typeof paired[deviceId] === 'object' ? paired[deviceId] : {};
+    paired[deviceId] = {
+      ...current,
+      deviceId,
+      publicKey: publicKeyRawBase64UrlFromPem(String(identity.publicKeyPem)),
+      displayName: current.displayName || CONTROL_UI_BACKEND_DISPLAY_NAME,
+      platform: current.platform || process.platform,
+      clientId: CONTROL_UI_BACKEND_CLIENT_ID,
+      clientMode: 'webchat',
+      role: 'operator',
+      roles: ['operator'],
+      scopes,
+      approvedScopes: scopes,
+      tokens: {
+        ...(current.tokens && typeof current.tokens === 'object' ? current.tokens : {}),
+        operator: {
+          token: normalizeGatewayAuthToken(authStore?.tokens?.operator?.token || ''),
+          role: 'operator',
+          scopes,
+          createdAtMs: Number(authStore?.tokens?.operator?.createdAtMs || current?.tokens?.operator?.createdAtMs || now),
+          rotatedAtMs: Number(authStore?.tokens?.operator?.rotatedAtMs || now)
+        }
+      },
+      approvedAtMs: Number(current.approvedAtMs || now),
+      isRepair: false
+    };
+    writeJson(DEVICE_PAIRING_PAIRED_PATH, paired);
+    return {
+      identity: {
+        deviceId,
+        publicKeyPem: String(identity.publicKeyPem),
+        privateKeyPem: String(identity.privateKeyPem)
+      },
+      deviceAuthToken: normalizeGatewayAuthToken(authStore?.tokens?.operator?.token || '')
+    };
+  }
+
+  const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+  const now = Date.now();
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
+  const privateKeyPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+  const deviceId = deriveDeviceIdFromPublicKeyPem(publicKeyPem);
+  const operatorToken = crypto.randomBytes(24).toString('hex');
+  const scopes = buildNormalizedPairedScopes('operator', ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing']);
+
+  paired[deviceId] = {
+    deviceId,
+    publicKey: publicKeyRawBase64UrlFromPem(publicKeyPem),
+    displayName: CONTROL_UI_BACKEND_DISPLAY_NAME,
+    platform: process.platform,
+    clientId: CONTROL_UI_BACKEND_CLIENT_ID,
+    clientMode: 'webchat',
+    role: 'operator',
+    roles: ['operator'],
+    scopes,
+    approvedScopes: scopes,
+    tokens: {
+      operator: {
+        token: operatorToken,
+        role: 'operator',
+        scopes,
+        createdAtMs: now,
+        rotatedAtMs: now
+      }
+    },
+    approvedAtMs: now,
+    isRepair: false
+  };
+
+  writeJson(DEVICE_PAIRING_PAIRED_PATH, paired);
+  writeJson(DEVICE_IDENTITY_PATH, { deviceId, publicKeyPem, privateKeyPem });
+  writeJson(DEVICE_AUTH_STORE_PATH, {
+    tokens: {
+      operator: {
+        token: operatorToken,
+        role: 'operator',
+        scopes,
+        createdAtMs: now,
+        rotatedAtMs: now
+      }
+    }
+  });
+
+  return {
+    identity: { deviceId, publicKeyPem, privateKeyPem },
+    deviceAuthToken: operatorToken
+  };
 }
 
 function buildDeviceAuthPayloadV3(params) {
@@ -4098,33 +4222,78 @@ function buildDeviceAuthPayloadV3(params) {
 }
 
 function loadGatewayDeviceIdentityAuth() {
-  const identity = readJson(DEVICE_IDENTITY_PATH, {});
-  if (!identity || typeof identity !== 'object') return null;
-  if (!identity.deviceId || !identity.publicKeyPem || !identity.privateKeyPem) return null;
+  const state = ensureGatewayDeviceIdentityAuth();
+  if (!state?.identity?.deviceId || !state?.identity?.publicKeyPem || !state?.identity?.privateKeyPem) return null;
 
-  const authStore = readJson(DEVICE_AUTH_STORE_PATH, {});
-  const deviceAuthToken = normalizeGatewayAuthToken(authStore?.tokens?.operator?.token || '');
-  const authToken = getGatewayAuthToken() || deviceAuthToken;
+  const deviceAuthToken = normalizeGatewayAuthToken(state?.deviceAuthToken || '');
+  const authToken = deviceAuthToken || getGatewayAuthToken();
   if (!authToken) return null;
 
   return {
     identity: {
-      deviceId: String(identity.deviceId),
-      publicKeyPem: String(identity.publicKeyPem),
-      privateKeyPem: String(identity.privateKeyPem)
+      deviceId: String(state.identity.deviceId),
+      publicKeyPem: String(state.identity.publicKeyPem),
+      privateKeyPem: String(state.identity.privateKeyPem)
     },
     authToken
   };
 }
 
+function loadGatewayOperatorTokenAuth() {
+  const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+  const operatorEntry = Object.values(paired).find((entry) =>
+    entry
+    && typeof entry === 'object'
+    && entry.clientId === 'openclaw-control-ui'
+    && (entry.clientMode === 'webchat' || entry.role === 'operator')
+    && entry.tokens
+    && typeof entry.tokens === 'object'
+    && entry.tokens.operator
+  );
+  if (!operatorEntry) return null;
+
+  const operatorToken = normalizeGatewayAuthToken(operatorEntry?.tokens?.operator?.token || '');
+  if (!operatorToken) return null;
+
+  const approvedScopes = Array.isArray(operatorEntry?.approvedScopes)
+    ? operatorEntry.approvedScopes.map((scope) => String(scope || '').trim()).filter(Boolean)
+    : [];
+
+  return {
+    authToken: operatorToken,
+    scopes: approvedScopes.length ? approvedScopes : ['operator.admin', 'operator.read', 'operator.approvals', 'operator.pairing']
+  };
+}
+
 function buildControlUiConnectParams(nonce) {
   const authState = loadGatewayDeviceIdentityAuth();
-  if (!authState || !nonce) return null;
-  const scopes = ['operator.admin', 'operator.read', 'operator.approvals', 'operator.pairing'];
+  const operatorTokenState = loadGatewayOperatorTokenAuth();
+  if (!nonce) return null;
+  const scopes = operatorTokenState?.scopes || ['operator.admin', 'operator.read', 'operator.approvals', 'operator.pairing'];
+
+  if (!authState) {
+    if (!operatorTokenState?.authToken) return null;
+    return {
+      minProtocol: 3,
+      maxProtocol: 3,
+      client: {
+        id: CONTROL_UI_BACKEND_CLIENT_ID,
+        displayName: CONTROL_UI_BACKEND_DISPLAY_NAME,
+        version: '2026.3.12',
+        platform: process.platform,
+        mode: 'webchat'
+      },
+      caps: [],
+      role: 'operator',
+      scopes,
+      auth: { token: operatorTokenState.authToken }
+    };
+  }
+
   const signedAtMs = Date.now();
   const payload = buildDeviceAuthPayloadV3({
     deviceId: authState.identity.deviceId,
-    clientId: 'openclaw-control-ui',
+    clientId: CONTROL_UI_BACKEND_CLIENT_ID,
     clientMode: 'webchat',
     role: 'operator',
     scopes,
@@ -4139,8 +4308,8 @@ function buildControlUiConnectParams(nonce) {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: 'openclaw-control-ui',
-      displayName: 'OpenClaw Web Panel',
+      id: CONTROL_UI_BACKEND_CLIENT_ID,
+      displayName: CONTROL_UI_BACKEND_DISPLAY_NAME,
       version: '2026.3.12',
       platform: process.platform,
       mode: 'webchat'
@@ -4382,16 +4551,38 @@ app.get('/api/node/setup-command', (req, res) => {
     // Linux/macOS: auto-configure node host exec security via openclaw.json before launch
     const initCmd = `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'NODEEOF'\n{"tools":{"exec":{"security":"${execSecurity}"}}}\nNODEEOF`;
     const runCmd = `NODE_TLS_REJECT_UNAUTHORIZED=0 OPENCLAW_GATEWAY_TOKEN=${shellSingleQuote(token)} openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
+    const bashLoop = [
+      'max_session="${OPENCLAW_NODE_MAX_SESSION_SEC:-900}"',
+      'while true; do',
+      `  ${runCmd} &`,
+      '  child=$!',
+      '  started_at=$(date +%s)',
+      '  while kill -0 "$child" 2>/dev/null; do',
+      '    now=$(date +%s)',
+      '    if [[ "$max_session" =~ ^[0-9]+$ ]] && [ "$max_session" -gt 0 ] && [ $((now - started_at)) -ge "$max_session" ]; then',
+      '      echo "[openclaw-node] session reached ${max_session}s, recycling..."',
+      '      kill -TERM "$child" 2>/dev/null || true',
+      '      sleep 2',
+      '      kill -KILL "$child" 2>/dev/null || true',
+      '      break',
+      '    fi',
+      '    sleep 5',
+      '  done',
+      '  wait "$child" 2>/dev/null || true',
+      '  echo "[openclaw-node] exited, reconnecting in 5s..."',
+      '  sleep 5',
+      'done'
+    ].join('\n');
     const command = `${initCmd}\n${runCmd}`;
 
-    // Background variant: nohup + auto-reconnect loop
-    const bgCmd = `${initCmd}\nnohup bash -c 'while true; do ${runCmd}; echo "[openclaw-node] exited, reconnecting in 5s..."; sleep 5; done' > ~/.openclaw/node-host.log 2>&1 &\necho "✅ Node 已在后台启动，日志: ~/.openclaw/node-host.log"`;
+    // Background variant: nohup + auto-reconnect loop + periodic recycle for stuck sessions
+    const bgCmd = `${initCmd}\nnohup bash -c ${shellSingleQuote(bashLoop)} > ~/.openclaw/node-host.log 2>&1 &\necho "✅ Node 已在后台启动，日志: ~/.openclaw/node-host.log；可用 OPENCLAW_NODE_MAX_SESSION_SEC 调整自恢复周期"`;
 
     // Windows PowerShell: equivalent command
     const commandWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\n$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; $env:OPENCLAW_GATEWAY_TOKEN='${token}'; openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
 
     // Windows background variant
-    const bgCmdWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\nStart-Process powershell -ArgumentList '-NoExit','-Command',"while (\\$true) { \\$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; \\$env:OPENCLAW_GATEWAY_TOKEN='${token}'; openclaw node run --host ${host} --port ${gatewayTlsPort} --tls; Start-Sleep 5 }" -WindowStyle Hidden\nWrite-Host '✅ Node 已在后台启动'`;
+    const bgCmdWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\nStart-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command',"if (\\$env:OPENCLAW_NODE_MAX_SESSION_SEC) { \\$maxSession = [int]\\$env:OPENCLAW_NODE_MAX_SESSION_SEC } else { \\$maxSession = 900 }; while (\\$true) { \\$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; \\$env:OPENCLAW_GATEWAY_TOKEN='${token}'; \\$proc = Start-Process openclaw -ArgumentList 'node','run','--host','${host}','--port','${gatewayTlsPort}','--tls' -PassThru -WindowStyle Hidden; \\$startedAt = Get-Date; while (-not \\$proc.HasExited) { if (\\$maxSession -gt 0 -and ((Get-Date) - \\$startedAt).TotalSeconds -ge \\$maxSession) { Stop-Process -Id \\$proc.Id -Force -ErrorAction SilentlyContinue; break }; Start-Sleep 5; \\$proc.Refresh() } Start-Sleep 5 }"\nWrite-Host '✅ Node 已在后台启动；可用 OPENCLAW_NODE_MAX_SESSION_SEC 调整自恢复周期'`;
 
     res.json({ success: true, command, commandWindows, bgCmd, bgCmdWindows, hasToken: true, host, port: gatewayTlsPort });
   } catch (e) {
@@ -4406,7 +4597,7 @@ app.get('/api/node/security', (req, res) => {
     const autoApprove = cfg?.gateway?.controlUi?.dangerouslyDisableDeviceAuth === true;
     const browserMode = cfg?.gateway?.nodes?.browser?.mode || 'auto';
     const denyCommands = cfg?.gateway?.nodes?.denyCommands || [];
-    const execSecurity = cfg?.tools?.exec?.security || 'allowlist';
+    const execSecurity = cfg?.tools?.exec?.security || 'full';
     res.json({ success: true, autoApprove, browserMode, denyCommands, execSecurity });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
@@ -4723,9 +4914,10 @@ function saveNodeStatusSnapshot() {
   }
 }
 
-async function refreshNodeStatusSnapshot() {
+async function refreshNodeStatusSnapshot(options = {}) {
   if (nodeStatusPollInFlight) return nodeStatusPollInFlight;
   nodeStatusPollInFlight = (async () => {
+    const forceIpRefresh = options?.forceIpRefresh === true;
     const now = Date.now();
     try {
       const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
@@ -4761,13 +4953,12 @@ async function refreshNodeStatusSnapshot() {
         const offlineAtMs = connected
           ? Number(prev.offlineAtMs || 0)
           : (prev.connected ? now : Number(prev.offlineAtMs || 0));
-        let ipAddress = '';
+        let ipAddress = String(prev.ipAddress || '').trim();
         if (connected) {
-          const shouldRefreshIp = !prev.connected || !String(prev.ipAddress || '').trim();
+          const shouldRefreshIp = forceIpRefresh || !prev.connected || !String(prev.ipAddress || '').trim();
           if (shouldRefreshIp && gwNode?.nodeId) {
-            ipAddress = await fetchNodeIpv4Address(gwNode.nodeId, gwNode?.platform || entry.platform || '');
-          } else {
-            ipAddress = String(prev.ipAddress || '').trim();
+            const refreshedIp = await fetchNodeIpv4Address(gwNode.nodeId, gwNode?.platform || entry.platform || '');
+            ipAddress = String(refreshedIp || prev.ipAddress || '').trim();
           }
         }
         nextNodes[entry.deviceId] = {
@@ -4811,11 +5002,16 @@ setInterval(() => { void refreshNodeStatusSnapshot(); }, NODE_STATUS_POLL_INTERV
 // GET /api/node/connected — 获取当前已连接的远端设备列表
 app.get('/api/node/connected', async (req, res) => {
   try {
+    const accessPatch = ensureGatewayControlUiAccessForRequest(req);
+    if (accessPatch?.changed) {
+      console.log(`[node] controlUi access patched for host=${accessPatch.host || 'unknown'}`);
+    }
     const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
     const nodeEntries = Object.values(paired).filter(e => e.clientMode === 'node');
     const snapshotAgeMs = Date.now() - Number(nodeStatusSnapshot.checkedAt || 0);
-    if (!nodeStatusSnapshot.lastSuccessAt || snapshotAgeMs > NODE_STATUS_MAX_STALE_MS) {
-      await refreshNodeStatusSnapshot();
+    const forceRefresh = String(req.query.force || '') === '1' || accessPatch?.changed === true;
+    if (forceRefresh || !nodeStatusSnapshot.lastSuccessAt || snapshotAgeMs > NODE_STATUS_MAX_STALE_MS) {
+      await refreshNodeStatusSnapshot({ forceIpRefresh: forceRefresh });
     }
 
     const nodes = nodeEntries.map(entry => {
@@ -8972,6 +9168,10 @@ function sanitizeLogLine(line) {
   }
   // 过滤掉高频 ws 消息日志（device.pair.list, node.list, chat.history, config.get 等）
   if (/\[ws\]\s+⇄\s+res\s+✓\s+(device\.pair\.list|node\.list|chat\.history|device\.list|config\.get)\b/.test(line)) {
+    return null;
+  }
+  // 过滤掉高频成功 RPC 响应（节点探测 / skills 扫描会持续刷屏）
+  if (/\[ws\]\s+⇄\s+res\s+✓\s+(skills\.bins|node\.invoke)\b/.test(line)) {
     return null;
   }
   // 过滤掉重复的 Discord 重连/TLS 错误日志（网络问题时极其频繁）

@@ -3425,7 +3425,7 @@ qa('[data-save-msg]').forEach(btn => {
 // ------------------------
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
-async function loadDeviceManagement() {
+async function loadDeviceManagement(forceConnectedRefresh = false) {
   if (window.__deviceMgmtRefreshing) return;
   window.__deviceMgmtRefreshing = true;
   try {
@@ -3434,13 +3434,14 @@ async function loadDeviceManagement() {
     api('/api/node/setup-command'),
     api('/api/openclaw/pairing/list'),
     api('/api/node/security'),
-    api('/api/node/connected')
+    api(`/api/node/connected${forceConnectedRefresh ? '?force=1' : ''}`)
   ]);
 
   // 快速连接命令
   const cmdEl = $('device-setup-command');
   const cmdWinEl = $('device-setup-command-win');
   const cmdBgEl = $('device-setup-command-bg');
+  const cmdWinBgEl = $('device-setup-command-win-bg');
   if (cmdEl) {
     if (cmdRes.success && cmdRes.hasToken) {
       cmdEl.textContent = cmdRes.command;
@@ -3462,6 +3463,13 @@ async function loadDeviceManagement() {
       cmdBgEl.textContent = '# 后台命令加载失败';
     }
   }
+  if (cmdWinBgEl) {
+    if (cmdRes.success && cmdRes.hasToken && cmdRes.bgCmdWindows) {
+      cmdWinBgEl.textContent = cmdRes.bgCmdWindows;
+    } else {
+      cmdWinBgEl.textContent = '# Windows 后台命令加载失败';
+    }
+  }
 
   // 在线节点列表
   renderConnectedNodes(connRes);
@@ -3476,7 +3484,7 @@ async function loadDeviceManagement() {
   if (secRes.success) {
     if ($('device-auto-approve')) $('device-auto-approve').value = String(!!secRes.autoApprove);
     if ($('device-browser-mode')) $('device-browser-mode').value = secRes.browserMode || 'auto';
-    if ($('device-exec-security')) $('device-exec-security').value = secRes.execSecurity || 'allowlist';
+    if ($('device-exec-security')) $('device-exec-security').value = secRes.execSecurity || 'full';
     if ($('device-deny-commands')) $('device-deny-commands').value = (secRes.denyCommands || []).join('\n');
     toggleAutoApproveWarning();
   }
@@ -3498,6 +3506,28 @@ function friendlyPlatform(p) {
   return m[(p || '').toLowerCase()] || p || '';
 }
 
+function setDeviceCommandTab(mode) {
+  const panes = {
+    linux: $('device-setup-command'),
+    'linux-bg': $('device-setup-command-bg'),
+    win: $('device-setup-command-win'),
+    'win-bg': $('device-setup-command-win-bg')
+  };
+  const tabs = {
+    linux: $('tab-cmd-linux'),
+    'linux-bg': $('tab-cmd-bg'),
+    win: $('tab-cmd-win'),
+    'win-bg': $('tab-cmd-win-bg')
+  };
+  Object.values(panes).forEach((pane) => {
+    if (pane) pane.style.display = 'none';
+  });
+  Object.entries(tabs).forEach(([key, tab]) => {
+    if (tab) tab.style.fontWeight = key === mode ? '700' : '400';
+  });
+  if (panes[mode]) panes[mode].style.display = '';
+}
+
 function renderConnectedNodes(r) {
   const listEl = $('connected-nodes-list');
   if (!listEl) return;
@@ -3510,13 +3540,12 @@ function renderConnectedNodes(r) {
     listEl.innerHTML = '<div class="muted small" style="color:#8b949e">暂无已配对的 Node 节点</div>';
     return;
   }
-  const showIpColumn = nodes.some(n => !!String(n.ipAddress || '').trim());
   listEl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
     '<tr style="border-bottom:1px solid #30363d;color:#8b949e;font-size:12px">' +
     '<th style="text-align:left;padding:6px 8px">状态</th>' +
     '<th style="text-align:left;padding:6px 8px">名称</th>' +
     '<th style="text-align:left;padding:6px 8px">平台</th>' +
-    (showIpColumn ? '<th style="text-align:left;padding:6px 8px">IP</th>' : '') +
+    '<th style="text-align:left;padding:6px 8px">IP</th>' +
     '<th style="text-align:left;padding:6px 8px">时间</th>' +
     '</tr>' +
     nodes.map(n => {
@@ -3532,7 +3561,7 @@ function renderConnectedNodes(r) {
         `<td style="padding:6px 8px">${statusDot} <span class="muted small">${statusText}</span></td>` +
         `<td style="padding:6px 8px;font-weight:600">${esc(n.displayName || '')}</td>` +
         `<td style="padding:6px 8px"><span class="muted small">${esc(friendlyPlatform(n.platform))}</span></td>` +
-        (showIpColumn ? `<td style="padding:6px 8px"><span class="muted small">${esc(ipText || '-')}</span></td>` : '') +
+        `<td style="padding:6px 8px"><span class="muted small">${esc(ipText || '-')}</span></td>` +
         `<td style="padding:6px 8px"><span class="muted small">${connTime}</span></td>` +
         '</tr>';
     }).join('') +
@@ -3669,10 +3698,15 @@ $('btn-copy-setup-cmd')?.addEventListener('click', () => {
   const linuxEl = $('device-setup-command');
   const winEl = $('device-setup-command-win');
   const bgEl = $('device-setup-command-bg');
+  const winBgEl = $('device-setup-command-win-bg');
   const isWinVisible = winEl && winEl.style.display !== 'none';
   const isBgVisible = bgEl && bgEl.style.display !== 'none';
+  const isWinBgVisible = winBgEl && winBgEl.style.display !== 'none';
   let text = '', label = '';
-  if (isBgVisible) {
+  if (isWinBgVisible) {
+    text = winBgEl?.textContent || '';
+    label = 'Windows 后台运行';
+  } else if (isBgVisible) {
     text = bgEl?.textContent || '';
     label = '后台运行';
   } else if (isWinVisible) {
@@ -3689,15 +3723,15 @@ $('btn-copy-setup-cmd')?.addEventListener('click', () => {
 });
 
 // 刷新
-$('btn-device-refresh')?.addEventListener('click', () => loadDeviceManagement());
-$('btn-pairing-refresh')?.addEventListener('click', () => loadDeviceManagement());
-$('btn-connected-refresh')?.addEventListener('click', () => loadDeviceManagement());
+$('btn-device-refresh')?.addEventListener('click', () => loadDeviceManagement(true));
+$('btn-pairing-refresh')?.addEventListener('click', () => loadDeviceManagement(true));
+$('btn-connected-refresh')?.addEventListener('click', () => loadDeviceManagement(true));
 
 // 保存安全配置
 $('btn-device-save-security')?.addEventListener('click', async () => {
   const autoApprove = ($('device-auto-approve')?.value || 'false') === 'true';
   const browserMode = $('device-browser-mode')?.value || 'auto';
-  const execSecurity = $('device-exec-security')?.value || 'allowlist';
+  const execSecurity = $('device-exec-security')?.value || 'full';
   const denyCommands = ($('device-deny-commands')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
 
   const r = await api('/api/node/security', { method: 'POST', body: { autoApprove, browserMode, execSecurity, denyCommands } });
