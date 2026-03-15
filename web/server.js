@@ -291,6 +291,7 @@ const PORT = 3000;
 const CONFIG_PATH = '/root/.openclaw/openclaw.json';
 const WEB_AI_CONFIG_PATH = '/root/.openclaw/web-ai-config.json';
 const DOCKER_CONFIG_PATH = '/root/.openclaw/docker-config.json';
+const OPENCLAW_INSTALL_INSTANCE_ID_PATH = '/root/.openclaw/install-instance-id';
 const STT_CONFIG_PATH = '/root/.openclaw/stt-config.json';
 const OPENCLAW_SOURCE_INSTALL_META_PATH = '/root/.openclaw/openclaw-source-install.json';
 const OPENCLAW_SOURCE_REPO_DEFAULT = 'openclaw/openclaw';
@@ -1787,6 +1788,27 @@ function readDockerConfig() {
   if (typeof cfg.browserEnabled !== 'boolean') cfg.browserEnabled = false;
   return cfg;
 }
+
+function getOpenClawInstallInstanceId() {
+  try {
+    if (fs.existsSync(OPENCLAW_INSTALL_INSTANCE_ID_PATH)) {
+      const existing = String(fs.readFileSync(OPENCLAW_INSTALL_INSTANCE_ID_PATH, 'utf8') || '').trim();
+      if (existing) return existing;
+    }
+  } catch {}
+
+  try {
+    fs.mkdirSync(path.dirname(OPENCLAW_INSTALL_INSTANCE_ID_PATH), { recursive: true });
+    const nextId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : crypto.randomBytes(16).toString('hex');
+    fs.writeFileSync(OPENCLAW_INSTALL_INSTANCE_ID_PATH, `${nextId}\n`, { mode: 0o600 });
+    return nextId;
+  } catch {
+    return '';
+  }
+}
+
 function writeDockerConfig(cfg) {
   if (typeof cfg.browserEnabled !== 'boolean') cfg.browserEnabled = false;
   writeJson(DOCKER_CONFIG_PATH, cfg);
@@ -3698,6 +3720,7 @@ app.get('/api/status', async (req, res) => {
   const ocSnapshot = getOpenClawInstallationSnapshot();
   status.openclawInstalled = !!ocSnapshot?.installed;
   status.openclawVersion = String(ocSnapshot?.version || '').trim();
+  status.installInstanceId = getOpenClawInstallInstanceId();
 
   const gatewayLogTail = readGatewayLogTail(220);
   const gatewayRuntimeInfoPromise = getGatewayRuntimeProcessInfo();

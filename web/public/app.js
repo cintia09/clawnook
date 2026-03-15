@@ -556,6 +556,8 @@ async function refreshStatus(){
       return;
     }
 
+  reconcileOcLogCacheForInstance(s.installInstanceId);
+
   const openclawMissing = s.openclawInstalled === false;
   const gatewayPending = !openclawMissing && !s.gateway && (s.gatewayStarting || s.gatewayProcessRunning);
   const gatewayPairing = !openclawMissing && !s.gateway && !!s.gatewayPairingRequired;
@@ -1101,7 +1103,10 @@ function syncOpenClawButtons(){
 // Operation Log (oc-log) localStorage cache
 // ------------------------
 const OC_LOG_CACHE_KEY = 'oc_log_cache_v1';
+const OC_LOG_CACHE_INSTANCE_KEY = 'oc_log_cache_instance_v1';
 const OC_LOG_CACHE_MAX = 128 * 1024; // 128KB
+let ocLogCacheBootstrapped = false;
+let ocLogCacheInstanceId = '';
 
 function saveOcLogCache(){
   try {
@@ -1112,6 +1117,9 @@ function saveOcLogCache(){
       html = html.slice(-OC_LOG_CACHE_MAX);
     }
     localStorage.setItem(OC_LOG_CACHE_KEY, html);
+    if (ocLogCacheInstanceId) {
+      localStorage.setItem(OC_LOG_CACHE_INSTANCE_KEY, ocLogCacheInstanceId);
+    }
   } catch {}
 }
 
@@ -1126,7 +1134,41 @@ function loadOcLogCache(){
 }
 
 function clearOcLogCache(){
-  try { localStorage.removeItem(OC_LOG_CACHE_KEY); } catch {}
+  try {
+    localStorage.removeItem(OC_LOG_CACHE_KEY);
+    localStorage.removeItem(OC_LOG_CACHE_INSTANCE_KEY);
+  } catch {}
+}
+
+function reconcileOcLogCacheForInstance(instanceId){
+  const normalizedInstanceId = String(instanceId || '').trim();
+  if (!normalizedInstanceId) return;
+  if (ocLogCacheBootstrapped && ocLogCacheInstanceId === normalizedInstanceId) return;
+
+  const logEl = $('oc-log');
+  const storedInstanceId = (() => {
+    try {
+      return String(localStorage.getItem(OC_LOG_CACHE_INSTANCE_KEY) || '').trim();
+    } catch {
+      return '';
+    }
+  })();
+
+  ocLogCacheInstanceId = normalizedInstanceId;
+  if (!storedInstanceId || storedInstanceId !== normalizedInstanceId) {
+    clearOcLogCache();
+    if (logEl) logEl.innerHTML = '';
+    try {
+      localStorage.setItem(OC_LOG_CACHE_INSTANCE_KEY, normalizedInstanceId);
+    } catch {}
+    ocLogCacheBootstrapped = true;
+    return;
+  }
+
+  if (!ocLogCacheBootstrapped) {
+    loadOcLogCache();
+  }
+  ocLogCacheBootstrapped = true;
 }
 
 function shouldAutoScroll(el, threshold = 24){
@@ -4874,7 +4916,6 @@ $('btn-term-clear').addEventListener('click', ()=>{
   saveTerminalCache();
 });
 loadTerminalCache();
-loadOcLogCache();
 // 页面加载时检测 localStorage 中残留的"等待重启"日志，若 Gateway 已恢复则补偿完成消息
 (function reconcileStaleRestartLog() {
   const logEl = $('oc-log');
