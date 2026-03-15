@@ -700,11 +700,22 @@ function Remove-ResumeTask {
 
 # --- Phase 2: Install WSL2 ----------------------------------------------------
 function Install-Wsl2 {
-    Write-Info "正在安装 WSL2 和 $UBUNTU_DISTRO..."
-    Write-Info "首次安装约需 3-5 分钟（需要下载 Ubuntu 镜像）"
-    Write-Host ""
+    $hadWslBeforeInstall = Test-Wsl2Installed
+    $hadUbuntuBeforeInstall = Test-UbuntuInstalled
+    $installingDistroOnly = ($hadWslBeforeInstall -and -not $hadUbuntuBeforeInstall)
 
-    $steps = @("启用 WSL 功能", "下载 $UBUNTU_DISTRO 镜像", "安装并配置")
+    if ($installingDistroOnly) {
+        Write-Info "正在安装 $UBUNTU_DISTRO..."
+        Write-Info "首次安装约需 3-5 分钟（需要下载 Ubuntu 镜像）"
+        Write-Host ""
+        $steps = @("检查 WSL 运行环境", "下载 $UBUNTU_DISTRO 镜像", "安装并配置")
+    } else {
+        Write-Info "正在安装 WSL2 和 $UBUNTU_DISTRO..."
+        Write-Info "首次安装约需 3-5 分钟（需要下载 Ubuntu 镜像）"
+        Write-Host ""
+        $steps = @("启用 WSL 功能", "下载 $UBUNTU_DISTRO 镜像", "安装并配置")
+    }
+
     Show-StepProgress -Steps $steps -CurrentStep 0
     Write-Host ""
 
@@ -764,6 +775,7 @@ function Install-Wsl2 {
         $combinedOutput = "$output $errOutput"
         Write-Log "wsl --install output: $combinedOutput"
         Write-Log "wsl --install exit code: $exitCode"
+        Write-Log "Pre-install state: wslInstalled=$hadWslBeforeInstall, ubuntuPresent=$hadUbuntuBeforeInstall, installingDistroOnly=$installingDistroOnly"
 
         $wslInstalledAfterInstall = $false
         $ubuntuPresentAfterInstall = $false
@@ -790,9 +802,14 @@ function Install-Wsl2 {
         Write-Log "Post-install state: wslInstalled=$wslInstalledAfterInstall, ubuntuPresent=$ubuntuPresentAfterInstall"
         Write-Log "Post-install reboot pending: $rebootPendingAfterInstall"
 
+        if ($installingDistroOnly) {
+            $rebootPendingAfterInstall = $false
+            Write-Log "Ignoring reboot-pending signal because only Ubuntu distro install was requested"
+        }
+
         # Show completed steps
-        Write-Host "     ✅ 启用 WSL 功能" -ForegroundColor Green
-        Write-Host "     ✅ 下载 $UBUNTU_DISTRO 镜像" -ForegroundColor Green
+        Write-Host "     ✅ $($steps[0])" -ForegroundColor Green
+        Write-Host "     ✅ $($steps[1])" -ForegroundColor Green
 
         if ($exitCode -eq 0) {
             if (-not $wslInstalledAfterInstall -or -not $ubuntuPresentAfterInstall) {
@@ -845,6 +862,11 @@ function Install-Wsl2 {
                 Write-Host "     ⚠️  安装并配置 — 需要重启" -ForegroundColor Yellow
                 Write-Host ""
                 return "reboot"
+            }
+            if ($installingDistroOnly) {
+                Write-Warn "Ubuntu 发行版安装尚未完成，但当前无需重启"
+                Write-Info "输出: $combinedOutput"
+                return "pending"
             }
             Write-Warn "WSL 安装返回代码 $exitCode，但未检测到待重启状态；请稍后重新运行"
             Write-Host "     ⏳ 安装并配置 — 后台处理中" -ForegroundColor Yellow
@@ -2538,8 +2560,13 @@ function Main {
             Write-Info "提示: Docker Desktop 已包含 WSL2 后端，无需单独安装"
         }
     } elseif (-not $wslInstalled -or -not $ubuntuPresent) {
-        Write-Step 2 5 "安装 WSL2 + Ubuntu..."
-        Write-Info "预计时间: 3-5 分钟（需要下载 Ubuntu 镜像，取决于网速）"
+        if (-not $wslInstalled) {
+            Write-Step 2 5 "安装 WSL2 + Ubuntu..."
+            Write-Info "预计时间: 3-5 分钟（需要下载 Ubuntu 镜像，取决于网速）"
+        } else {
+            Write-Step 2 5 "安装 Ubuntu 发行版..."
+            Write-Info "预计时间: 3-5 分钟（需要下载 Ubuntu 镜像，取决于网速）"
+        }
 
         $result = Install-Wsl2
 
