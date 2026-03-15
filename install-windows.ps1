@@ -25,7 +25,7 @@ param(
 )
 
 # --- Constants ----------------------------------------------------------------
-$SCRIPT_VERSION  = "1.0.16"
+$SCRIPT_VERSION  = "1.0.17"
 $TASK_NAME       = "OpenClawSetup"
 $UBUNTU_DISTRO   = "Ubuntu-24.04"
 $OPENCLAW_PORT   = "18789"
@@ -1454,10 +1454,11 @@ exec bash "`$TMP_SCRIPT"
 "@
 
     $tmpDeploy = Join-Path $env:TEMP "openclaw-wsl-imageonly.sh"
-    $bootstrapScript | Set-Content $tmpDeploy -Encoding UTF8 -Force
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($tmpDeploy, $bootstrapScript, $utf8NoBom)
 
-    # Copy to WSL
-    Get-Content $tmpDeploy -Raw | & wsl -d $DistroName --exec bash -c "cat > /tmp/openclaw-wsl-imageonly.sh && chmod +x /tmp/openclaw-wsl-imageonly.sh"
+    # Copy to WSL and normalize CRLF line endings to avoid ^M path issues.
+    Get-Content $tmpDeploy -Raw | & wsl -d $DistroName --exec bash -c "cat > /tmp/openclaw-wsl-imageonly.sh && sed -i 's/\r$//' /tmp/openclaw-wsl-imageonly.sh && chmod +x /tmp/openclaw-wsl-imageonly.sh"
 
     # Open a new terminal window for interactive install
     try {
