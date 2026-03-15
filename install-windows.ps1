@@ -25,7 +25,7 @@ param(
 )
 
 # --- Constants ----------------------------------------------------------------
-$SCRIPT_VERSION  = "1.0.11"
+$SCRIPT_VERSION  = "1.0.12"
 $TASK_NAME       = "OpenClawSetup"
 $UBUNTU_DISTRO   = "Ubuntu-24.04"
 $OPENCLAW_PORT   = "18789"
@@ -830,13 +830,85 @@ function Install-UbuntuOfflinePackage {
     }
 
     if (Test-UbuntuPackageInstalled) {
-        Write-Info "离线包已安装，正在再次触发 Ubuntu 注册..."
+        Write-Info "离线包已安装，正在通过 Ubuntu 启动器注册发行版..."
+
+        # Find the Ubuntu launcher executable from the installed Appx package
+        $ubuntuExe = $null
+        $exeNames = @("ubuntu2404.exe", "ubuntu.exe")
         try {
-            $registerOutput = & wsl --install -d $DistroName --no-launch 2>&1 | Out-String
-            Write-Log "Post-Appx wsl registration output: $registerOutput"
-            Write-Log "Post-Appx wsl registration exit code: $LASTEXITCODE"
+            $pkg = Get-AppxPackage -Name "CanonicalGroupLimited.Ubuntu24.04LTS" -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($pkg -and $pkg.InstallLocation) {
+                foreach ($exe in $exeNames) {
+                    $candidate = Join-Path $pkg.InstallLocation $exe
+                    if (Test-Path $candidate) {
+                        $ubuntuExe = $candidate
+                        break
+                    }
+                }
+            }
         } catch {
-            Write-Log "Post-Appx wsl registration failed: $_" "WARN"
+            Write-Log "Failed to locate Ubuntu launcher from Appx: $_" "WARN"
+        }
+
+        # Fallback: search PATH and WindowsApps
+        if (-not $ubuntuExe) {
+            foreach ($exe in $exeNames) {
+                $found = Get-Command $exe -ErrorAction SilentlyContinue
+                if ($found) {
+                    $ubuntuExe = $found.Source
+                    break
+                }
+            }
+        }
+        if (-not $ubuntuExe) {
+            $appsDir = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps"
+            foreach ($exe in $exeNames) {
+                $candidate = Join-Path $appsDir $exe
+                if (Test-Path $candidate) {
+                    $ubuntuExe = $candidate
+                    break
+                }
+            }
+        }
+
+        if ($ubuntuExe) {
+            Write-Log "Found Ubuntu launcher: $ubuntuExe"
+            Write-Info "正在通过 $([System.IO.Path]::GetFileName($ubuntuExe)) install --root 注册发行版..."
+            try {
+                $systemEncoding = Get-SystemOemEncoding
+                $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+                $pinfo.FileName = $ubuntuExe
+                $pinfo.Arguments = "install --root"
+                $pinfo.RedirectStandardOutput = $true
+                $pinfo.RedirectStandardError = $true
+                $pinfo.UseShellExecute = $false
+                $pinfo.CreateNoWindow = $true
+                $pinfo.StandardOutputEncoding = $systemEncoding
+                $pinfo.StandardErrorEncoding = $systemEncoding
+
+                $proc = [System.Diagnostics.Process]::Start($pinfo)
+                if (-not $proc.WaitForExit(120000)) {
+                    try { $proc.Kill() } catch { }
+                    Write-Log "Ubuntu launcher timed out after 120s" "WARN"
+                } else {
+                    $launcherOut = ($proc.StandardOutput.ReadToEnd() + " " + $proc.StandardError.ReadToEnd()).Trim()
+                    Write-Log "Ubuntu launcher exit code: $($proc.ExitCode)"
+                    Write-Log "Ubuntu launcher output: $launcherOut"
+                }
+                $proc.Dispose()
+            } catch {
+                Write-Log "Ubuntu launcher failed: $_" "WARN"
+            }
+        } else {
+            Write-Log "Ubuntu launcher executable not found, falling back to wsl --install" "WARN"
+            try {
+                $registerOutput = & wsl --install -d $DistroName --no-launch 2>&1 | Out-String
+                Write-Log "Post-Appx wsl registration output: $registerOutput"
+                Write-Log "Post-Appx wsl registration exit code: $LASTEXITCODE"
+            } catch {
+                Write-Log "Post-Appx wsl registration failed: $_" "WARN"
+            }
         }
 
         for ($attempt = 0; $attempt -lt 6; $attempt++) {
