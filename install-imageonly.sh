@@ -1324,6 +1324,13 @@ prompt_deploy_config(){
 
   [ -z "$BROWSER_BRIDGE_ENABLED" ] && BROWSER_BRIDGE_ENABLED="false"
 
+  if [ "$CERT_MODE" = "internal" ] && echo "$DOMAIN" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    info "当前将使用 IP 自签 HTTPS：$DOMAIN"
+  else
+    info "当前 HTTPS 域名：$DOMAIN"
+    info "证书模式：$CERT_MODE"
+  fi
+
   info "最终端口映射（宿主机 → 容器）："
   info "  Gateway TLS : ${GW_TLS_PORT} → 18790"
   info "  HTTPS       : ${HTTPS_PORT} → 443"
