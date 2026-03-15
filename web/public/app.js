@@ -2246,6 +2246,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     let gwUp = false;
     let consecutiveErrors = 0;
     const maxConsecutiveErrors = 20; // 40s of continuous failures → give up
+    const newProcessUptimeGraceSec = 30;
     appendOcLogLine('⏳ 等待 Gateway 启动完成（最多 10 分钟）...');
     await new Promise(r => setTimeout(r, initialDelay));
     while (Date.now() - pollStart < pollTimeout) {
@@ -2262,7 +2263,11 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
         }
         consecutiveErrors = 0;
         const stillRestarting = !!(st.gatewayStarting) || st.operationState?.type === 'restarting_gateway';
-        if (st.gatewayRunning && !stillRestarting) {
+        const gatewayProcessUptimeSec = Number(st.gatewayProcessUptimeSec || 0);
+        const healthyNewProcess = st.gatewayRunning
+          && gatewayProcessUptimeSec > 0
+          && gatewayProcessUptimeSec <= newProcessUptimeGraceSec;
+        if (st.gatewayRunning && (!stillRestarting || healthyNewProcess)) {
           gwUp = true;
           break;
         }
