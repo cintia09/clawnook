@@ -567,15 +567,32 @@ function Get-RegisteredWslDistros {
     return @($distros | Sort-Object -Unique)
 }
 
-function Test-Wsl2Installed {
-    $wslFeatureEnabled = Test-WindowsFeatureEnabled -FeatureName "Microsoft-Windows-Subsystem-Linux"
-    $vmPlatformEnabled = Test-WindowsFeatureEnabled -FeatureName "VirtualMachinePlatform"
-
-    if (-not $wslFeatureEnabled -or -not $vmPlatformEnabled) {
+function Test-WslCommandOperational {
+    if (-not (Test-WslCoreInstalled)) {
         return $false
     }
 
-    return (Test-WslCoreInstalled)
+    try {
+        $null = & wsl --version 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+function Test-Wsl2Installed {
+    $vmPlatformEnabled = Test-WindowsFeatureEnabled -FeatureName "VirtualMachinePlatform"
+    $wslCoreInstalled = Test-WslCoreInstalled
+
+    if (-not $wslCoreInstalled) {
+        return $false
+    }
+
+    if ($vmPlatformEnabled) {
+        return $true
+    }
+
+    return (Test-WslCommandOperational)
 }
 
 function Test-UbuntuInstalled {
