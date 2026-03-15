@@ -663,7 +663,7 @@ download_tarball_chunked(){
   fi
 
   if [ -f "$chunk_meta" ]; then
-    local meta_sig meta_size
+    local meta_sig="" meta_size=""
     meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$chunk_meta" 2>/dev/null || true)"
     meta_size="$(awk -F= '/^size=/{print $2; exit}' "$chunk_meta" 2>/dev/null || true)"
     if [ "$meta_sig" != "$expected_sig" ] || [ "$meta_size" != "$total_bytes" ]; then
@@ -866,7 +866,7 @@ check_local_tarball(){
 
   # 检查版本签名（避免使用旧版本镜像）
   if [ -f "$target_meta" ]; then
-    local meta_sig
+    local meta_sig=""
     meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$target_meta" 2>/dev/null || true)"
     if [ -n "$meta_sig" ] && [ "$meta_sig" != "$expected_sig" ]; then
       warn "检测到旧版本本地镜像（$meta_sig），当前需要 ${TAG}，已清理"
