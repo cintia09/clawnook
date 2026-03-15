@@ -25,7 +25,7 @@ param(
 )
 
 # --- Constants ----------------------------------------------------------------
-$SCRIPT_VERSION  = "1.0.9"
+$SCRIPT_VERSION  = "1.0.10"
 $TASK_NAME       = "OpenClawSetup"
 $UBUNTU_DISTRO   = "Ubuntu-24.04"
 $OPENCLAW_PORT   = "18789"
@@ -702,11 +702,11 @@ function Test-WslCommandOperational {
 }
 
 function Test-Wsl2Installed {
-    $vmPlatformEnabled = Test-WindowsFeatureEnabled -FeatureName "VirtualMachinePlatform"
     $wslCoreInstalled = Test-WslCoreInstalled
     $registeredDistros = Get-RegisteredWslDistros
 
-    if ($wslCoreInstalled -and $vmPlatformEnabled) {
+    if ($wslCoreInstalled) {
+        Write-Log "WSL detected by core files"
         return $true
     }
 
