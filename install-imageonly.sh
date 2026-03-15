@@ -1030,8 +1030,7 @@ download_tarball(){
 load_image(){
   local f="$TMP_DIR/$IMAGE_TARBALL"
   local load_log="$TMP_DIR/.docker-load.log"
-  local load_pid start_ts elapsed spin_i rc
-  local spinner='|/-\\'
+  local load_pid start_ts elapsed next_report rc
   if ! check_local_tarball; then return 1; fi
 
   info "正在导入镜像（docker load）: $f"
@@ -1039,16 +1038,17 @@ load_image(){
   docker load < "$f" >"$load_log" 2>&1 &
   load_pid=$!
   start_ts="$(date +%s)"
-  spin_i=0
+  next_report=5
   while kill -0 "$load_pid" >/dev/null 2>&1; do
     elapsed=$(( $(date +%s) - start_ts ))
-    printf "\r[INFO] 正在导入镜像（docker load） %s 已耗时 %ss" "${spinner:$((spin_i%4)):1}" "$elapsed"
+    if [ "$elapsed" -ge "$next_report" ]; then
+      info "正在导入镜像（docker load），已耗时 ${elapsed}s"
+      next_report=$((next_report + 5))
+    fi
     sleep 1
-    spin_i=$((spin_i+1))
   done
   wait "$load_pid" || rc=$?
   rc="${rc:-0}"
-  printf "\r\033[K"
 
   if [ "$rc" -eq 0 ]; then
     cat "$load_log"
