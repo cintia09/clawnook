@@ -1055,6 +1055,7 @@ load_image(){
   if [ "$rc" -eq 0 ]; then
     cat "$load_log"
     tag_loaded_image_if_needed
+    cleanup_replaced_image_from_load_log "$load_log"
     success "镜像导入完成"
     rm -f "$load_log" || true
     return 0
@@ -1071,6 +1072,26 @@ load_image(){
 
   warn "本地镜像导入失败"
   return 1
+}
+
+cleanup_replaced_image_from_load_log(){
+  local load_log="$1"
+  local old_ids="" old_id
+  [ -f "$load_log" ] || return 0
+
+  old_ids="$(sed -n 's/.*renaming the old one with ID \([^ ]*\) to empty string.*/\1/p' "$load_log" | awk '!seen[$0]++')"
+  [ -n "$old_ids" ] || return 0
+
+  while IFS= read -r old_id; do
+    [ -n "$old_id" ] || continue
+    if docker image rm "$old_id" >/dev/null 2>&1; then
+      info "已清理被替换的旧镜像：$old_id"
+    else
+      warn "旧镜像仍被占用，跳过清理：$old_id"
+    fi
+  done <<EOF
+$old_ids
+EOF
 }
 
 pull_from_ghcr(){
