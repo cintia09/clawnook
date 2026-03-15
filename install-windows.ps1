@@ -273,6 +273,14 @@ function Write-InstallProgress {
     Write-Progress -Activity $Activity -Status $Status -PercentComplete $safePercent
 }
 
+function Get-SystemOemEncoding {
+    try {
+        return [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    } catch {
+        return [System.Text.Encoding]::UTF8
+    }
+}
+
 function New-StrongPassword {
     param([int]$Length = 20)
 
@@ -723,63 +731,94 @@ function Install-Wsl2 {
         # Avoid inline redraw here because Windows terminals may interleave other
         # console output and cause visible flicker or broken lines.
         $distro = $UBUNTU_DISTRO
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $lastPhase = ""
-        $lastHeartbeatSecond = -15
-
-        # Start wsl install as a background process
-        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-        $pinfo.FileName = "wsl.exe"
-        $pinfo.Arguments = "--install -d $distro --no-launch"
-        $pinfo.RedirectStandardOutput = $true
-        $pinfo.RedirectStandardError  = $true
-        $pinfo.UseShellExecute = $false
-        $pinfo.CreateNoWindow = $true
-
-        $proc = [System.Diagnostics.Process]::Start($pinfo)
-        Write-Info "正在后台执行 wsl --install，请稍候..."
-
-        while (-not $proc.HasExited) {
-            $elapsed = $sw.Elapsed.ToString("mm\:ss")
-            $elapsedSeconds = [int][math]::Floor($sw.Elapsed.TotalSeconds)
-
-            # Estimate phase based on elapsed time
-            if ($sw.Elapsed.TotalSeconds -lt 10) {
-                $phase = "启用 WSL 功能"
-            } elseif ($sw.Elapsed.TotalSeconds -lt 120) {
-                $phase = "下载 $distro 镜像"
-            } else {
-                $phase = "安装并配置"
-            }
-
-            if ($phase -ne $lastPhase) {
-                Write-Info "当前阶段: $phase"
-                $lastPhase = $phase
-            }
-
-            if (($elapsedSeconds - $lastHeartbeatSecond) -ge 15) {
-                Write-Info "WSL 安装进行中，已耗时 $elapsed"
-                $lastHeartbeatSecond = $elapsedSeconds
-            }
-            Start-Sleep -Seconds 1
+        $systemEncoding = Get-SystemOemEncoding
+        $installAttempts = @(
+            [PSCustomObject]@{ Label = "默认下载源"; Arguments = "--install -d $distro --no-launch" }
+        )
+        if ($installingDistroOnly) {
+            $installAttempts += [PSCustomObject]@{ Label = "WSL Web 下载"; Arguments = "--install -d $distro --web-download --no-launch" }
         }
 
-        $output = $proc.StandardOutput.ReadToEnd()
-        $errOutput = $proc.StandardError.ReadToEnd()
-        $exitCode = $proc.ExitCode
-        $proc.Dispose()
+        $combinedOutput = ""
+        $exitCode = -1
+        $elapsed = "00:00"
+        $lastAttemptLabel = ""
 
-        $sw.Stop()
-        $elapsed = $sw.Elapsed.ToString("mm\:ss")
+        for ($installAttemptIndex = 0; $installAttemptIndex -lt $installAttempts.Count; $installAttemptIndex++) {
+            $attempt = $installAttempts[$installAttemptIndex]
+            $lastAttemptLabel = $attempt.Label
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $lastPhase = ""
+            $lastHeartbeatSecond = -15
 
-        $combinedOutput = "$output $errOutput"
-        Write-Log "wsl --install output: $combinedOutput"
-        Write-Log "wsl --install exit code: $exitCode"
-        Write-Log "Pre-install state: wslInstalled=$hadWslBeforeInstall, ubuntuPresent=$hadUbuntuBeforeInstall, installingDistroOnly=$installingDistroOnly"
+            if ($installAttemptIndex -gt 0) {
+                Write-Warn "上一种下载方式未成功，正在尝试：$($attempt.Label)"
+            }
+
+            $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+            $pinfo.FileName = "wsl.exe"
+            $pinfo.Arguments = $attempt.Arguments
+            $pinfo.RedirectStandardOutput = $true
+            $pinfo.RedirectStandardError  = $true
+            $pinfo.UseShellExecute = $false
+            $pinfo.CreateNoWindow = $true
+            $pinfo.StandardOutputEncoding = $systemEncoding
+            $pinfo.StandardErrorEncoding = $systemEncoding
+
+            $proc = [System.Diagnostics.Process]::Start($pinfo)
+            Write-Info "正在后台执行 wsl $($attempt.Arguments)，请稍候..."
+
+            while (-not $proc.HasExited) {
+                $elapsed = $sw.Elapsed.ToString("mm\:ss")
+                $elapsedSeconds = [int][math]::Floor($sw.Elapsed.TotalSeconds)
+
+                if ($sw.Elapsed.TotalSeconds -lt 10) {
+                    $phase = $steps[0]
+                } elseif ($sw.Elapsed.TotalSeconds -lt 120) {
+                    $phase = $steps[1]
+                } else {
+                    $phase = $steps[2]
+                }
+
+                if ($phase -ne $lastPhase) {
+                    Write-Info "当前阶段: $phase"
+                    $lastPhase = $phase
+                }
+
+                if (($elapsedSeconds - $lastHeartbeatSecond) -ge 15) {
+                    Write-Info "WSL 安装进行中，已耗时 $elapsed"
+                    $lastHeartbeatSecond = $elapsedSeconds
+                }
+                Start-Sleep -Seconds 1
+            }
+
+            $output = $proc.StandardOutput.ReadToEnd()
+            $errOutput = $proc.StandardError.ReadToEnd()
+            $exitCode = $proc.ExitCode
+            $proc.Dispose()
+
+            $sw.Stop()
+            $elapsed = $sw.Elapsed.ToString("mm\:ss")
+            $combinedOutput = (($output + " " + $errOutput).Trim())
+
+            Write-Log "wsl --install attempt[$installAttemptIndex] label=$($attempt.Label) args=$($attempt.Arguments)"
+            Write-Log "wsl --install output: $combinedOutput"
+            Write-Log "wsl --install exit code: $exitCode"
+            Write-Log "Pre-install state: wslInstalled=$hadWslBeforeInstall, ubuntuPresent=$hadUbuntuBeforeInstall, installingDistroOnly=$installingDistroOnly"
+
+            $knownDistroDownloadFailure = ($installingDistroOnly -and ($combinedOutput -match "0x80072f78|0x80072ee7|0x80072efd|0x80190193|Wsl/InstallDistro"))
+            if ($knownDistroDownloadFailure -and $installAttemptIndex -lt ($installAttempts.Count - 1)) {
+                Write-Warn "Ubuntu 下载失败，准备切换下载方式重试"
+                continue
+            }
+
+            break
+        }
 
         $wslInstalledAfterInstall = $false
         $ubuntuPresentAfterInstall = $false
         $rebootPendingAfterInstall = $false
+        $knownDistroDownloadFailure = ($installingDistroOnly -and ($combinedOutput -match "0x80072f78|0x80072ee7|0x80072efd|0x80190193|Wsl/InstallDistro"))
 
         for ($attempt = 0; $attempt -lt 12; $attempt++) {
             if ($attempt -gt 0) {
@@ -835,6 +874,11 @@ function Install-Wsl2 {
                 Write-Host ""
                 return "ok"
             }
+            if ($knownDistroDownloadFailure) {
+                Write-Err "Ubuntu 发行版下载失败"
+                Write-Info "输出: $combinedOutput"
+                return "distro-download-error"
+            }
             if ($rebootPendingAfterInstall) {
                 Write-Host "     ⚠️  安装并配置 — 需要重启" -ForegroundColor Yellow
                 Write-Host ""
@@ -856,6 +900,11 @@ function Install-Wsl2 {
                 Write-Host "     ✅ 安装并配置 ($elapsed)" -ForegroundColor Green
                 Write-Host ""
                 return "ok"
+            }
+            if ($knownDistroDownloadFailure) {
+                Write-Err "Ubuntu 发行版下载失败"
+                Write-Info "输出: $combinedOutput"
+                return "distro-download-error"
             }
             if ($rebootPendingAfterInstall) {
                 Write-Warn "WSL 安装返回代码 $exitCode，系统检测到待重启状态"
@@ -2574,6 +2623,13 @@ function Main {
             Write-OK "WSL2 安装包已安装，需要重启以完成配置"
             Register-ResumeTask
             Show-RebootMessage
+            return
+        } elseif ($result -eq "distro-download-error") {
+            Show-Error `
+                "Ubuntu 发行版安装" `
+                "下载 Ubuntu 镜像失败" `
+                "请检查网络、代理或 DNS 设置后重试；也可在管理员 PowerShell 手动执行 wsl --install -d $UBUNTU_DISTRO --web-download"
+            Read-Host "按回车退出"
             return
         } elseif ($result -eq "pending") {
             $state = Get-InstallState
