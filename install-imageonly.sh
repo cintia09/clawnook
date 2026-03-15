@@ -1042,11 +1042,13 @@ load_image(){
   while kill -0 "$load_pid" >/dev/null 2>&1; do
     elapsed=$(( $(date +%s) - start_ts ))
     if [ "$elapsed" -ge "$next_report" ]; then
-      info "正在导入镜像（docker load），已耗时 ${elapsed}s"
+      printf '\r\033[K[INFO] 正在导入镜像（docker load），已耗时 %ds' "$elapsed"
       next_report=$((next_report + 5))
     fi
     sleep 1
   done
+  # 进度行结束后换行
+  [ "$next_report" -gt 5 ] && printf '\n'
   wait "$load_pid" || rc=$?
   rc="${rc:-0}"
 
