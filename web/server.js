@@ -1669,6 +1669,88 @@ function writeOpenClawConfig(cfg) {
   return result;
 }
 
+function buildNormalizedPairedScopes(role, scopes = []) {
+  const mergedScopes = Array.from(new Set((Array.isArray(scopes) ? scopes : []).filter(Boolean)));
+  if (role === 'operator' || role === 'admin') {
+    return Array.from(new Set([
+      ...mergedScopes,
+      'operator.admin',
+      'operator.read',
+      'operator.write',
+      'operator.approvals',
+      'operator.pairing'
+    ]));
+  }
+  return mergedScopes.length > 0 ? mergedScopes : ['operator.admin'];
+}
+
+function normalizePairedDevicesScopes() {
+  const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+  if (!paired || typeof paired !== 'object' || Array.isArray(paired)) {
+    return { changed: false, count: 0 };
+  }
+
+  let anyChanged = false;
+  let changedCount = 0;
+  for (const [deviceId, rawEntry] of Object.entries(paired)) {
+    if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) continue;
+
+    const entry = rawEntry;
+    const primaryRole = String(
+      entry.role
+      || (Array.isArray(entry.roles) ? entry.roles[0] : '')
+      || (entry.clientMode === 'node' ? 'node' : 'operator')
+    ).trim() || 'operator';
+
+    const tokenScopes = Object.values(entry.tokens || {}).flatMap((tokenEntry) => (
+      Array.isArray(tokenEntry?.scopes) ? tokenEntry.scopes : []
+    ));
+
+    const normalizedScopes = buildNormalizedPairedScopes(primaryRole, [
+      ...(Array.isArray(entry.scopes) ? entry.scopes : []),
+      ...(Array.isArray(entry.approvedScopes) ? entry.approvedScopes : []),
+      ...tokenScopes
+    ]);
+
+    let entryChanged = false;
+    const currentScopes = Array.isArray(entry.scopes) ? entry.scopes : [];
+    const currentApprovedScopes = Array.isArray(entry.approvedScopes) ? entry.approvedScopes : [];
+    if (JSON.stringify(currentScopes) !== JSON.stringify(normalizedScopes)) {
+      entry.scopes = normalizedScopes;
+      entryChanged = true;
+    }
+    if (JSON.stringify(currentApprovedScopes) !== JSON.stringify(normalizedScopes)) {
+      entry.approvedScopes = normalizedScopes;
+      entryChanged = true;
+    }
+
+    if (entry.tokens && typeof entry.tokens === 'object') {
+      for (const tokenEntry of Object.values(entry.tokens)) {
+        if (!tokenEntry || typeof tokenEntry !== 'object') continue;
+        const currentTokenScopes = Array.isArray(tokenEntry.scopes) ? tokenEntry.scopes : [];
+        if (JSON.stringify(currentTokenScopes) !== JSON.stringify(normalizedScopes)) {
+          tokenEntry.scopes = normalizedScopes;
+          entryChanged = true;
+        }
+      }
+    }
+
+    if (entryChanged) {
+      paired[deviceId] = entry;
+      anyChanged = true;
+      changedCount += 1;
+    }
+  }
+
+  if (!anyChanged) {
+    return { changed: false, count: 0 };
+  }
+
+  fs.writeFileSync(DEVICE_PAIRING_PAIRED_PATH, JSON.stringify(paired, null, 2));
+  console.log(`[pairing] Normalized scopes for ${changedCount} paired device(s)`);
+  return { changed: true, count: changedCount };
+}
+
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
     if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])
@@ -4186,6 +4268,7 @@ async function fetchNodeIpv4Address(nodeId, platform) {
   if (!nodeId) return '';
   let client = null;
   try {
+    const normalizedPlatform = String(platform || '').toLowerCase();
     client = await createGatewayControlUiClient(5000);
     const binsPayload = await client.request('node.invoke', {
       nodeId,
@@ -4200,7 +4283,9 @@ async function fetchNodeIpv4Address(nodeId, platform) {
     const ifconfigBin = typeof bins?.ifconfig === 'string' ? bins.ifconfig.trim() : '';
     const ipconfigBin = typeof bins?.ipconfig === 'string' ? bins.ipconfig.trim() : '';
     let command = null;
-    if (ipBin) {
+    if (normalizedPlatform.startsWith('darwin') && ifconfigBin) {
+      command = [ifconfigBin];
+    } else if (ipBin) {
       command = [ipBin, '-4', 'addr', 'show'];
     } else if (ipconfigBin) {
       command = [ipconfigBin];
@@ -4235,20 +4320,19 @@ async function fetchNodeIpv4Address(nodeId, platform) {
     }, 22000);
     const run = runPayload && typeof runPayload === 'object' ? (runPayload.payload || runPayload) : {};
     const output = [run.stdout, run.stderr, run.output].filter(v => typeof v === 'string' && v.trim()).join('\n');
-    const normalizedPlatform = String(platform || '').toLowerCase();
     if (ipBin) {
       const matches = Array.from(String(output).matchAll(/\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b/g)).map((m) => m[1]);
       const picked = matches.find((ip) => ip !== '127.0.0.1');
       return picked || '';
     }
-    if (ipconfigBin || normalizedPlatform.startsWith('win')) {
-      const matches = Array.from(String(output).matchAll(/IPv4[^:\n]*[:：]\s*(\d{1,3}(?:\.\d{1,3}){3})/gi)).map((m) => m[1]);
+    if (ifconfigBin && normalizedPlatform.startsWith('darwin')) {
+      const matches = Array.from(String(output).matchAll(/\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b/g)).map((m) => m[1]);
       const picked = matches.find((ip) => ip !== '127.0.0.1' && !ip.startsWith('169.254.'));
       return picked || '';
     }
-    if (ifconfigBin && normalizedPlatform.startsWith('darwin')) {
-      const matches = Array.from(String(output).matchAll(/\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b/g)).map((m) => m[1]);
-      const picked = matches.find((ip) => ip !== '127.0.0.1');
+    if (ipconfigBin || normalizedPlatform.startsWith('win')) {
+      const matches = Array.from(String(output).matchAll(/IPv4[^:\n]*[:：]\s*(\d{1,3}(?:\.\d{1,3}){3})/gi)).map((m) => m[1]);
+      const picked = matches.find((ip) => ip !== '127.0.0.1' && !ip.startsWith('169.254.'));
       return picked || '';
     }
     return '';
@@ -8191,6 +8275,7 @@ app.post('/api/openclaw/migration/import', (req, res) => {
             restoredFiles.push(dirName + '/');
           } catch {}
         }
+        normalizePairedDevicesScopes();
         fs.rmSync(tmpDir, { recursive: true, force: true });
         console.log(`[migration-import] 迁移导入完成: ${restoredFiles.join(', ')}, 预备份: ${preImportBackup}`);
         res.json({ success: true, restoredFiles, preImportBackup, needRestart: true });
@@ -10110,6 +10195,7 @@ server.on('connection', (socket) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   repairOpenClawConfigProviders();
+  normalizePairedDevicesScopes();
   sanitizeAllConfigBackups();
   checkOrphanInstallTask(); // C7: 启动时检测孤儿安装进程 (DFMEA T2)
   console.log(`[web] OpenClaw Web 管理面板启动: http://0.0.0.0:${PORT}`);
