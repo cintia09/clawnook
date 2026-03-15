@@ -25,7 +25,7 @@ param(
 )
 
 # --- Constants ----------------------------------------------------------------
-$SCRIPT_VERSION  = "1.0.15"
+$SCRIPT_VERSION  = "1.0.16"
 $TASK_NAME       = "OpenClawSetup"
 $UBUNTU_DISTRO   = "Ubuntu-24.04"
 $OPENCLAW_PORT   = "18789"
@@ -5570,8 +5570,34 @@ function Main {
 
         # Launch install-imageonly.sh in a new terminal (interactive)
         $launched = Start-WslImageOnlyDeploy -DistroName $distroName
+
+        Write-Log "Deploy launched: $launched"
+
+        if ($launched) {
+            # install-imageonly.sh runs interactively in the new terminal — it handles ports,
+            # domain config, SSH keys, and its own completion summary.  Nothing more to do here.
+            Write-Host ""
+            Write-Host "  ==================================================" -ForegroundColor DarkCyan
+            Write-Host "  ✅ 安装向导已在新终端窗口启动" -ForegroundColor Green
+            Write-Host "  ==================================================" -ForegroundColor DarkCyan
+            Write-Host ""
+            Write-Host "  请切换到新打开的终端窗口，按照提示完成安装。" -ForegroundColor Cyan
+            Write-Host "  安装完成后可通过以下命令进入容器：" -ForegroundColor Cyan
+            Write-Host "     wsl -d $distroName docker exec -it openclaw-pro bash" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  📄 本窗口日志: $LOG_FILE" -ForegroundColor DarkGray
+            Write-Host ""
+            Read-Host "按回车关闭此窗口"
+            return
+        } else {
+            # Start-WslImageOnlyDeploy already printed manual instructions
+            Write-Host ""
+            Read-Host "按回车关闭此窗口"
+            return
+        }
     }
 
+    # --- Docker Desktop mode completion summary ---------------------------------
     Write-Log "Deploy launched: $launched"
 
     $gwPort = if ($script:actualGatewayPort) { $script:actualGatewayPort } else { [int]$OPENCLAW_PORT }
