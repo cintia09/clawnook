@@ -25,7 +25,7 @@ param(
 )
 
 # --- Constants ----------------------------------------------------------------
-$SCRIPT_VERSION  = "1.0.17"
+$SCRIPT_VERSION  = "1.0.18"
 $TASK_NAME       = "OpenClawSetup"
 $UBUNTU_DISTRO   = "Ubuntu-24.04"
 $OPENCLAW_PORT   = "18789"
@@ -1406,10 +1406,70 @@ echo "DOCKER_INSTALL_COMPLETE"
 
 # --- Phase 4+5: Deploy OpenClaw via install-imageonly.sh (same as Linux) ------
 
+function Get-PreferredHostIPv4 {
+    $localIp = ""
+
+    try {
+        $virtualKeywords = @('vEthernet', 'WSL', 'Docker', 'Hyper-V', 'VirtualBox', 'VMware', 'Loopback', 'Bluetooth')
+        $allAdapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }
+        if (-not $allAdapters) {
+            $allAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' } | Where-Object {
+                $name = $_.Name + ' ' + $_.InterfaceDescription
+                $isVirtual = $false
+                foreach ($keyword in $virtualKeywords) {
+                    if ($name -match $keyword) {
+                        $isVirtual = $true
+                        break
+                    }
+                }
+                -not $isVirtual
+            }
+        }
+
+        if ($allAdapters) {
+            $localIp = ($allAdapters | ForEach-Object {
+                Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+            } | Where-Object {
+                $_.IPAddress -ne '127.0.0.1' -and
+                $_.IPAddress -notmatch '^169\.254\.' -and
+                $_.PrefixOrigin -ne 'WellKnown'
+            } | Select-Object -First 1).IPAddress
+        }
+    } catch { }
+
+    if (-not $localIp) {
+        try {
+            $localIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+                $_.IPAddress -ne '127.0.0.1' -and
+                $_.IPAddress -notmatch '^169\.254\.' -and
+                $_.IPAddress -notmatch '^172\.(1[6-9]|2\d|3[01])\.' -and
+                $_.PrefixOrigin -ne 'WellKnown'
+            } | Select-Object -First 1).IPAddress
+        } catch { }
+    }
+
+    if (-not $localIp) {
+        try {
+            $localIp = ([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) | Where-Object {
+                $_.AddressFamily -eq 'InterNetwork' -and
+                $_.ToString() -ne '127.0.0.1' -and
+                $_.ToString() -notmatch '^172\.(1[6-9]|2\d|3[01])\.'
+            } | Select-Object -First 1).ToString()
+        } catch { }
+    }
+
+    return $localIp
+}
+
 function Start-WslImageOnlyDeploy {
     param([string]$DistroName)
 
     Write-Info "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..."
+
+    $hostLanIp = Get-PreferredHostIPv4
+    if ($hostLanIp) {
+        Write-Info "检测到宿主机局域网 IP: $hostLanIp"
+    }
 
     # Download install-imageonly.sh inside WSL, then launch in a new terminal window
     $bootstrapScript = @"
@@ -1419,6 +1479,7 @@ set -e
 # Clear proxy env — WSL NAT mode cannot reach Windows localhost proxies
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 export http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= all_proxy= ALL_PROXY=
+export OPENCLAW_HOST_IP="$hostLanIp"
 
 SCRIPT_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/install-imageonly.sh"
 TMP_SCRIPT="/tmp/openclaw-install-imageonly.sh"

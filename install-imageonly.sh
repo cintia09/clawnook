@@ -1219,6 +1219,10 @@ fi
 
 detect_local_ip(){
   local ip iface
+  if [ -n "${OPENCLAW_HOST_IP:-}" ] && echo "$OPENCLAW_HOST_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    printf '%s' "$OPENCLAW_HOST_IP"
+    return 0
+  fi
   ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
   if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
     ip="$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}' || true)"
