@@ -455,6 +455,91 @@ clear_chunk_cache(){
   rm -rf "${output}.chunks" "${output}.chunks.meta" 2>/dev/null || true
 }
 
+format_mib(){
+  awk -v n="${1:-0}" 'BEGIN{printf "%.2f", n/1024/1024}'
+}
+
+determine_chunk_parallelism(){
+  local total_chunks="$1"
+  local jobs=""
+
+  jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  if ! [[ "$jobs" =~ ^[0-9]+$ ]] || [ "$jobs" -le 0 ]; then
+    jobs="$(sysctl -n hw.ncpu 2>/dev/null || true)"
+  fi
+  if ! [[ "$jobs" =~ ^[0-9]+$ ]] || [ "$jobs" -le 0 ]; then
+    jobs=4
+  fi
+
+  if [ "$jobs" -gt 8 ]; then
+    jobs=8
+  fi
+  if [ "$jobs" -lt 2 ] && [ "$total_chunks" -gt 1 ]; then
+    jobs=2
+  fi
+  if [ "$jobs" -gt "$total_chunks" ]; then
+    jobs="$total_chunks"
+  fi
+  if [ "$jobs" -lt 1 ]; then
+    jobs=1
+  fi
+
+  printf '%s\n' "$jobs"
+}
+
+summarize_chunk_progress(){
+  local chunk_dir="$1"
+  local completed_bytes=0
+  local completed_chunks=0
+  local chunk_file actual_size
+
+  for chunk_file in "$chunk_dir"/chunk.*.part; do
+    [ -e "$chunk_file" ] || break
+    actual_size="$(wc -c < "$chunk_file" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+    if [[ "$actual_size" =~ ^[0-9]+$ ]] && [ "$actual_size" -gt 0 ]; then
+      completed_bytes=$(( completed_bytes + actual_size ))
+      completed_chunks=$(( completed_chunks + 1 ))
+    fi
+  done
+
+  printf '%s %s\n' "$completed_bytes" "$completed_chunks"
+}
+
+render_chunk_progress_line(){
+  local completed_bytes="$1"
+  local total_bytes="$2"
+  local completed_chunks="$3"
+  local total_chunks="$4"
+  local speed_bytes_per_sec="$5"
+  local pct=0 remaining_bytes=0 eta_seconds=0 eta_text="--"
+  local completed_mib total_mib speed_mib
+
+  if [ "$total_bytes" -gt 0 ] 2>/dev/null; then
+    pct=$(( completed_bytes * 100 / total_bytes ))
+    if [ "$pct" -gt 100 ]; then
+      pct=100
+    fi
+    remaining_bytes=$(( total_bytes - completed_bytes ))
+    if [ "$remaining_bytes" -lt 0 ]; then
+      remaining_bytes=0
+    fi
+  fi
+
+  if [ "$speed_bytes_per_sec" -gt 0 ] 2>/dev/null && [ "$remaining_bytes" -gt 0 ] 2>/dev/null; then
+    eta_seconds=$(( remaining_bytes / speed_bytes_per_sec ))
+    eta_text="${eta_seconds}s"
+  elif [ "$remaining_bytes" -eq 0 ] 2>/dev/null; then
+    eta_text="0s"
+  fi
+
+  completed_mib="$(format_mib "$completed_bytes")"
+  total_mib="$(format_mib "$total_bytes")"
+  speed_mib="$(format_mib "$speed_bytes_per_sec")"
+
+  printf '\r[INFO] 分块下载进度：%3d%% %s/%s MiB %s/%s 块 速度 %s MiB/s ETA %s' \
+    "$pct" "$completed_mib" "$total_mib" "$completed_chunks" "$total_chunks" "$speed_mib" "$eta_text"
+}
+
 download_chunk_with_retry(){
   local url="$1"
   local chunk_file="$2"
@@ -464,7 +549,7 @@ download_chunk_with_retry(){
   local chunk_index="$6"
   local total_chunks="$7"
   local max_retry="${8:-20}"
-  local attempt rc actual_size tmp_file short_url
+  local attempt actual_size tmp_file
   local -a curl_args
 
   curl_args=(
@@ -474,26 +559,15 @@ download_chunk_with_retry(){
     -r "${start_byte}-${end_byte}"
   )
 
-  short_url="$url"
-  if [ "${#short_url}" -gt 88 ]; then
-    short_url="${short_url:0:85}..."
-  fi
-
   for attempt in $(seq 1 "$max_retry"); do
     tmp_file="${chunk_file}.tmp"
     rm -f "$tmp_file" 2>/dev/null || true
 
-    if curl "${curl_args[@]}" -o "$tmp_file" "$url"; then
+    if curl "${curl_args[@]}" -o "$tmp_file" "$url" 2>/dev/null; then
       actual_size="$(wc -c < "$tmp_file" 2>/dev/null | tr -d '[:space:]' || echo 0)"
       if [ "$actual_size" -eq "$expected_len" ] 2>/dev/null; then
         mv -f "$tmp_file" "$chunk_file"
         return 0
-      fi
-      warn "分块 $((chunk_index + 1))/${total_chunks} 大小异常：期望 ${expected_len} 字节，实际 ${actual_size} 字节"
-    else
-      rc=$?
-      if [ "$attempt" -eq 1 ] || [ $(( attempt % 5 )) -eq 0 ] || [ "$attempt" -eq "$max_retry" ]; then
-        warn "分块 $((chunk_index + 1))/${total_chunks} 下载失败（第 ${attempt}/${max_retry} 次，curl exit ${rc}）：${short_url}"
       fi
     fi
 
@@ -502,6 +576,45 @@ download_chunk_with_retry(){
   done
 
   return 1
+}
+
+download_chunk_worker(){
+  local url="$1"
+  local chunk_dir="$2"
+  local total_bytes="$3"
+  local chunk_size="$4"
+  local worker_index="$5"
+  local worker_count="$6"
+  local total_chunks="$7"
+  local failure_file="$8"
+  local idx start_byte end_byte expected_len actual_size chunk_file
+
+  for ((idx=worker_index; idx<total_chunks; idx+=worker_count)); do
+    [ ! -f "$failure_file" ] || return 1
+
+    start_byte=$(( idx * chunk_size ))
+    end_byte=$(( start_byte + chunk_size - 1 ))
+    if [ "$end_byte" -ge "$total_bytes" ]; then
+      end_byte=$(( total_bytes - 1 ))
+    fi
+    expected_len=$(( end_byte - start_byte + 1 ))
+    chunk_file="$(printf '%s/chunk.%06d.part' "$chunk_dir" "$idx")"
+
+    if [ -f "$chunk_file" ]; then
+      actual_size="$(wc -c < "$chunk_file" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+      if [ "$actual_size" -eq "$expected_len" ] 2>/dev/null; then
+        continue
+      fi
+      rm -f "$chunk_file" 2>/dev/null || true
+    fi
+
+    if ! download_chunk_with_retry "$url" "$chunk_file" "$start_byte" "$end_byte" "$expected_len" "$idx" "$total_chunks" 20; then
+      printf '分块 %s/%s 下载失败，范围 %s-%s\n' "$((idx + 1))" "$total_chunks" "$start_byte" "$end_byte" > "$failure_file"
+      return 1
+    fi
+  done
+
+  return 0
 }
 
 download_tarball_chunked(){
@@ -513,7 +626,10 @@ download_tarball_chunked(){
   local chunk_dir="${output}.chunks"
   local chunk_meta="${output}.chunks.meta"
   local total_chunks completed_chunks idx start_byte end_byte expected_len actual_size
-  local chunk_file assembled_file completed_mib total_mib
+  local chunk_file assembled_file completed_mib total_mib chunk_jobs failure_file
+  local completed_bytes progress_bytes progress_chunks progress_state now elapsed
+  local speed_bytes_per_sec delta_bytes delta_seconds prev_bytes prev_ts
+  local worker_pids failed=0 pid
 
   if [ ! "$total_bytes" -gt 0 ] 2>/dev/null; then
     return 1
@@ -533,6 +649,7 @@ download_tarball_chunked(){
   printf 'sig=%s\nsize=%s\n' "$expected_sig" "$total_bytes" > "$chunk_meta"
 
   total_chunks=$(( (total_bytes + chunk_size - 1) / chunk_size ))
+  chunk_jobs="$(determine_chunk_parallelism "$total_chunks")"
   completed_chunks=0
   for idx in $(seq 0 $((total_chunks - 1))); do
     start_byte=$(( idx * chunk_size ))
@@ -553,41 +670,73 @@ download_tarball_chunked(){
     fi
   done
 
-  total_mib="$(awk -v n="$total_bytes" 'BEGIN{printf "%.2f", n/1024/1024}')"
+  total_mib="$(format_mib "$total_bytes")"
   if [ "$completed_chunks" -gt 0 ]; then
     completed_mib="$(awk -v n="$completed_chunks" -v s="$chunk_size" -v t="$total_bytes" 'BEGIN{v=n*s; if (v>t) v=t; printf "%.2f", v/1024/1024}')"
-    info "续传分块下载：已完成 ${completed_chunks}/${total_chunks} 块（${completed_mib} MiB / ${total_mib} MiB）"
+    info "续传分块下载：已完成 ${completed_chunks}/${total_chunks} 块（${completed_mib} MiB / ${total_mib} MiB），并发 ${chunk_jobs} 线程"
   else
-    info "启动分块下载：${total_chunks} 块，约 ${total_mib} MiB"
+    info "启动分块下载：${total_chunks} 块，约 ${total_mib} MiB，并发 ${chunk_jobs} 线程"
   fi
 
-  for idx in $(seq 0 $((total_chunks - 1))); do
-    start_byte=$(( idx * chunk_size ))
-    end_byte=$(( start_byte + chunk_size - 1 ))
-    if [ "$end_byte" -ge "$total_bytes" ]; then
-      end_byte=$(( total_bytes - 1 ))
-    fi
-    expected_len=$(( end_byte - start_byte + 1 ))
-    chunk_file="$(printf '%s/chunk.%06d.part' "$chunk_dir" "$idx")"
+  failure_file="${chunk_dir}/.failed"
+  rm -f "$failure_file" 2>/dev/null || true
 
-    if [ -f "$chunk_file" ]; then
-      actual_size="$(wc -c < "$chunk_file" 2>/dev/null | tr -d '[:space:]' || echo 0)"
-      if [ "$actual_size" -eq "$expected_len" ] 2>/dev/null; then
-        continue
+  read -r completed_bytes completed_chunks <<EOF
+$(summarize_chunk_progress "$chunk_dir")
+EOF
+  prev_bytes="$completed_bytes"
+  prev_ts="$(date +%s)"
+
+  worker_pids=()
+  for idx in $(seq 0 $((chunk_jobs - 1))); do
+    download_chunk_worker "$url" "$chunk_dir" "$total_bytes" "$chunk_size" "$idx" "$chunk_jobs" "$total_chunks" "$failure_file" &
+    worker_pids+=("$!")
+  done
+
+  while :; do
+    read -r progress_bytes progress_chunks <<EOF
+$(summarize_chunk_progress "$chunk_dir")
+EOF
+    now="$(date +%s)"
+    delta_seconds=$(( now - prev_ts ))
+    delta_bytes=$(( progress_bytes - prev_bytes ))
+    if [ "$delta_seconds" -gt 0 ] 2>/dev/null && [ "$delta_bytes" -gt 0 ] 2>/dev/null; then
+      speed_bytes_per_sec=$(( delta_bytes / delta_seconds ))
+      prev_bytes="$progress_bytes"
+      prev_ts="$now"
+    elif [ -z "${speed_bytes_per_sec:-}" ]; then
+      speed_bytes_per_sec=0
+    fi
+
+    render_chunk_progress_line "$progress_bytes" "$total_bytes" "$progress_chunks" "$total_chunks" "$speed_bytes_per_sec"
+
+    elapsed=0
+    for pid in "${worker_pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        elapsed=1
+        break
       fi
-      rm -f "$chunk_file" 2>/dev/null || true
+    done
+    if [ "$elapsed" -eq 0 ]; then
+      break
     fi
+    sleep 1
+  done
+  printf '\n'
 
-    if ! download_chunk_with_retry "$url" "$chunk_file" "$start_byte" "$end_byte" "$expected_len" "$idx" "$total_chunks" 20; then
-      return 1
-    fi
-
-    completed_chunks=$(( completed_chunks + 1 ))
-    if [ $(( completed_chunks % 8 )) -eq 0 ] || [ "$completed_chunks" -eq "$total_chunks" ]; then
-      completed_mib="$(awk -v n="$completed_chunks" -v s="$chunk_size" -v t="$total_bytes" 'BEGIN{v=n*s; if (v>t) v=t; printf "%.2f", v/1024/1024}')"
-      info "分块下载进度：${completed_chunks}/${total_chunks} 块（${completed_mib} MiB / ${total_mib} MiB）"
+  for pid in "${worker_pids[@]}"; do
+    if ! wait "$pid"; then
+      failed=1
     fi
   done
+  if [ "$failed" -ne 0 ] || [ -f "$failure_file" ]; then
+    if [ -f "$failure_file" ]; then
+      warn "$(cat "$failure_file" 2>/dev/null || echo '分块下载失败')"
+    else
+      warn "分块下载失败"
+    fi
+    return 1
+  fi
 
   assembled_file="${output}.assembling"
   rm -f "$assembled_file" 2>/dev/null || true

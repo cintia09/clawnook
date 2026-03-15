@@ -655,6 +655,15 @@ function sanitizeApiValue(api, providerName) {
   return PROVIDER_DEFAULT_API[providerName] || 'openai-completions';
 }
 
+function normalizeProviderApiForSync(currentApi, providerName, fallbackApi) {
+  const normalizedCurrent = sanitizeApiValue(currentApi, providerName);
+  if (normalizedCurrent && VALID_GATEWAY_API_VALUES.has(normalizedCurrent)) {
+    return normalizedCurrent;
+  }
+  if (providerName === 'github-copilot') return 'github-copilot';
+  return sanitizeApiValue(fallbackApi, providerName) || fallbackApi;
+}
+
 /**
  * 从 OpenClaw 内置目录查询模型能力
  * @param {string} providerName - 我们的 provider 名称 (如 'gemini', 'bailian')
@@ -885,10 +894,6 @@ function syncConfiguredModelsToModelsJson() {
       if (fb && fb.includes('/')) configuredModels.push(fb);
     }
     if (configuredModels.length === 0) return;
-    const resolveProviderSyncApi = (provName, fallbackApi) => {
-      if (provName === 'github-copilot') return 'github-copilot';
-      return sanitizeApiValue(fallbackApi, provName) || fallbackApi;
-    };
     // 同步到 openclaw.json（gateway 启动时读取此文件生成 models.json）
     let configChanged = false;
     if (!config.models) config.models = {};
@@ -916,25 +921,12 @@ function syncConfiguredModelsToModelsJson() {
           }
         }
       }
-      // 如果 catalog 指示不同的 api 类型，同步更新 provider 级别的 api
-      const syncedProviderApi = resolveProviderSyncApi(provName, entry.api);
+      // provider 级 api 仅在当前值缺失或非法时修正，不按单个模型的 api 翻转。
+      const syncedProviderApi = normalizeProviderApiForSync(prov.api, provName, entry.api);
       if (syncedProviderApi && prov.api && syncedProviderApi !== prov.api) {
-        console.log(`[sync] 更新 provider ${provName}.api: ${prov.api} → ${syncedProviderApi} (来自模型目录)`);
+        console.log(`[sync] 修正 provider ${provName}.api: ${prov.api} → ${syncedProviderApi} (来自模型目录)`);
         prov.api = syncedProviderApi;
         configChanged = true;
-        // 同步更新该 provider 下已有模型的 api 字段（保持一致性）
-        for (const m of prov.models) {
-          if (m.api && m.api !== entry.api) {
-            // 查询 catalog 确认该模型的原生 api
-            const mCap = lookupModelCapabilities(provName, m.id);
-            const correctApi = sanitizeApiValue(mCap?.api, provName) || entry.api;
-            if (m.api !== correctApi) {
-              console.log(`[sync] 同步 ${provName}/${m.id}.api: ${m.api} → ${correctApi}`);
-              m.api = correctApi;
-              configChanged = true;
-            }
-          }
-        }
       }
     }
     // 最终一致性检查：确保所有 provider 下模型的 api 与 catalog 一致
@@ -980,22 +972,11 @@ function syncConfiguredModelsToModelsJson() {
               }
             }
           }
-          // 同步 provider 级别的 api
-          const syncedProviderApi = resolveProviderSyncApi(provName, entry.api);
+          // provider 级 api 仅在当前值缺失或非法时修正。
+          const syncedProviderApi = normalizeProviderApiForSync(prov.api, provName, entry.api);
           if (syncedProviderApi && prov.api && syncedProviderApi !== prov.api) {
             prov.api = syncedProviderApi;
             modelsChanged = true;
-            // 同步更新该 provider 下已有模型的 api 字段
-            for (const m of prov.models) {
-              if (m.api && m.api !== entry.api) {
-                const mCap = lookupModelCapabilities(provName, m.id);
-                const correctApi = sanitizeApiValue(mCap?.api, provName) || entry.api;
-                if (m.api !== correctApi) {
-                  m.api = correctApi;
-                  modelsChanged = true;
-                }
-              }
-            }
           }
         }
         // 最终一致性检查
@@ -1948,7 +1929,7 @@ function parseGitHubRepo(input) {
   return '';
 }
 
-const OPENCLAW_INSTALL_MODES = new Set(['auto', 'release', 'npm', 'source']);
+const OPENCLAW_INSTALL_MODES = new Set(['auto', 'npm']);
 
 function normalizeOpenClawInstallMode(input) {
   const mode = String(input || '').trim().toLowerCase();
@@ -2051,6 +2032,31 @@ async function getLatestOpenClawRelease(repo) {
       name: tag
     };
   }
+}
+
+function getLatestPublishedOpenClawVersion() {
+  const npmLatestNpmjs = parseOpenClawVersion(runCommandText('npm view openclaw version --registry=https://registry.npmjs.org 2>/dev/null || true', 5000));
+  const npmLatestMirror = parseOpenClawVersion(runCommandText('npm view openclaw version --registry=https://registry.npmmirror.com 2>/dev/null || true', 4000));
+  const cachedLatest = parseOpenClawVersion(latestOpenClawVersionCache.version || '');
+  return npmLatestNpmjs || npmLatestMirror || cachedLatest || '';
+}
+
+async function resolveLatestOpenClawInstallRelease(repo) {
+  const safeRepo = parseGitHubRepo(repo) || OPENCLAW_SOURCE_REPO_DEFAULT;
+  const latestRelease = await getLatestOpenClawRelease(safeRepo);
+  const publishedVersion = getLatestPublishedOpenClawVersion();
+  if (!publishedVersion) {
+    return latestRelease;
+  }
+  return {
+    ...latestRelease,
+    tag: `v${publishedVersion}`,
+    name: `v${publishedVersion}`,
+    binaryAsset: null,
+    assets: [],
+    installVersion: publishedVersion,
+    installSource: 'npm'
+  };
 }
 
 function pickOpenClawReleaseBinaryAsset(assets) {
@@ -2298,11 +2304,11 @@ async function maybeTriggerOpenClawRuntimeRecovery(issue = '') {
   openClawRuntimeRecoveryState.lastIssue = String(issue || 'runtime-artifacts-missing');
   try {
     const repo = resolveOpenClawSourceRepo(true);
-    const release = await getLatestOpenClawRelease(repo);
+    const release = await resolveLatestOpenClawInstallRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release);
     const taskId = runOpenClawTask(
       command,
-      `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行安装恢复（官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`,
+      `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行 npm 安装恢复（${release.tag})`,
       'installing',
       { release }
     );
@@ -2439,7 +2445,7 @@ function syncOpenClawPostInstallMetadata({ operationType = 'installing', release
 
 async function getLatestOpenClawVersion(timeoutMs = 2500) {
   const repo = resolveOpenClawSourceRepo();
-  const rel = await getLatestOpenClawRelease(repo);
+  const rel = await resolveLatestOpenClawInstallRelease(repo);
   return parseOpenClawVersion(rel.tag || '');
 }
 
@@ -2465,12 +2471,10 @@ async function refreshLatestOpenClawVersionCache({ force = false } = {}) {
   latestOpenClawVersionCache.lastAttemptAt = now;
   try {
     const repo = resolveOpenClawSourceRepo();
-    const rel = await getLatestOpenClawRelease(repo);
+    const rel = await resolveLatestOpenClawInstallRelease(repo);
     const version = parseOpenClawVersion(rel?.tag || '');
-    latestOpenClawVersionCache.hasLinuxBinaryAsset = !!(rel?.binaryAsset && rel.binaryAsset.source !== 'npm-dist-tarball');
-    latestOpenClawVersionCache.assetsSummary = Array.isArray(rel?.assets)
-      ? rel.assets.slice(0, 10).map((item) => String(item?.name || '').trim()).filter(Boolean).join(', ')
-      : '';
+    latestOpenClawVersionCache.hasLinuxBinaryAsset = false;
+    latestOpenClawVersionCache.assetsSummary = 'npm';
     if (version) {
       latestOpenClawVersionCache.version = version;
       latestOpenClawVersionCache.error = '';
@@ -4334,37 +4338,61 @@ app.post('/api/node/unpair', (req, res) => {
 // 优先以真实 device identity 的 control-ui 身份连接并调用 node.list
 // 失败时降级为 cli 身份连接，通过 presence 快照检测节点在线
 function normalizeNodePresenceKey(value) {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function collectGatewayNodeLookupKeys(node) {
+  const keys = new Set();
+  for (const candidate of [
+    node?.displayName,
+    node?.clientId,
+    node?.host,
+    node?.instanceId,
+    node?.deviceId,
+    node?.nodeId
+  ]) {
+    const key = normalizeNodePresenceKey(candidate);
+    if (key) keys.add(key);
+  }
+  return Array.from(keys);
 }
 
 function reconcileGatewayNodeListWithPresence(nodes, presenceNodes) {
   if (!Array.isArray(nodes)) return Array.isArray(presenceNodes) ? presenceNodes : nodes;
   if (!Array.isArray(presenceNodes)) return nodes;
-  if (presenceNodes.length === 0) return [];
+  if (presenceNodes.length === 0) {
+    return nodes.map((node) => ({
+      ...node,
+      _presenceConfirmed: false,
+      _fromPresence: Boolean(node?._fromPresence)
+    }));
+  }
 
   const presenceByName = new Map();
   for (const presenceNode of presenceNodes) {
-    const key = normalizeNodePresenceKey(presenceNode?.displayName);
-    if (key) presenceByName.set(key, presenceNode);
+    for (const key of collectGatewayNodeLookupKeys(presenceNode)) {
+      presenceByName.set(key, presenceNode);
+    }
   }
 
   const merged = [];
   const seenPresenceKeys = new Set();
   for (const node of nodes) {
-    const key = normalizeNodePresenceKey(node?.displayName);
-    const presenceNode = key ? presenceByName.get(key) : null;
-    if (!presenceNode) continue;
-    seenPresenceKeys.add(key);
+    const keys = collectGatewayNodeLookupKeys(node);
+    const presenceNode = keys.map((key) => presenceByName.get(key)).find(Boolean) || null;
+    for (const key of keys) {
+      if (presenceByName.has(key)) seenPresenceKeys.add(key);
+    }
     merged.push({
       ...node,
-      _presenceConfirmed: true,
+      _presenceConfirmed: Boolean(presenceNode),
       _fromPresence: Boolean(node?._fromPresence)
     });
   }
 
   for (const presenceNode of presenceNodes) {
-    const key = normalizeNodePresenceKey(presenceNode?.displayName);
-    if (!key || seenPresenceKeys.has(key)) continue;
+    const keys = collectGatewayNodeLookupKeys(presenceNode);
+    if (!keys.length || keys.every((key) => seenPresenceKeys.has(key))) continue;
     merged.push(presenceNode);
   }
 
@@ -4520,12 +4548,6 @@ function normalizeNodeStatusSnapshot(raw) {
 function shouldAcceptGatewayNodeConnection(gwNode, gatewayInfo, previousGatewayPid, now) {
   if (!gwNode || gwNode.connected !== true) return false;
 
-  // Presence snapshots can lag behind real disconnects.
-  // Only treat presence-derived entries as online when they also map to a real node.list node.
-  if (gwNode?._fromPresence === true && !gwNode?.nodeId) {
-    return false;
-  }
-
   const gatewayStartedAtMs = Number(gatewayInfo?.startedAtMs || 0);
   const gatewayPid = Number(gatewayInfo?.pid || 0);
   const priorGatewayPid = Number(previousGatewayPid || 0);
@@ -4540,6 +4562,13 @@ function shouldAcceptGatewayNodeConnection(gwNode, gatewayInfo, previousGatewayP
 
   if (gatewayPidChanged || gatewayRecentlyRestarted) {
     return false;
+  }
+
+  // Presence-only fallback nodes do not carry nodeId/connectedAtMs. Treat them as
+  // online once the gateway process is stable; otherwise remote nodes appear
+  // permanently offline whenever control-ui node.list is unavailable.
+  if (gwNode?._fromPresence === true && !gwNode?.nodeId) {
+    return true;
   }
 
   return true;
@@ -4567,11 +4596,13 @@ async function refreshNodeStatusSnapshot() {
       const gatewayInfo = await getGatewayRuntimeProcessInfo();
       const gwNodes = await queryGatewayNodeList(4000);
       const gwNodeMapById = new Map();
-      const gwNodeMapByName = new Map();
+      const gwNodeMapByKey = new Map();
       if (Array.isArray(gwNodes)) {
         for (const n of gwNodes) {
           if (n.nodeId) gwNodeMapById.set(n.nodeId, n);
-          if (n.displayName) gwNodeMapByName.set(n.displayName, n);
+          for (const key of collectGatewayNodeLookupKeys(n)) {
+            gwNodeMapByKey.set(key, n);
+          }
         }
       }
 
@@ -4579,8 +4610,9 @@ async function refreshNodeStatusSnapshot() {
       for (const entry of nodeEntries) {
         const prev = nodeStatusSnapshot.nodes?.[entry.deviceId] || {};
         const gwNode = gwNodeMapById.get(entry.deviceId) ||
-                       gwNodeMapByName.get(entry.displayName) ||
-                       gwNodeMapByName.get(entry.clientId);
+                       gwNodeMapByKey.get(normalizeNodePresenceKey(entry.deviceId)) ||
+                       gwNodeMapByKey.get(normalizeNodePresenceKey(entry.displayName)) ||
+                       gwNodeMapByKey.get(normalizeNodePresenceKey(entry.clientId));
         const connectedSource = gwNode?._fromPresence ? 'presence' : (gwNode ? 'node.list' : 'none');
         const connected = opState?.type === 'restarting_gateway'
           ? false
@@ -5321,12 +5353,11 @@ app.post('/api/ai/config', async (req, res) => {
           if (entry[field] !== undefined) existing[field] = entry[field];
         }
       }
-      // 同步 provider 级别的 api（仅当新值是 gateway 合法值时才更新）
-      if (entry.api && target[provName].api && entry.api !== target[provName].api) {
-        const safeProvApi = sanitizeApiValue(entry.api, provName);
-        const desiredProvApi = provName === 'github-copilot' ? 'github-copilot' : safeProvApi;
+      // provider 级 api 仅在当前值缺失或非法时修正，避免不同模型来回改写。
+      if (entry.api) {
+        const desiredProvApi = normalizeProviderApiForSync(target[provName].api, provName, entry.api);
         if (desiredProvApi && desiredProvApi !== target[provName].api) {
-          console.log(`[ensureModelEntry] 更新 provider ${provName}.api: ${target[provName].api} → ${desiredProvApi}`);
+          console.log(`[ensureModelEntry] 修正 provider ${provName}.api: ${target[provName].api} → ${desiredProvApi}`);
           target[provName].api = desiredProvApi;
         }
       }
@@ -5410,9 +5441,23 @@ app.post('/api/ai/config', async (req, res) => {
     writeOpenClawConfig(config);
     fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
 
-    // Gateway 会自动检测 config 变更并热加载，无需手动重启
-    console.log('[ai/config] 模型配置已保存，Gateway 将自动热加载');
-    res.json({ success: true, message: '模型配置已保存，Gateway 将自动热加载新配置' });
+    const opState = getOpenClawOperationState();
+    let message = '模型配置已保存';
+    let nextOperationState = opState;
+
+    if (opState.type === 'idle') {
+      nextOperationState = queueGatewayRestart('ai-config-save');
+      message = '模型配置已保存，已提交 Gateway 重载请求';
+      console.log('[ai/config] 模型配置已保存，已提交 Gateway 重载请求');
+    } else if (opState.type === 'restarting_gateway') {
+      message = '模型配置已保存，Gateway 重载已在进行中';
+      console.log('[ai/config] 模型配置已保存，Gateway 重载已在进行中');
+    } else {
+      message = `模型配置已保存，当前存在进行中的操作（${opState.type}），请在操作完成后重载 Gateway 以应用配置`;
+      console.log(`[ai/config] 模型配置已保存，但当前操作 ${opState.type} 正在进行，暂不额外触发 Gateway 重载`);
+    }
+
+    res.json({ success: true, message, operationState: nextOperationState });
   } catch (err) {
     console.error('[ai/config] Error saving config:', err);
     res.status(500).json({ error: '保存配置失败: ' + (err?.message || '未知错误') });
@@ -7317,53 +7362,11 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
 
 function buildOpenClawPreferredInstallCommand(release, options = {}) {
   const mode = normalizeOpenClawInstallMode(options?.mode || process.env.OPENCLAW_INSTALL_MODE || 'auto');
-  const assetCmd = buildOpenClawReleaseAssetInstallCommand(release);
-  const safeAssetCmd = assetCmd || 'false';
-  const targetVersion = String(release?.tag || '').replace(/^v/i, '').trim() || 'latest';
+  const targetVersion = String(release?.installVersion || release?.tag || '').replace(/^v/i, '').trim() || 'latest';
   const npmCmd = buildOpenClawNpmInstallCommand(targetVersion);
-  const sourceCmd = buildOpenClawSourceInstallCommand(release);
-  const selectedAsset = String(release?.binaryAsset?.name || '').trim();
-  const selectedAssetSource = String(release?.binaryAsset?.source || 'github-release').trim() || 'github-release';
-  const selectedAssetSizeMb = Number(release?.binaryAsset?.size || 0) > 0
-    ? Math.ceil(Number(release.binaryAsset.size || 0) / (1024 * 1024))
-    : 0;
-  const selectedAssetInfo = selectedAsset
-    ? `${selectedAsset}${selectedAssetSizeMb > 0 ? ` (${selectedAssetSizeMb}MB)` : ''}`
-    : 'none';
-  const assetsBrief = Array.isArray(release?.assets)
-    ? release.assets.slice(0, 10).map((item) => {
-      const name = String(item?.name || '').trim();
-      const sizeMb = Number(item?.size || 0) > 0 ? Math.ceil(Number(item.size || 0) / (1024 * 1024)) : 0;
-      return name ? `${name}${sizeMb > 0 ? `(${sizeMb}MB)` : ''}` : '';
-    }).filter(Boolean).join(', ')
-    : '';
 
   const safeMode = String(mode || 'auto').replace(/"/g, '');
-  const safeTag = String(release?.tag || '').replace(/"/g, '');
-  const safeAssetSource = selectedAssetSource.replace(/"/g, '');
-  const safeAssetInfo = selectedAssetInfo.replace(/"/g, '');
-  const safeAssetsBrief = String(assetsBrief || 'none').replace(/"/g, '');
-
-  const releaseModeBlock = [
-    'if [ "$HAS_RELEASE_ASSET" != "1" ]; then',
-    '  echo "[openclaw][error] release 模式要求可用编译包，但当前未检测到（assets=${RELEASE_ASSETS_BRIEF}）"',
-    '  exit 41',
-    'fi',
-    'if (',
-    safeAssetCmd,
-    '); then',
-    '  if runtime_ready_and_latest; then',
-    '    echo "[openclaw] release 模式安装完成并校验通过。"',
-    '  else',
-    '    echo "[openclaw][error] release 模式安装后版本或入口校验失败。"',
-    '    exit 42',
-    '  fi',
-    'else',
-    '  rc=$?',
-    '  echo "[openclaw][error] release 模式安装失败(exit=${rc})"',
-    '  exit "$rc"',
-    'fi'
-  ].join('\n');
+  const safeTag = `v${targetVersion}`.replace(/"/g, '');
 
   const npmModeBlock = [
     'if (',
@@ -7383,79 +7386,30 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     'fi'
   ].join('\n');
 
-  const sourceModeBlock = [
-    sourceCmd,
-    'if runtime_ready_and_latest; then',
-    '  echo "[openclaw] source 模式安装完成并校验通过。"',
-    'else',
-    '  echo "[openclaw][error] source 模式安装后版本或入口校验失败。"',
-    '  exit 44',
-    'fi'
-  ].join('\n');
-
   const autoModeBlock = [
     'if current_already_at_target; then',
     '  echo "[openclaw] 当前运行版本已满足目标版本，跳过安装。"',
     '  exit 0',
     'fi',
-    'AUTO_DONE=0',
-    'echo "[openclaw] 自动模式：先尝试官方 npm 安装..."',
+    'echo "[openclaw] 自动模式：执行官方 npm 安装..."',
     'if (',
     npmCmd,
     '); then',
     '  rm -f /root/.openclaw/openclaw-source-install.json >/dev/null 2>&1 || true',
     '  if runtime_ready_and_latest; then',
     '    echo "[openclaw] npm 路径成功。"',
-    '    AUTO_DONE=1',
     '  else',
-    '    echo "[openclaw] npm 路径后校验未通过，继续尝试 release 预构建包。"',
+    '    echo "[openclaw][error] npm 路径后校验未通过。"',
+    '    exit 43',
     '  fi',
     'else',
     '  rc=$?',
-    '  echo "[openclaw] npm 路径失败(exit=${rc})，继续尝试 release 预构建包。"',
-    'fi',
-    'if [ "$AUTO_DONE" != "1" ] && [ "$HAS_RELEASE_ASSET" = "1" ]; then',
-    '  echo "[openclaw] 自动模式：尝试 release 预构建包..."',
-    '  if (',
-    safeAssetCmd,
-    '  ); then',
-    '    if runtime_ready_and_latest; then',
-    '      echo "[openclaw] release 路径成功。"',
-    '      AUTO_DONE=1',
-    '    else',
-    '      echo "[openclaw] release 路径未达到目标版本或入口不完整，回退源码构建安装..."',
-    '    fi',
-    '  else',
-    '    rc=$?',
-    '    echo "[openclaw] release 路径失败(exit=${rc})，回退源码构建安装..."',
-    '  fi',
-    'elif [ "$AUTO_DONE" != "1" ]; then',
-    '  echo "[openclaw] 自动模式：未检测到 GitHub Linux 资产，跳过 release，转入源码构建安装。"',
-    'fi',
-    'if [ "$AUTO_DONE" != "1" ]; then',
-    '  echo "[openclaw] 自动模式：执行源码构建安装..."',
-    sourceCmd,
-    '  if runtime_ready_and_latest; then',
-    '    echo "[openclaw] source 路径成功。"',
-    '    AUTO_DONE=1',
-    '  else',
-    '    echo "[openclaw][error] source 路径执行后校验仍失败。"',
-    '    exit 45',
-    '  fi',
-    'fi',
-    'if [ "$AUTO_DONE" != "1" ]; then',
-    '  echo "[openclaw][error] 自动安装链路未完成。"',
-    '  exit 46',
+    '  echo "[openclaw][error] npm 路径失败(exit=${rc})。"',
+    '  exit "$rc"',
     'fi'
   ].join('\n');
 
-  const modeBlock = mode === 'release'
-    ? releaseModeBlock
-    : mode === 'npm'
-      ? npmModeBlock
-      : mode === 'source'
-        ? sourceModeBlock
-        : autoModeBlock;
+  const modeBlock = mode === 'npm' ? npmModeBlock : autoModeBlock;
 
   return [
     'set -euo pipefail',
@@ -7463,13 +7417,9 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     `INSTALL_MODE="${safeMode}"`,
     `TARGET_TAG="${safeTag}"`,
     'TARGET_VERSION="${TARGET_TAG#v}"',
-    `HAS_RELEASE_ASSET="${assetCmd ? '1' : '0'}"`,
-    `RELEASE_ASSET_SOURCE="${safeAssetSource}"`,
-    `RELEASE_ASSET_INFO="${safeAssetInfo}"`,
-    `RELEASE_ASSETS_BRIEF="${safeAssetsBrief}"`,
     'echo "[openclaw] install mode: ${INSTALL_MODE}"',
     'echo "[openclaw] release tag: ${TARGET_TAG:-unknown}"',
-    'echo "[openclaw] selected release asset: ${RELEASE_ASSET_INFO} (source=${RELEASE_ASSET_SOURCE})"',
+    'echo "[openclaw] install source: npm"',
     'NEXT_SRC_DIR="/root/.openclaw/openclaw-source-next"',
     'PREV_SRC_DIR="/root/.openclaw/openclaw-source-prev"',
     'PERSIST_SRC_DIR="/root/.openclaw/openclaw-source"',
@@ -8462,11 +8412,11 @@ app.post('/api/openclaw/install', async (req, res) => {
 
     const mode = resolveOpenClawInstallMode(req);
     const repo = resolveOpenClawSourceRepo(true);
-    const release = await getLatestOpenClawRelease(repo);
+    const release = await resolveLatestOpenClawInstallRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
     const taskId = runOpenClawTask(
       command,
-      `安装 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`,
+      `安装 OpenClaw（mode=${mode}，仅 npm）(${release.tag})`,
       'installing',
       { release }
     );
@@ -8637,11 +8587,11 @@ app.post('/api/openclaw/update', async (req, res) => {
 
     const mode = resolveOpenClawInstallMode(req);
     const repo = resolveOpenClawSourceRepo(true);
-    const release = await getLatestOpenClawRelease(repo);
+    const release = await resolveLatestOpenClawInstallRelease(repo);
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
     const taskId = runOpenClawTask(
       command,
-      `更新 OpenClaw（mode=${mode}，官方 npm 优先 → GitHub Linux 包 → 源码兜底）(${release.tag})`,
+      `更新 OpenClaw（mode=${mode}，仅 npm）(${release.tag})`,
       'updating',
       { release }
     );
@@ -8862,6 +8812,9 @@ app.get('/api/openclaw/gateway/logs', (req, res) => {
 // ============================================================
 function sanitizeLogLine(line) {
   if (typeof line !== 'string') return null;
+  if (/让我获取 GitHub .*数据(?:并整理所有数据)?[:：]?/.test(line)) {
+    return null;
+  }
   if (/\[node\]\s+(?:control-ui\s+)?WS (?:connect failed|error):\s+connect ECONNREFUSED 127\.0\.0\.1:\d+/i.test(line)) {
     return null;
   }

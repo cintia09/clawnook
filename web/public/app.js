@@ -1437,7 +1437,7 @@ async function refreshOpenClaw(opts = {}){
   } else if (invalidKeys.length > 0) {
     setOpenClawStatusLine(`配置状态：检测到无效 key（${invalidKeys.join(', ')}），请点击“配置恢复”`, null);
   } else if (noLinuxPrebuilt && !d.installed) {
-    setOpenClawStatusLine('安装提示：官方 release 暂无 Linux 预编译包，已切换官方 npm 安装（失败再源码兜底）', null);
+    setOpenClawStatusLine('安装提示：将使用官方 npm 安装', null);
   } else if (!d.installed) {
     setOpenClawStatusLine('更新状态：未安装，可执行安装', null);
   } else if (!d.gatewayRunning && d.gatewayStarting && d.discordConnectError) {
@@ -3070,7 +3070,7 @@ async function saveAIConfig() {
     }
 
     toast('保存成功', res.message || '模型配置已保存');
-    appendAiAuthLog('[save] 模型配置保存成功，Gateway 将自动热加载', 'success');
+    appendAiAuthLog(`[save] ${res.message || '模型配置已保存'}`, 'success');
     await loadAIConfig();
   } catch (e) {
     toast('保存失败', e.message);
