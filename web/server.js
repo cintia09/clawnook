@@ -8228,6 +8228,11 @@ app.get('/api/openclaw', async (req, res) => {
   }
 });
 
+app.get('/api/openclaw/status', async (req, res) => {
+  req.url = '/api/openclaw';
+  return app._router.handle(req, res, () => {});
+});
+
 app.get('/api/openclaw/gateway-link', (req, res) => {
   try {
     const accessPatch = ensureGatewayControlUiAccessForRequest(req);
@@ -9129,6 +9134,47 @@ app.post('/api/openclaw/pairing/approve', async (req, res) => {
   } catch (e) {
     console.error(`[pairing][approve] error:`, e);
     res.status(500).json({ success: false, error: e?.message || '审批失败' });
+  }
+});
+
+app.post('/api/openclaw/pairing/approve-discord', async (req, res) => {
+  const rawCode = String(req.body?.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!rawCode) return res.status(400).json({ success: false, error: '缺少配对码' });
+  if (!/^[A-Z0-9]{6,32}$/.test(rawCode)) return res.status(400).json({ success: false, error: '配对码格式无效' });
+
+  try {
+    const command = [
+      `PAIRING_CODE="${rawCode}"`,
+      'if command -v openclaw >/dev/null 2>&1; then',
+      '  openclaw pairing approve discord "$PAIRING_CODE" 2>&1',
+      'elif [ -x /root/.npm-global/bin/openclaw ]; then',
+      '  /root/.npm-global/bin/openclaw pairing approve discord "$PAIRING_CODE" 2>&1',
+      'elif [ -x /usr/local/bin/openclaw ]; then',
+      '  /usr/local/bin/openclaw pairing approve discord "$PAIRING_CODE" 2>&1',
+      'elif [ -x /usr/bin/openclaw ]; then',
+      '  /usr/bin/openclaw pairing approve discord "$PAIRING_CODE" 2>&1',
+      'elif [ -x /opt/homebrew/bin/openclaw ]; then',
+      '  /opt/homebrew/bin/openclaw pairing approve discord "$PAIRING_CODE" 2>&1',
+      'elif [ -f /root/.openclaw/openclaw-source/openclaw.mjs ]; then',
+      '  node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs pairing approve discord "$PAIRING_CODE" 2>&1',
+      'else',
+      '  echo "openclaw not found"',
+      '  exit 127',
+      'fi'
+    ].join('\n');
+    const result = await runOpenClawCli(command, 45000);
+    const output = keepLastLines(String(result.output || '').trim(), 20).trim();
+    if (!result.ok) {
+      const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const errorText = lines[lines.length - 1] || 'Discord 配对审批失败';
+      return res.status(500).json({ success: false, error: errorText, output });
+    }
+
+    const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const message = lines[lines.length - 1] || `Discord 配对码 ${rawCode} 已批准`;
+    res.json({ success: true, code: rawCode, message, output });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || 'Discord 配对审批失败' });
   }
 });
 

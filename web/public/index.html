@@ -459,6 +459,21 @@
                 New Application → Bot → 「Reset Token」获取 Bot Token →
                 开启 Message Content Intent → 生成邀请链接将 Bot 添加到服务器
               </div>
+              <div id="discord-runtime-status" class="muted small" style="margin-bottom:12px;padding:10px 12px;background:#1a1a2e;border-radius:6px;border:1px solid rgba(255,255,255,.08)">
+                正在检查 Discord 运行状态...
+              </div>
+              <div style="margin-bottom:12px;padding:12px;border-radius:8px;background:#141726;border:1px solid rgba(88,166,255,.18)">
+                <div style="font-weight:800;font-size:14px;margin-bottom:6px">审批 Discord 配对码</div>
+                <div class="muted small" style="margin-bottom:10px">当 Discord 里出现 access not configured 和配对码时，可在这里直接审批，无需再进容器执行命令。</div>
+                <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+                  <div class="field" style="flex:1 1 260px;margin:0">
+                    <div class="label"><span>配对码</span></div>
+                    <input class="input" id="discord-pairing-code" placeholder="例如: G8RP2Z8R" />
+                  </div>
+                  <button class="btn btn-primary" id="btn-discord-approve-pairing">批准配对</button>
+                </div>
+                <div id="discord-pairing-result" class="muted small" style="margin-top:8px;min-height:18px"></div>
+              </div>
               <div class="grid">
                 <div style="grid-column: span 3;" class="field">
                   <div class="label"><span>启用</span></div>

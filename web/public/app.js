@@ -2680,6 +2680,63 @@ function parseGuildIds(raw){
   ));
 }
 
+function setDiscordRuntimeStatus(message, tone = 'info') {
+  const el = $('discord-runtime-status');
+  if (!el) return;
+  const palette = {
+    info: { bg: '#1a1a2e', border: 'rgba(255,255,255,.08)', color: '#c9d1d9' },
+    success: { bg: 'rgba(46,160,67,.12)', border: 'rgba(46,160,67,.35)', color: '#7ee787' },
+    warning: { bg: 'rgba(210,153,34,.12)', border: 'rgba(210,153,34,.35)', color: '#e3b341' },
+    error: { bg: 'rgba(248,81,73,.12)', border: 'rgba(248,81,73,.35)', color: '#ff938a' }
+  };
+  const style = palette[tone] || palette.info;
+  el.textContent = message;
+  el.style.background = style.bg;
+  el.style.borderColor = style.border;
+  el.style.color = style.color;
+}
+
+function setDiscordPairingResult(message, tone = 'info') {
+  const el = $('discord-pairing-result');
+  if (!el) return;
+  const colors = {
+    info: '#8b949e',
+    success: '#7ee787',
+    warning: '#e3b341',
+    error: '#ff938a'
+  };
+  el.textContent = message || '';
+  el.style.color = colors[tone] || colors.info;
+}
+
+async function loadDiscordRuntimeStatus(){
+  setDiscordRuntimeStatus('正在检查 Discord 运行状态...');
+  const status = await api('/api/openclaw', { timeoutMs: 12000 });
+  if (status.error) {
+    setDiscordRuntimeStatus(`Discord 运行状态读取失败：${status.error}`, 'error');
+    return;
+  }
+
+  const enabled = ($('discord-enabled')?.value || 'false') === 'true';
+  if (!enabled) {
+    setDiscordRuntimeStatus('Discord 当前未启用。保存配置并重启 Gateway 后才会建立连接。', 'warning');
+    return;
+  }
+  if (status.discordConnectError) {
+    setDiscordRuntimeStatus(`Discord 连接异常：${status.discordConnectError}`, 'error');
+    return;
+  }
+  if (status.gatewayRunning) {
+    setDiscordRuntimeStatus('Gateway 在线，最近未检测到 Discord 连接错误。', 'success');
+    return;
+  }
+  if (status.gatewayStarting || status.gatewayProcessRunning) {
+    setDiscordRuntimeStatus('Gateway 正在启动中，等待 Discord 完成连接。', 'warning');
+    return;
+  }
+  setDiscordRuntimeStatus('Gateway 当前未运行，暂时无法确认 Discord 连接状态。', 'warning');
+}
+
 // AI key tab switching
 document.querySelectorAll('#ai-key-tabs .tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -3327,6 +3384,7 @@ async function loadMessagingConfig(){
   setVal('discord-streaming',   validStreaming);
   setVal('discord-historylimit', dc.historyLimit ?? 30);
   setVal('discord-dmhistorylimit', dc.dmHistoryLimit ?? 50);
+  await loadDiscordRuntimeStatus();
 
   // -- Signal --
   setBoolSelect('signal-enabled', c.signal?.enabled);
@@ -3343,6 +3401,41 @@ async function loadMessagingConfig(){
 }
 
 $('btn-msg-load')?.addEventListener('click', loadMessagingConfig);
+
+$('btn-discord-approve-pairing')?.addEventListener('click', async ()=>{
+  const input = $('discord-pairing-code');
+  const button = $('btn-discord-approve-pairing');
+  const code = String(input?.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!code || !/^[A-Z0-9]{6,32}$/.test(code)) {
+    setDiscordPairingResult('请输入有效的 Discord 配对码。', 'error');
+    toast('审批失败', '配对码格式无效');
+    return;
+  }
+
+  if (button) button.disabled = true;
+  setDiscordPairingResult('正在审批 Discord 配对码...', 'info');
+  appendMsgLog(`[discord] 正在审批配对码 ${code}...`);
+  const result = await api('/api/openclaw/pairing/approve-discord', {
+    method: 'POST',
+    body: { code },
+    timeoutMs: 45000
+  });
+  if (button) button.disabled = false;
+
+  if (result.success) {
+    if (input) input.value = '';
+    setDiscordPairingResult(result.message || `配对码 ${code} 已批准。`, 'success');
+    appendMsgLog(`[discord] ${result.message || `配对码 ${code} 已批准`}`);
+    toast('审批成功', result.message || `配对码 ${code} 已批准`);
+    await loadDiscordRuntimeStatus();
+    return;
+  }
+
+  setDiscordPairingResult(result.error || '审批失败', 'error');
+  appendMsgLog(`[discord] 审批失败: ${result.error || 'unknown'}`);
+  toast('审批失败', result.error || 'unknown');
+  await loadDiscordRuntimeStatus();
+});
 
 // 重启 Gateway 生效
 $('btn-msg-restart')?.addEventListener('click', async ()=>{
