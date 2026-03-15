@@ -394,6 +394,72 @@ function Start-AnimatedProgress {
     return $result
 }
 
+function Invoke-JobWithTimeout {
+    param(
+        [scriptblock]$ScriptBlock,
+        [object[]]$ArgumentList = @(),
+        [int]$TimeoutSec = 8,
+        $DefaultResult = $null,
+        [string]$TimeoutLabel = "后台操作"
+    )
+
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
+        if (-not (Wait-Job -Job $job -Timeout $TimeoutSec)) {
+            Write-Log "$TimeoutLabel timed out after ${TimeoutSec}s" "WARN"
+            Stop-Job -Job $job -Force -ErrorAction SilentlyContinue | Out-Null
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+            return $DefaultResult
+        }
+
+        $result = Receive-Job -Job $job -ErrorAction SilentlyContinue
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+
+        if ($result -is [System.Array] -and $result.Count -eq 1) {
+            return $result[0]
+        }
+
+        return $result
+    } catch {
+        if ($job) {
+            Stop-Job -Job $job -Force -ErrorAction SilentlyContinue | Out-Null
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+        Write-Log "$TimeoutLabel failed: $_" "WARN"
+        return $DefaultResult
+    }
+}
+
+function Get-AppxPackageFast {
+    param(
+        [string]$Name,
+        [string]$FamilyPrefix,
+        [int]$TimeoutSec = 8
+    )
+
+    return (Invoke-JobWithTimeout `
+        -ArgumentList @($Name, $FamilyPrefix) `
+        -TimeoutSec $TimeoutSec `
+        -DefaultResult $null `
+        -TimeoutLabel "Appx 查询" `
+        -ScriptBlock {
+            param($PackageName, $PackageFamilyPrefix)
+
+            if ($PackageName) {
+                return (Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue | Select-Object -First 1)
+            }
+
+            if ($PackageFamilyPrefix) {
+                return (Get-AppxPackage -ErrorAction SilentlyContinue |
+                    Where-Object { $_.PackageFamilyName -like ($PackageFamilyPrefix + "*") } |
+                    Select-Object -First 1)
+            }
+
+            return $null
+        })
+}
+
 function Show-StepProgress {
     <#
     .SYNOPSIS
@@ -517,12 +583,21 @@ function Test-WindowsVersion {
 function Test-WindowsFeatureEnabled {
     param([string]$FeatureName)
 
-    try {
-        $feature = Get-WindowsOptionalFeature -Online -FeatureName $FeatureName -ErrorAction SilentlyContinue
-        return ($feature -and $feature.State -eq "Enabled")
-    } catch {
-        return $false
-    }
+    return [bool](Invoke-JobWithTimeout `
+        -ArgumentList @($FeatureName) `
+        -TimeoutSec 8 `
+        -DefaultResult $false `
+        -TimeoutLabel "Windows 功能检测: $FeatureName" `
+        -ScriptBlock {
+            param($TargetFeatureName)
+
+            try {
+                $feature = Get-WindowsOptionalFeature -Online -FeatureName $TargetFeatureName -ErrorAction SilentlyContinue
+                return [bool]($feature -and $feature.State -eq "Enabled")
+            } catch {
+                return $false
+            }
+        })
 }
 
 function Test-WslRebootPending {
@@ -559,13 +634,6 @@ function Test-WslCoreInstalled {
         }
     }
 
-    try {
-        $pkg = Get-AppxPackage -Name "MicrosoftCorporationII.WindowsSubsystemForLinux" -ErrorAction SilentlyContinue
-        if ($pkg) {
-            return $true
-        }
-    } catch { }
-
     return $false
 }
 
@@ -593,13 +661,41 @@ function Get-RegisteredWslDistros {
 }
 
 function Test-WslCommandOperational {
-    if (-not (Test-WslCoreInstalled)) {
+    $wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
         return $false
     }
 
     try {
-        $null = & wsl --version 2>$null
-        return ($LASTEXITCODE -eq 0)
+        $systemEncoding = Get-SystemOemEncoding
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = $wslCommand.Source
+        $pinfo.Arguments = "--version"
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $pinfo.StandardOutputEncoding = $systemEncoding
+        $pinfo.StandardErrorEncoding = $systemEncoding
+
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+        if (-not $proc.WaitForExit(8000)) {
+            try { $proc.Kill() } catch { }
+            $proc.Dispose()
+            Write-Log "wsl --version timed out during environment detection" "WARN"
+            return $false
+        }
+
+        $output = ($proc.StandardOutput.ReadToEnd() + " " + $proc.StandardError.ReadToEnd()).Trim()
+        $exitCode = $proc.ExitCode
+        $proc.Dispose()
+
+        Write-Log "wsl --version detection exit code: $exitCode"
+        if ($output) {
+            Write-Log "wsl --version detection output: $output"
+        }
+
+        return ($exitCode -eq 0)
     } catch {
         return $false
     }
@@ -608,12 +704,14 @@ function Test-WslCommandOperational {
 function Test-Wsl2Installed {
     $vmPlatformEnabled = Test-WindowsFeatureEnabled -FeatureName "VirtualMachinePlatform"
     $wslCoreInstalled = Test-WslCoreInstalled
+    $registeredDistros = Get-RegisteredWslDistros
 
-    if (-not $wslCoreInstalled) {
-        return $false
+    if ($wslCoreInstalled -and $vmPlatformEnabled) {
+        return $true
     }
 
-    if ($vmPlatformEnabled) {
+    if ($registeredDistros.Count -gt 0) {
+        Write-Log "WSL detected by registered distros: $($registeredDistros -join ', ')"
         return $true
     }
 
@@ -646,27 +744,18 @@ function Test-UbuntuPackageInstalled {
     )
 
     foreach ($name in $packageNames) {
-        try {
-            $pkg = Get-AppxPackage -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($pkg) {
-                Write-Log "Ubuntu Appx package found: $($pkg.Name) $($pkg.Version)"
-                return $true
-            }
-        } catch { }
-    }
-
-    try {
-        $pkg = Get-AppxPackage -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.PackageFamilyName -like "CanonicalGroupLimited.Ubuntu24.04LTS_*" -or
-                $_.Name -eq "CanonicalGroupLimited.Ubuntu24.04LTS"
-            } |
-            Select-Object -First 1
+        $pkg = Get-AppxPackageFast -Name $name -TimeoutSec 8
         if ($pkg) {
-            Write-Log "Ubuntu Appx package found by family: $($pkg.PackageFamilyName)"
+            Write-Log "Ubuntu Appx package found: $($pkg.Name) $($pkg.Version)"
             return $true
         }
-    } catch { }
+    }
+
+    $pkg = Get-AppxPackageFast -FamilyPrefix "CanonicalGroupLimited.Ubuntu24.04LTS" -TimeoutSec 8
+    if ($pkg) {
+        Write-Log "Ubuntu Appx package found by family: $($pkg.PackageFamilyName)"
+        return $true
+    }
 
     return $false
 }
