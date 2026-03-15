@@ -1643,7 +1643,7 @@ F2B
 # ─── container create & start ─────────────────────────────────
 
 create_and_start(){
-  local host_user host_uid host_gid key_injected ssh_login_user user_ready ssh_hardened
+  local host_user host_uid host_gid key_injected ssh_login_user user_ready ssh_hardened ssh_password_disabled
   host_user="${SUDO_USER:-$(id -un 2>/dev/null || true)}"
   host_uid="$(id -u 2>/dev/null || true)"
   host_gid="$(id -g 2>/dev/null || true)"
@@ -1651,6 +1651,7 @@ create_and_start(){
   ssh_login_user="root"
   user_ready="false"
   ssh_hardened="false"
+  ssh_password_disabled="false"
 
   ensure_state_volume
 
@@ -1715,9 +1716,7 @@ create_and_start(){
     sleep 1
   done
 
-  if [ "$ssh_ready" = "true" ]; then
-    success "SSH 服务已就绪"
-  else
+  if [ "$ssh_ready" != "true" ]; then
     warn "SSH 服务状态未知，请检查容器日志"
   fi
 
@@ -1735,7 +1734,6 @@ create_and_start(){
   for keyfile in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ecdsa.pub"; do
     [ -f "$keyfile" ] || continue
     if [ "$user_ready" = "true" ]; then
-      info "注入公钥 $(basename "$keyfile") 到用户 $host_user"
       docker exec "$CONTAINER_NAME" bash -c "mkdir -p '/home/$host_user/.ssh' && chmod 700 '/home/$host_user/.ssh'" >/dev/null 2>&1 || true
       if docker cp "$keyfile" "$CONTAINER_NAME:/tmp/host_user_key.pub" >/dev/null 2>&1 \
         && docker exec "$CONTAINER_NAME" bash -c "touch '/home/$host_user/.ssh/authorized_keys' && while IFS= read -r k; do [ -z \"\$k\" ] && continue; grep -qxF \"\$k\" '/home/$host_user/.ssh/authorized_keys' || echo \"\$k\" >> '/home/$host_user/.ssh/authorized_keys'; done < /tmp/host_user_key.pub && chmod 600 '/home/$host_user/.ssh/authorized_keys' && chown -R '$host_user:$host_user' '/home/$host_user/.ssh' && test -s '/home/$host_user/.ssh/authorized_keys' && rm -f /tmp/host_user_key.pub" >/dev/null 2>&1; then
@@ -1759,14 +1757,12 @@ create_and_start(){
     local auto_pub=""
     auto_pub="$(generate_host_pubkey_if_missing || true)"
     if [ -n "$auto_pub" ]; then
-      info "未检测到宿主机公钥，已自动生成 $(basename "$auto_pub")"
       if [ "$user_ready" = "true" ]; then
         docker exec "$CONTAINER_NAME" bash -c "mkdir -p '/home/$host_user/.ssh' && chmod 700 '/home/$host_user/.ssh'" >/dev/null 2>&1 || true
         if docker cp "$auto_pub" "$CONTAINER_NAME:/tmp/host_user_key.pub" >/dev/null 2>&1 \
           && docker exec "$CONTAINER_NAME" bash -c "touch '/home/$host_user/.ssh/authorized_keys' && while IFS= read -r k; do [ -z \"\$k\" ] && continue; grep -qxF \"\$k\" '/home/$host_user/.ssh/authorized_keys' || echo \"\$k\" >> '/home/$host_user/.ssh/authorized_keys'; done < /tmp/host_user_key.pub && chmod 600 '/home/$host_user/.ssh/authorized_keys' && chown -R '$host_user:$host_user' '/home/$host_user/.ssh' && test -s '/home/$host_user/.ssh/authorized_keys' && rm -f /tmp/host_user_key.pub" >/dev/null 2>&1; then
           key_injected="true"
           ssh_login_user="$host_user"
-          success "已自动生成并注入宿主机 SSH 公钥到用户 $host_user"
         fi
       elif docker exec "$CONTAINER_NAME" bash -c "chmod 700 /root 2>/dev/null || true; mkdir -p /root/.ssh && chmod 700 /root/.ssh" >/dev/null 2>&1 \
         && docker cp "$auto_pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys.tmp" >/dev/null 2>&1 \
@@ -1785,7 +1781,10 @@ create_and_start(){
   fi
 
   if [ "$ssh_hardened" = "true" ] && docker exec "$CONTAINER_NAME" bash -c "/usr/sbin/sshd -T 2>/dev/null | grep -q '^passwordauthentication no$'"; then
-    success "SSH 密码认证已禁用（与 Windows 安装对齐）"
+    ssh_password_disabled="true"
+    if [ "$key_injected" = "true" ] && [ "$ssh_login_user" != "root" ]; then
+      success "SSH 已加固：已禁用密码登录和 root 登录，仅支持普通用户 ${ssh_login_user} 密钥登录"
+    fi
   else
     warn "未确认 SSH 密码认证状态，建议执行: docker exec $CONTAINER_NAME /usr/sbin/sshd -T | grep passwordauthentication"
   fi
@@ -1819,15 +1818,15 @@ create_and_start(){
     print_summary_line "提权" "ssh 登录后执行 sudo -i"
   fi
 
-  if [ "$key_injected" = "true" ]; then
-    success "SSH 公钥已自动注入，密码登录已禁用"
-  else
+  if [ "$key_injected" != "true" ]; then
     warn "SSH 公钥未自动注入，请手动执行以下命令："
     local current_user="${ssh_login_user:-root}"
     echo -e "    ${WHITE}cat ~/.ssh/id_rsa.pub | ssh -p ${SSH_PORT} ${current_user}@<host> \"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys\"${NC}"
   fi
   if [ "$ssh_hardened" != "true" ]; then
     warn "SSH 密码认证状态未确认，请手动检查容器内 sshd 配置"
+  elif [ "$ssh_password_disabled" = "true" ] && [ "$ssh_login_user" = "root" ]; then
+    warn "SSH 已禁用密码登录，但当前仅保留 root 密钥登录，请检查普通用户公钥注入"
   fi
 }
 
