@@ -101,6 +101,16 @@ if (-not $downloaded) {
 Write-Host "  [INFO] Running installer..." -ForegroundColor Gray
 Write-Host ""
 
+# Re-encode with UTF-8 BOM so powershell.exe -File reads Chinese text correctly
+# (Windows PowerShell 5.1 uses system locale encoding by default, not UTF-8)
+try {
+    $rawContent = [IO.File]::ReadAllText($tempFile, [Text.Encoding]::UTF8)
+    $utf8Bom = New-Object System.Text.UTF8Encoding $true
+    [IO.File]::WriteAllText($tempFile, $rawContent, $utf8Bom)
+} catch {
+    Write-Host "  [WARN] Failed to re-encode script, proceeding anyway..." -ForegroundColor Yellow
+}
+
 try {
     [Console]::OutputEncoding = [Text.Encoding]::UTF8
     & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $tempFile
