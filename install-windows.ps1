@@ -1863,20 +1863,42 @@ exec bash "`$TMP_SCRIPT"
         return $false
     }
 
-    # Run interactively in the current console and let install-imageonly.sh own the UX.
+    # Run the Linux installer in a dedicated PowerShell window so WSL gets a real
+    # interactive console. Hosting the full TTY flow in the current PowerShell
+    # session has proven unreliable and can appear hung before any Linux-side output.
     try {
-        $originalInputEncoding = [Console]::InputEncoding
-        $originalOutputEncoding = [Console]::OutputEncoding
-        $utf8Encoding = New-Object System.Text.UTF8Encoding($false)
-        [Console]::InputEncoding = $utf8Encoding
-        [Console]::OutputEncoding = $utf8Encoding
-
-        if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser -- bash $wslTmpDeploy
+        $wslCommandText = if ($WslUser) {
+            "wsl -d \"$DistroName\" -u \"$WslUser\" -- bash \"$wslTmpDeploy\""
         } else {
-            & wsl -d $DistroName -- bash $wslTmpDeploy
+            "wsl -d \"$DistroName\" -- bash \"$wslTmpDeploy\""
         }
-        return ($LASTEXITCODE -eq 0)
+
+        $childCommand = @"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false)
+`$OutputEncoding = [Console]::OutputEncoding
+Write-Host ''
+Write-Host 'OpenClaw WSL 安装向导已启动，请在此窗口继续操作。' -ForegroundColor Cyan
+Write-Host ''
+& $wslCommandText
+`$exitCode = `$LASTEXITCODE
+if (`$exitCode -ne 0) {
+    Write-Host ''
+    Write-Host "WSL 安装未完成，退出码: `$exitCode" -ForegroundColor Yellow
+    Read-Host '按回车关闭窗口'
+}
+exit `$exitCode
+"@
+
+        Write-Info "已在新窗口打开 WSL 安装向导，请在新窗口继续操作..."
+        $childProcess = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            $childCommand
+        ) -Wait -PassThru
+        return ($childProcess.ExitCode -eq 0)
     } catch {
         Write-Err "WSL 交互安装失败: $_"
         Write-Suggestion "请手动打开 WSL 终端，执行以下命令完成安装："
@@ -1890,9 +1912,6 @@ exec bash "`$TMP_SCRIPT"
         Write-Host "    env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName LANG=C.UTF-8 LC_ALL=C.UTF-8 bash $wslTmpDeploy" -ForegroundColor White
         Write-Host ""
         return $false
-    } finally {
-        if ($null -ne $originalInputEncoding) { [Console]::InputEncoding = $originalInputEncoding }
-        if ($null -ne $originalOutputEncoding) { [Console]::OutputEncoding = $originalOutputEncoding }
     }
 }
 
