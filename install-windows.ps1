@@ -1797,17 +1797,18 @@ function Start-WslImageOnlyDeploy {
     Write-Info "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..."
 
     $hostLanIp = Get-PreferredHostIPv4
-    $defaultHttpPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTP_PORT) -RangeStart 8080 -RangeEnd 8099 -AllowReservedWslRelay
-    $defaultHttpsPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTPS_PORT) -RangeStart 8443 -RangeEnd 8499 -AllowReservedWslRelay
-    $defaultSshPort = Find-AvailablePort -PreferredPort 2222 -RangeStart 2223 -RangeEnd 2299 -AllowReservedWslRelay
-    $defaultGwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18800 -RangeEnd 18899 -AllowReservedWslRelay
+    # WSL mode: the existing container will be stopped by install-imageonly.sh
+    # before binding ports, so skip availability checks and pass defaults directly.
+    $defaultHttpPort = [int]$DEFAULT_HTTP_PORT
+    $defaultHttpsPort = [int]$DEFAULT_HTTPS_PORT
+    $defaultSshPort = 2222
+    $defaultGwTlsPort = 18790
 
     Write-Log "WSL host port hints: HTTP=$defaultHttpPort HTTPS=$defaultHttpsPort SSH=$defaultSshPort GW_TLS=$defaultGwTlsPort"
 
     # Download install-imageonly.sh inside WSL, then launch in a new terminal window
     $bootstrapScript = @"
 #!/bin/bash
-set -e
 
 # Clear proxy env — WSL NAT mode cannot reach Windows localhost proxies
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
@@ -1820,12 +1821,6 @@ export HTTP_PORT="$defaultHttpPort"
 export HTTPS_PORT="$defaultHttpsPort"
 export SSH_PORT="$defaultSshPort"
 export GW_TLS_PORT="$defaultGwTlsPort"
-
-# Redirect stdout/stderr to /dev/tty so all output is visible in the console.
-# Without this, wsl --exec pipes stdout through PowerShell which buffers/discards it.
-if [ -w /dev/tty ]; then
-    exec 1>/dev/tty 2>/dev/tty
-fi
 
 SCRIPT_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/install-imageonly.sh"
 TMP_SCRIPT="/tmp/openclaw-install-imageonly.sh"
@@ -1880,9 +1875,9 @@ exec bash "`$TMP_SCRIPT"
         [Console]::OutputEncoding = $utf8Encoding
 
         if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser --exec bash $wslTmpDeploy 2>$null
+            & wsl -d $DistroName -u $WslUser --exec bash $wslTmpDeploy
         } else {
-            & wsl -d $DistroName --exec bash $wslTmpDeploy 2>$null
+            & wsl -d $DistroName --exec bash $wslTmpDeploy
         }
         return ($LASTEXITCODE -eq 0)
     } catch {
