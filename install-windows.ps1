@@ -409,7 +409,7 @@ function Write-Suggestion {
 function Write-SummaryLine {
     param([string]$Label, [string]$Value)
 
-    $targetWidth = 12
+    $targetWidth = 6
     $displayWidth = 0
     foreach ($ch in $Label.ToCharArray()) {
         if ([int][char]$ch -le 127) {
