@@ -599,9 +599,11 @@ download_chunk_with_retry(){
 
   for attempt in $(seq 1 "$max_retry"); do
     tmp_file="${chunk_file}.tmp"
+    mkdir -p "$(dirname "$chunk_file")" 2>/dev/null || true
     rm -f "$tmp_file" 2>/dev/null || true
 
     if curl "${curl_args[@]}" -o "$tmp_file" "$url" 2>/dev/null; then
+      [ -f "$tmp_file" ] || continue
       actual_size="$(wc -c < "$tmp_file" 2>/dev/null | tr -d '[:space:]' || echo 0)"
       if [ "$actual_size" -eq "$expected_len" ] 2>/dev/null; then
         mv -f "$tmp_file" "$chunk_file"
