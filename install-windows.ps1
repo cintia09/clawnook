@@ -34,7 +34,6 @@ $DEFAULT_HTTPS_PORT = "443"
 $DEFAULT_HTTP_PORT  = "80"
 $DEFAULT_DEPLOY_DIR_NAME = ".openclaw-pro"
 $LEGACY_DEPLOY_DIR_NAME = "openclaw-pro"
-$WSL_TARGET_DIR  = "/root/$DEFAULT_DEPLOY_DIR_NAME"
 $DOCKER_PLATFORM = "linux/amd64"
 $GITHUB_REPO     = "cintia09/openclaw-pro"
 $IMAGE_NAME      = "openclaw-pro"
@@ -59,6 +58,36 @@ $script:sshRootFallback = $false
 $script:hostUserForSSH = ""
 $script:rootPasswordFilePath = ""
 $script:deployedContainerName = ""
+$script:wslDefaultUser = ""
+$script:wslDefaultHome = ""
+
+function Get-PreferredWslUserName {
+    $candidate = if ($env:USERNAME) { $env:USERNAME.ToLowerInvariant() } else { "openclaw" }
+    $candidate = $candidate -replace '[^a-z0-9_-]', ''
+    if (-not $candidate) {
+        $candidate = "openclaw"
+    }
+    if ($candidate -match '^[0-9]') {
+        $candidate = "u$candidate"
+    }
+    if ($candidate.Length -gt 24) {
+        $candidate = $candidate.Substring(0, 24).TrimEnd('_', '-')
+    }
+    if (-not $candidate) {
+        $candidate = "openclaw"
+    }
+    return $candidate
+}
+
+function Get-WslTargetDir {
+    if ($script:wslDefaultHome) {
+        return ($script:wslDefaultHome.TrimEnd('/') + "/$DEFAULT_DEPLOY_DIR_NAME")
+    }
+    if ($script:wslDefaultUser -and $script:wslDefaultUser -ne "root") {
+        return "/home/$($script:wslDefaultUser)/$DEFAULT_DEPLOY_DIR_NAME"
+    }
+    return "/root/$DEFAULT_DEPLOY_DIR_NAME"
+}
 
 function Resolve-LocalDeployDir {
     param([string]$BasePath)
@@ -1251,8 +1280,144 @@ function Wait-WslReady {
     return $false
 }
 
+function Ensure-WslDefaultUser {
+        param([string]$DistroName)
+
+        $preferredUser = Get-PreferredWslUserName
+        try {
+                $currentUser = (& wsl -d $DistroName --exec sh -lc "id -un 2>/dev/null || true" 2>&1 | Out-String).Trim()
+                if ($currentUser -and $currentUser -ne "root") {
+                        $preferredUser = $currentUser
+                }
+        } catch { }
+
+        $setupScript = @'
+#!/bin/bash
+set -e
+
+preferred="${OPENCLAW_PREFERRED_USER:-openclaw}"
+
+pick_regular_user() {
+    if [ -n "$preferred" ] && [ "$preferred" != "root" ] && id "$preferred" >/dev/null 2>&1; then
+        printf '%s\n' "$preferred"
+        return 0
+    fi
+
+    awk -F: '($3 >= 1000) && ($1 != "nobody") && ($7 !~ /(false|nologin)$/) { print $1; exit }' /etc/passwd
+}
+
+user="$(pick_regular_user || true)"
+if [ -z "$user" ]; then
+    user="$preferred"
+    suffix=0
+    while id "$user" >/dev/null 2>&1; do
+        suffix=$((suffix + 1))
+        user="${preferred}${suffix}"
+    done
+    useradd -m -s /bin/bash "$user"
+fi
+
+if getent group sudo >/dev/null 2>&1; then
+    usermod -aG sudo "$user" 2>/dev/null || true
+fi
+if getent group docker >/dev/null 2>&1; then
+    usermod -aG docker "$user" 2>/dev/null || true
+fi
+
+install -d -m 0755 /etc/sudoers.d
+printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" > /etc/sudoers.d/90-openclaw-wsl
+chmod 440 /etc/sudoers.d/90-openclaw-wsl
+
+tmp_wsl_conf="$(mktemp)"
+if [ -f /etc/wsl.conf ]; then
+    awk -v user="$user" '
+        BEGIN { in_user = 0; wrote = 0 }
+        /^\[user\][[:space:]]*$/ {
+            print "[user]"
+            print "default=" user
+            in_user = 1
+            wrote = 1
+            next
+        }
+        /^\[[^]]+\][[:space:]]*$/ {
+            in_user = 0
+            print
+            next
+        }
+        {
+            if (!in_user) {
+                print
+            }
+        }
+        END {
+            if (!wrote) {
+                if (NR > 0) {
+                    print ""
+                }
+                print "[user]"
+                print "default=" user
+            }
+        }
+    ' /etc/wsl.conf > "$tmp_wsl_conf"
+else
+    {
+        echo "[user]"
+        echo "default=$user"
+    } > "$tmp_wsl_conf"
+fi
+cat "$tmp_wsl_conf" > /etc/wsl.conf
+rm -f "$tmp_wsl_conf"
+
+home_dir="$(getent passwd "$user" | cut -d: -f6)"
+if [ -z "$home_dir" ]; then
+    home_dir="/home/$user"
+fi
+
+echo "OPENCLAW_WSL_USER=$user"
+echo "OPENCLAW_WSL_HOME=$home_dir"
+'@
+
+        $tmpScript = Join-Path $env:TEMP "openclaw-wsl-user-setup.sh"
+        $setupScript | Set-Content $tmpScript -Encoding UTF8 -Force
+        $wslTmpPath = "/tmp/openclaw-wsl-user-setup.sh"
+
+        try {
+                Get-Content $tmpScript -Raw | & wsl -d $DistroName -u root --exec bash -c "cat > $wslTmpPath"
+                & wsl -d $DistroName -u root --exec bash -c "chmod +x $wslTmpPath"
+                $setupOutput = & wsl -d $DistroName -u root --exec env OPENCLAW_PREFERRED_USER=$preferredUser LANG=C.UTF-8 LC_ALL=C.UTF-8 bash $wslTmpPath 2>&1 | Out-String
+                Write-Log "WSL user setup output: $setupOutput"
+
+                foreach ($line in ($setupOutput -split "`r?`n")) {
+                        if ($line -match '^OPENCLAW_WSL_USER=(.+)$') {
+                                $script:wslDefaultUser = $Matches[1].Trim()
+                        } elseif ($line -match '^OPENCLAW_WSL_HOME=(.+)$') {
+                                $script:wslDefaultHome = $Matches[1].Trim()
+                        }
+                }
+
+                if (-not $script:wslDefaultUser) {
+                        throw "未能识别 WSL 默认用户"
+                }
+                if (-not $script:wslDefaultHome) {
+                        $script:wslDefaultHome = "/home/$($script:wslDefaultUser)"
+                }
+
+                Write-OK "WSL 默认用户已设为: $($script:wslDefaultUser)"
+                return $true
+        } catch {
+                Write-Err "配置 WSL 普通用户失败: $_"
+                return $false
+        } finally {
+                Remove-Item $tmpScript -Force -ErrorAction SilentlyContinue
+                try { & wsl -d $DistroName -u root --exec rm -f $wslTmpPath 2>$null | Out-Null } catch { }
+        }
+}
+
 function Install-DockerInWsl {
-    param([string]$DistroName)
+        param(
+                [string]$DistroName,
+                [string]$WslUser
+        )
 
     Write-Info "在 $DistroName 中安装 Docker Engine..."
     Write-Info "预计需要 5-10 分钟..."
@@ -1313,8 +1478,8 @@ echo "DOCKER_INSTALL_COMPLETE"
     $wslTmpPath = "/tmp/openclaw-docker-setup.sh"
 
     try {
-        Get-Content $tmpScript -Raw | & wsl -d $DistroName --exec bash -c "cat > $wslTmpPath"
-        & wsl -d $DistroName --exec bash -c "chmod +x $wslTmpPath"
+        Get-Content $tmpScript -Raw | & wsl -d $DistroName -u root --exec bash -c "cat > $wslTmpPath"
+        & wsl -d $DistroName -u root --exec bash -c "chmod +x $wslTmpPath"
 
         # Run with real-time output parsing for step progress
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1325,7 +1490,11 @@ echo "DOCKER_INSTALL_COMPLETE"
         # Start process
         $pinfo = New-Object System.Diagnostics.ProcessStartInfo
         $pinfo.FileName = "wsl.exe"
-        $pinfo.Arguments = "-d $DistroName --exec bash $wslTmpPath"
+        if ($WslUser) {
+            $pinfo.Arguments = "-d $DistroName -u $WslUser --exec bash $wslTmpPath"
+        } else {
+            $pinfo.Arguments = "-d $DistroName --exec bash $wslTmpPath"
+        }
         $pinfo.RedirectStandardOutput = $true
         $pinfo.RedirectStandardError  = $true
         $pinfo.UseShellExecute = $false
@@ -1474,7 +1643,10 @@ function Convert-WindowsPathToWslPath {
 }
 
 function Start-WslImageOnlyDeploy {
-    param([string]$DistroName)
+    param(
+        [string]$DistroName,
+        [string]$WslUser
+    )
 
     Write-Info "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..."
 
@@ -1490,6 +1662,7 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 export http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= all_proxy= ALL_PROXY=
 export OPENCLAW_HOST_IP="$hostLanIp"
 export OPENCLAW_WSL_DISTRO="$DistroName"
+export OPENCLAW_WSL_USER="$WslUser"
 
 # Redirect stdout/stderr to /dev/tty so all output is visible in the console.
 # Without this, wsl --exec pipes stdout through PowerShell which buffers/discards it.
@@ -1524,6 +1697,7 @@ if [ ! -s "`$TMP_SCRIPT" ]; then
 fi
 
 chmod +x "`$TMP_SCRIPT"
+sudo service docker start >/dev/null 2>&1 || true
 echo "[INFO] 启动安装..."
 echo ""
 
@@ -1548,14 +1722,23 @@ exec bash "`$TMP_SCRIPT"
         [Console]::InputEncoding = $utf8Encoding
         [Console]::OutputEncoding = $utf8Encoding
 
-        & wsl -d $DistroName --exec env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color bash $wslTmpDeploy
+        if ($WslUser) {
+            & wsl -d $DistroName -u $WslUser --exec env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName OPENCLAW_WSL_USER=$WslUser LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color bash $wslTmpDeploy
+        } else {
+            & wsl -d $DistroName --exec env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color bash $wslTmpDeploy
+        }
         return ($LASTEXITCODE -eq 0)
     } catch {
         Write-Err "WSL 交互安装失败: $_"
         Write-Suggestion "请手动打开 WSL 终端，执行以下命令完成安装："
         Write-Host ""
-        Write-Host "    wsl -d $DistroName" -ForegroundColor White
-        Write-Host "    env OPENCLAW_HOST_IP=$hostLanIp LANG=C.UTF-8 LC_ALL=C.UTF-8 bash $wslTmpDeploy" -ForegroundColor White
+        if ($WslUser) {
+            Write-Host "    wsl -d $DistroName -u $WslUser" -ForegroundColor White
+            Write-Host "    sudo service docker start" -ForegroundColor White
+        } else {
+            Write-Host "    wsl -d $DistroName" -ForegroundColor White
+        }
+        Write-Host "    env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName LANG=C.UTF-8 LC_ALL=C.UTF-8 bash $wslTmpDeploy" -ForegroundColor White
         Write-Host ""
         return $false
     } finally {
@@ -2653,7 +2836,7 @@ function Show-Completion {
         Write-SummaryLine "SSH" $sshCmd
         if ($HomeBaseDir) { Write-SummaryLine "目录" $HomeBaseDir }
         Write-SummaryLine "日志" $LOG_FILE
-        Write-SummaryLine "WSL" $WSL_TARGET_DIR
+        Write-SummaryLine "WSL" (Get-WslTargetDir)
         if ($sshUser -and $sshUser -ne "root" -and $sshUser -ne "administrator") {
             Write-SummaryLine "提权" "ssh 登录后执行 sudo -i"
             if ($script:sshRootFallback) {
@@ -2995,10 +3178,34 @@ function Main {
         $distroName = Get-UbuntuDistroName
         Write-Info "使用发行版: $distroName"
 
+        $ready = Wait-WslReady -DistroName $distroName
+        if (-not $ready) {
+            Show-Error `
+                "等待 Ubuntu 就绪" `
+                "$distroName 启动超时" `
+                "请尝试手动运行: wsl -d $distroName，然后重新运行此脚本"
+            Read-Host "按回车退出"
+            return
+        }
+
         # Check if Docker is already installed in WSL
         $dockerInstalled = $false
+        $wslUserReady = Ensure-WslDefaultUser -DistroName $distroName
+        if (-not $wslUserReady) {
+            Show-Error `
+                "WSL 普通用户初始化" `
+                "无法为 $distroName 配置默认普通用户" `
+                "请先手动进入 WSL，确认 Ubuntu 正常，再重新运行此脚本"
+            Read-Host "按回车退出"
+            return
+        }
+
         try {
-            $dockerCheck = & wsl -d $distroName --exec bash -c "command -v docker && docker --version" 2>&1
+            if ($script:wslDefaultUser) {
+                $dockerCheck = & wsl -d $distroName -u $script:wslDefaultUser --exec bash -lc "command -v docker >/dev/null 2>&1 && docker --version" 2>&1
+            } else {
+                $dockerCheck = & wsl -d $distroName --exec bash -c "command -v docker && docker --version" 2>&1
+            }
             if ($dockerCheck -match "Docker version") {
                 $dockerInstalled = $true
                 Write-OK "Docker 已安装在 WSL 中: $($dockerCheck | Select-String 'Docker version')"
@@ -3012,19 +3219,7 @@ function Main {
             Write-Host "  ℹ️  此步骤需要较长时间，请勿关闭窗口" -ForegroundColor Yellow
             Write-Host ""
 
-            # Wait for WSL to be ready
-            $ready = Wait-WslReady -DistroName $distroName
-
-            if (-not $ready) {
-                Show-Error `
-                    "等待 Ubuntu 就绪" `
-                    "$distroName 启动超时" `
-                    "请尝试手动运行: wsl -d $distroName，然后重新运行此脚本"
-                Read-Host "按回车退出"
-                return
-            }
-
-            $dockerOK = Install-DockerInWsl -DistroName $distroName
+            $dockerOK = Install-DockerInWsl -DistroName $distroName -WslUser $script:wslDefaultUser
 
             if (-not $dockerOK) {
                 Show-Error `
@@ -3604,14 +3799,14 @@ function Main {
                         Write-Host ""
                         Write-Host "  推荐操作:" -ForegroundColor Cyan
                         Write-Host "     [默认 N] 先执行 Web 热更新（推荐）" -ForegroundColor White
-                        Write-Host "     [输入 y] 继续完整重装流程" -ForegroundColor White
+                        Write-Host "     [输入 y] 继续安装流程，仍可再选升级/重装/全新重装" -ForegroundColor White
                         Write-Host "" 
-                        Write-Host "  ⚠️  完整重装风险提示:" -ForegroundColor Yellow
+                        Write-Host "  ⚠️  重建容器风险提示:" -ForegroundColor Yellow
                         Write-Host "     - 将删除并重建容器（容器文件系统会重置）" -ForegroundColor Yellow
                         Write-Host "     - 容器内手动安装的软件/临时文件可能丢失" -ForegroundColor Yellow
                         Write-Host "     - 状态卷与配置会保留" -ForegroundColor Green
                         Write-Host ""
-                        Write-Host "  是否继续执行安装重装流程？[y/N]: " -NoNewline -ForegroundColor White
+                        Write-Host "  是否继续进入安装流程？[y/N]: " -NoNewline -ForegroundColor White
                         $continueInstall = (Read-Host).Trim().ToLower()
                         if ($continueInstall -ne 'y' -and $continueInstall -ne 'yes') {
                             Write-Host ""
@@ -3630,7 +3825,7 @@ function Main {
                     Write-Host ""
                     $doReinstall = $hotUpdateReinstallConfirmed
                     if (-not $doReinstall) {
-                        Write-Host "  是否先执行升级重装（删除旧容器，保留状态卷与配置）？[Y/n]: " -NoNewline -ForegroundColor White
+                        Write-Host "  是否先执行升级（删除旧容器，保留状态卷与配置，并切换到目标版本）？[Y/n]: " -NoNewline -ForegroundColor White
                         $upgradeFirst = (Read-Host).Trim().ToLower()
                         if (-not $upgradeFirst -or $upgradeFirst -eq 'y' -or $upgradeFirst -eq 'yes') {
                             $doReinstall = $true
@@ -3658,7 +3853,7 @@ function Main {
                             }
                         }
                         $preferredStateVolume = Get-StateVolumeName -ContainerName $preferredUpgradeContainer
-                        Write-Info "将优先执行升级重装（保留配置和状态卷 $preferredStateVolume）"
+                        Write-Info "将优先执行升级（保留配置和状态卷 $preferredStateVolume，并切换到目标版本）"
                     }
                 }
             }
@@ -3666,8 +3861,8 @@ function Main {
             if (-not $choice) {
                 Write-Host "  请选择操作:" -ForegroundColor White
                 Write-Host "     [1] 新建一个容器（不删除旧容器）" -ForegroundColor Gray
-                Write-Host "     [2] 重新安装容器（删除旧容器，保留状态卷与配置，默认沿用旧配置）" -ForegroundColor Gray
-                Write-Host "     [3] 重新安装容器（删除旧容器 + 配置 + 状态卷数据）" -ForegroundColor Gray
+                Write-Host "     [2] 重装（切换到目标版本，或在当前版本上重建容器；保留状态卷中的 openclaw 数据，重新配置端口/HTTPS）" -ForegroundColor Gray
+                Write-Host "     [3] 全新重装（切换到目标版本，或在当前版本上全量重建；删除旧容器 + 配置 + 状态卷数据，重新配置端口/HTTPS）" -ForegroundColor Gray
                 Write-Host ""
                 Write-Host "  输入选择 [2]: " -NoNewline -ForegroundColor White
                 $choice = (Read-Host).Trim()
@@ -3678,8 +3873,8 @@ function Main {
                 Write-Host ""
                 if ($allSameAsTarget) {
                     Write-Host "  ⚠️  当前容器版本已与目标版本一致（$latestReleaseTag）" -ForegroundColor Yellow
-                    Write-Host "  继续重装仅用于修复环境，不会带来版本升级。" -ForegroundColor Yellow
-                    Write-Host "  是否仍继续重装？[y/N]: " -NoNewline -ForegroundColor White
+                    Write-Host "  当前没有新版本可升级；继续仅用于修复环境。" -ForegroundColor Yellow
+                    Write-Host "  是否仍继续执行重装/全新重装？[y/N]: " -NoNewline -ForegroundColor White
                     $sameVersionReinstall = (Read-Host).Trim().ToLower()
                     if ($sameVersionReinstall -ne 'y' -and $sameVersionReinstall -ne 'yes') {
                         Write-Host ""
@@ -3689,9 +3884,9 @@ function Main {
                     Write-Host ""
                 }
                 if ($choice -eq '3') {
-                    Write-Host "  ⚠️  高风险操作：将删除旧容器 + 配置 + 状态卷数据（不可恢复）" -ForegroundColor Yellow
+                    Write-Host "  ⚠️  高风险操作：将删除旧容器、配置和状态卷数据（不可恢复）" -ForegroundColor Yellow
                 } else {
-                    Write-Host "  ⚠️  将删除并重建旧容器（配置与状态卷数据保留）" -ForegroundColor Yellow
+                    Write-Host "  ⚠️  将删除并重建旧容器；状态卷中的 openclaw 数据保留，但端口/HTTPS 会重新配置" -ForegroundColor Yellow
                 }
                 Write-Host "  请输入 YES 确认继续: " -NoNewline -ForegroundColor White
                 $confirmReinstall = (Read-Host).Trim()
@@ -5647,7 +5842,11 @@ function Main {
         # Check if container already exists
         $containerExists = $false
         try {
-            $containerCheck = & wsl -d $distroName --exec bash -c "docker ps -a --filter 'name=^/openclaw-pro$' --format '{{.Names}}' 2>/dev/null" 2>&1
+            if ($script:wslDefaultUser) {
+                $containerCheck = & wsl -d $distroName -u $script:wslDefaultUser --exec bash -lc "sudo service docker start >/dev/null 2>&1 || true; docker ps -a --filter 'name=^/openclaw-pro$' --format '{{.Names}}' 2>/dev/null" 2>&1
+            } else {
+                $containerCheck = & wsl -d $distroName --exec bash -c "docker ps -a --filter 'name=^/openclaw-pro$' --format '{{.Names}}' 2>/dev/null" 2>&1
+            }
             if ($containerCheck -match "openclaw-pro") {
                 $containerExists = $true
             }
@@ -5665,7 +5864,7 @@ function Main {
         Remove-InstallState
 
         # Run install-imageonly.sh interactively in current console
-        $launched = Start-WslImageOnlyDeploy -DistroName $distroName
+        $launched = Start-WslImageOnlyDeploy -DistroName $distroName -WslUser $script:wslDefaultUser
 
         Write-Log "Deploy launched: $launched"
 
