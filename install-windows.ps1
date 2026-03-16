@@ -3011,15 +3011,7 @@ function Show-Completion {
             }
         }
 
-        if (-not $IsDockerDesktop) {
-            if ($script:sshInjectedKeyPath) {
-                Write-OK "SSH 公钥已自动注入: $script:sshInjectedKeyPath"
-            } else {
-                Write-Warn "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）"
-            }
-        } else {
-            Write-Warn "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）"
-        }
+        Write-Warn "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）"
         Write-Host "" 
         Write-Host "  升级命令" -ForegroundColor White
         Write-Host "     irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows.ps1 | iex" -ForegroundColor Cyan
