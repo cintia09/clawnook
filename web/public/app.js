@@ -639,7 +639,7 @@ async function refreshStatus(){
   if (statusEl) {
     const online = !!s.gateway;
     const cls = online ? 'online' : 'offline';
-    statusEl.innerHTML = `Gateway <span class="gw-label ${cls}">${online ? 'Online' : 'Offline'}</span>`;
+    statusEl.innerHTML = `Gateway <span class="gw-label ${cls}">${online ? 'ONLINE' : 'OFFLINE'}</span>`;
   }
 
   // 远端设备管理 tab 始终可见

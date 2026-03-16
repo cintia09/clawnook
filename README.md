@@ -3,6 +3,8 @@
 面向 Linux、macOS、Windows 的 OpenClaw 一键部署仓库。
 当前推荐使用 ImageOnly + Lite 镜像完成安装。
 
+> OpenClaw交流群：QQ：852036008
+
 ## 2. 一键安装
 
 ### Linux / macOS
