@@ -264,9 +264,19 @@ prompt(){
 # ─── prerequisites ────────────────────────────────────────────
 
 ensure_docker(){
-  if command -v docker &>/dev/null; then return 0; fi
-  warn "未检测到 Docker，请先安装 Docker 并重试"
-  exit 1
+  if ! command -v docker &>/dev/null; then
+    warn "未检测到 Docker，请先安装 Docker 并重试"
+    exit 1
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo ""
+    warn "Docker 已安装但 Docker daemon 未运行"
+    case "$(uname -s 2>/dev/null)" in
+      Darwin*) warn "请先启动 Docker Desktop，然后重新运行安装脚本" ;;
+      *)       warn "请先启动 Docker daemon（sudo systemctl start docker 或启动 Docker Desktop），然后重新运行安装脚本" ;;
+    esac
+    exit 1
+  fi
 }
 
 # ─── port helpers ─────────────────────────────────────────────
@@ -1050,6 +1060,14 @@ load_image(){
   local load_log="$TMP_DIR/.docker-load.log"
   local load_pid start_ts elapsed next_report rc
   if ! check_local_tarball; then return 1; fi
+  if ! docker info >/dev/null 2>&1; then
+    warn "Docker daemon 未运行，无法导入镜像"
+    case "$(uname -s 2>/dev/null)" in
+      Darwin*) warn "请先启动 Docker Desktop，然后重新运行安装脚本" ;;
+      *)       warn "请先启动 Docker daemon，然后重新运行安装脚本" ;;
+    esac
+    exit 1
+  fi
 
   info "正在导入镜像（docker load）: $f"
   rm -f "$load_log" || true
