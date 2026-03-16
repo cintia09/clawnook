@@ -101,19 +101,14 @@ if (-not $downloaded) {
 Write-Host "  [INFO] Running installer..." -ForegroundColor Gray
 Write-Host ""
 
-# Re-encode with UTF-8 BOM so powershell.exe -File reads Chinese text correctly
-# (Windows PowerShell 5.1 uses system locale encoding by default, not UTF-8)
+# Read script content as UTF-8 string and execute via Invoke-Expression.
+# This avoids all file-encoding issues: powershell.exe -File uses system locale
+# (e.g. GBK) which garbles Chinese characters. Invoke-Expression works on the
+# in-memory .NET string which is always Unicode — same approach as install-windows.bat.
 try {
-    $rawContent = [IO.File]::ReadAllText($tempFile, [Text.Encoding]::UTF8)
-    $utf8Bom = New-Object System.Text.UTF8Encoding $true
-    [IO.File]::WriteAllText($tempFile, $rawContent, $utf8Bom)
-} catch {
-    Write-Host "  [WARN] Failed to re-encode script, proceeding anyway..." -ForegroundColor Yellow
-}
-
-try {
+    $scriptContent = [IO.File]::ReadAllText($tempFile, [Text.Encoding]::UTF8)
     [Console]::OutputEncoding = [Text.Encoding]::UTF8
-    & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $tempFile
+    Invoke-Expression $scriptContent
 } finally {
     if (($tempFile -like "$env:TEMP*") -and (Test-Path $tempFile)) {
         Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
