@@ -1950,14 +1950,7 @@ function normalizeGatewayAuthToken(raw) {
   if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
     token = token.slice(1, -1).trim();
   }
-  token = token.replace(/(?:[-_.]?852036008)+$/g, '').trim();
   return token;
-}
-
-function addGatewayTokenWatermark(raw) {
-  const token = normalizeGatewayAuthToken(raw);
-  if (!token) return '';
-  return `${token}-852036008`;
 }
 
 function shellSingleQuote(value) {
@@ -4713,7 +4706,6 @@ async function fetchNodeIpv4Address(nodeId, platform) {
 app.get('/api/node/setup-command', (req, res) => {
   try {
     const token = getGatewayAuthToken();
-    const watermarkedToken = addGatewayTokenWatermark(token);
     const host = (req.headers['x-forwarded-host'] || req.headers.host || '').replace(/:\d+$/, '') || '127.0.0.1';
     const dcfg = readDockerConfig();
     const gatewayTlsPort = Number(dcfg.gateway_tls_public_port || dcfg.gateway_tls_port || 18790) || 18790;
@@ -4725,7 +4717,7 @@ app.get('/api/node/setup-command', (req, res) => {
 
     // Linux/macOS: auto-configure node host exec security via openclaw.json before launch
     const initCmd = `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'NODEEOF'\n{"tools":{"exec":{"security":"${execSecurity}"}}}\nNODEEOF`;
-    const runCmd = `NODE_TLS_REJECT_UNAUTHORIZED=0 OPENCLAW_GATEWAY_TOKEN=${shellSingleQuote(watermarkedToken)} openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
+    const runCmd = `NODE_TLS_REJECT_UNAUTHORIZED=0 OPENCLAW_GATEWAY_TOKEN=${shellSingleQuote(token)} openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
     const bashLoop = [
       'max_session="${OPENCLAW_NODE_MAX_SESSION_SEC:-900}"',
       'while true; do',
@@ -4754,10 +4746,10 @@ app.get('/api/node/setup-command', (req, res) => {
     const bgCmd = `${initCmd}\nnohup bash -c ${shellSingleQuote(bashLoop)} > ~/.openclaw/node-host.log 2>&1 &\necho "✅ Node 已在后台启动，日志: ~/.openclaw/node-host.log；可用 OPENCLAW_NODE_MAX_SESSION_SEC 调整自恢复周期"`;
 
     // Windows PowerShell: equivalent command
-    const commandWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\n$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; $env:OPENCLAW_GATEWAY_TOKEN='${watermarkedToken}'; openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
+    const commandWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\n$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; $env:OPENCLAW_GATEWAY_TOKEN='${token}'; openclaw node run --host ${host} --port ${gatewayTlsPort} --tls`;
 
     // Windows background variant
-    const bgCmdWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\nStart-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command',"if (\\$env:OPENCLAW_NODE_MAX_SESSION_SEC) { \\$maxSession = [int]\\$env:OPENCLAW_NODE_MAX_SESSION_SEC } else { \\$maxSession = 900 }; while (\\$true) { \\$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; \\$env:OPENCLAW_GATEWAY_TOKEN='${watermarkedToken}'; \\$proc = Start-Process openclaw -ArgumentList 'node','run','--host','${host}','--port','${gatewayTlsPort}','--tls' -PassThru -WindowStyle Hidden; \\$startedAt = Get-Date; while (-not \\$proc.HasExited) { if (\\$maxSession -gt 0 -and ((Get-Date) - \\$startedAt).TotalSeconds -ge \\$maxSession) { Stop-Process -Id \\$proc.Id -Force -ErrorAction SilentlyContinue; break }; Start-Sleep 5; \\$proc.Refresh() } Start-Sleep 5 }"\nWrite-Host '✅ Node 已在后台启动；可用 OPENCLAW_NODE_MAX_SESSION_SEC 调整自恢复周期'`;
+    const bgCmdWindows = `$d = "$env:USERPROFILE\\.openclaw"; if (!(Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; '{"tools":{"exec":{"security":"${execSecurity}"}}}' | Set-Content "$d\\openclaw.json" -Encoding UTF8\nStart-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command',"if (\\$env:OPENCLAW_NODE_MAX_SESSION_SEC) { \\$maxSession = [int]\\$env:OPENCLAW_NODE_MAX_SESSION_SEC } else { \\$maxSession = 900 }; while (\\$true) { \\$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; \\$env:OPENCLAW_GATEWAY_TOKEN='${token}'; \\$proc = Start-Process openclaw -ArgumentList 'node','run','--host','${host}','--port','${gatewayTlsPort}','--tls' -PassThru -WindowStyle Hidden; \\$startedAt = Get-Date; while (-not \\$proc.HasExited) { if (\\$maxSession -gt 0 -and ((Get-Date) - \\$startedAt).TotalSeconds -ge \\$maxSession) { Stop-Process -Id \\$proc.Id -Force -ErrorAction SilentlyContinue; break }; Start-Sleep 5; \\$proc.Refresh() } Start-Sleep 5 }"\nWrite-Host '✅ Node 已在后台启动；可用 OPENCLAW_NODE_MAX_SESSION_SEC 调整自恢复周期'`;
 
     res.json({ success: true, command, commandWindows, bgCmd, bgCmdWindows, hasToken: true, host, port: gatewayTlsPort });
   } catch (e) {
