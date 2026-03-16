@@ -1204,9 +1204,9 @@ cmd_run() {
     ensure_home
 
     # 检查容器状态
-    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         # 容器存在
-        if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
             # 运行中
             ensure_image
             show_running_panel
@@ -1267,10 +1267,10 @@ cmd_stop() {
 }
 
 cmd_status() {
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         echo -e "${GREEN}● 运行中${NC}"
         docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Status}}\t{{.Ports}}"
-    elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         echo -e "${YELLOW}● 已停止${NC}"
     else
         echo -e "${RED}● 未创建${NC}"
@@ -1344,7 +1344,7 @@ cmd_config() {
 }
 
 cmd_shell() {
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         show_command_hint
         docker exec -it "$CONTAINER_NAME" bash -l
     else
@@ -1444,14 +1444,14 @@ cmd_update() {
     log_msg "cmd_update started"
 
     # 检查容器是否存在
-    if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         error "未找到容器 '$CONTAINER_NAME'"
         echo -e "  请使用 ${CYAN}$0 run${NC} 创建容器"
         return 1
     fi
 
     # 确保容器运行中
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         info "容器已停止，正在启动..."
         docker start "$CONTAINER_NAME" 2>/dev/null || true
         sleep 3
@@ -1463,7 +1463,7 @@ cmd_update() {
     local recommend_msg=""
     local has_update=true  # 默认认为有更新（API 不可用时不阻挡）
     local current_ver="" remote_ver=""
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         info "检测更新类型..."
         current_ver=$(docker exec "$CONTAINER_NAME" cat /etc/openclaw-version 2>/dev/null || echo "unknown")
         # 检查容器内是否有 Dockerfile hash 文件
@@ -1546,7 +1546,7 @@ _do_hotpatch() {
     log_msg "hotpatch started"
 
     # 确保容器在运行
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         error "容器未运行"
         return 1
     fi
@@ -1654,7 +1654,7 @@ _do_full_update() {
     # 读取现有容器配置
     info "读取容器配置..."
     local config_json=""
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         config_json=$(docker exec "$CONTAINER_NAME" cat /root/.openclaw/docker-config.json 2>/dev/null || true)
     fi
     if [ -z "$config_json" ]; then

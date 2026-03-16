@@ -130,7 +130,7 @@ refresh_config_cache(){
   local tmpfile=""
   rm -f "$CONFIG_CACHE_FILE" 2>/dev/null || true
 
-  if docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 | grep -q "^${CONTAINER_NAME}$"; then
+  if docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' 2>/dev/null | head -1 | grep -q "^${CONTAINER_NAME}$"; then
     tmpfile="$(mktemp)"
     if docker exec "$CONTAINER_NAME" sh -c 'cat /root/.openclaw/docker-config.json 2>/dev/null || true' > "$tmpfile" 2>/dev/null && [ -s "$tmpfile" ]; then
       mv -f "$tmpfile" "$CONFIG_CACHE_FILE"
@@ -139,7 +139,7 @@ refresh_config_cache(){
     rm -f "$tmpfile"
   fi
 
-  if docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 | grep -q "^${CONTAINER_NAME}$"; then
+  if docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' 2>/dev/null | head -1 | grep -q "^${CONTAINER_NAME}$"; then
     tmpfile="$(mktemp)"
     if docker cp "${CONTAINER_NAME}:/root/.openclaw/docker-config.json" "$tmpfile" >/dev/null 2>&1 && [ -s "$tmpfile" ]; then
       mv -f "$tmpfile" "$CONFIG_CACHE_FILE"
@@ -198,7 +198,7 @@ normalize_release_tag(){
 }
 
 get_container_release_tag(){
-  docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 | grep -q "^${CONTAINER_NAME}$" || return 0
+  docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' 2>/dev/null | head -1 | grep -q "^${CONTAINER_NAME}$" || return 0
   local v
   v="$(docker exec "$CONTAINER_NAME" sh -c 'cat /etc/openclaw-version 2>/dev/null || true' 2>/dev/null | head -1 || true)"
   normalize_release_tag "$v"
@@ -1433,7 +1433,7 @@ get_installed_release_tag(){
 }
 
 can_hotpatch_current_container(){
-  docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 | grep -q "^${CONTAINER_NAME}$" || return 1
+  docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' 2>/dev/null | head -1 | grep -q "^${CONTAINER_NAME}$" || return 1
   docker exec "$CONTAINER_NAME" sh -c "command -v curl >/dev/null 2>&1" >/dev/null 2>&1 || return 1
   docker exec "$CONTAINER_NAME" sh -c "curl -sS -f --connect-timeout 3 --max-time 8 http://127.0.0.1:3000/api/update/hotpatch/status >/dev/null" >/dev/null 2>&1
 }
@@ -1498,8 +1498,8 @@ reset_persistent_state(){
 
 handle_existing_installation(){
   local exists running choice installed_tag latest_matched
-  exists="$(docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 || true)"
-  running="$(docker ps   --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | head -1 || true)"
+  exists="$(docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' 2>/dev/null | head -1 || true)"
+  running="$(docker ps   --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' 2>/dev/null | head -1 || true)"
   # 无容器（含已停止）→ 视为全新安装，残留配置/目录不影响判断
   if [ -z "$exists" ]; then
     refresh_config_cache || true
