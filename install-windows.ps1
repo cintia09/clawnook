@@ -112,20 +112,11 @@ function Test-ReservedWslRelayPort {
     param([int]$Port)
 
     try {
-        $netstat = netstat -ano 2>$null | Where-Object { $_ -match ":${Port}\s" -and $_ -match "LISTENING" }
-        if (-not $netstat) { return $false }
+        $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if (-not $listeners) { return $false }
 
-        $pids = @()
-        foreach ($line in $netstat) {
-            $pid_ = ($line.Trim() -split '\s+' | Select-Object -Last 1)
-            if ($pid_ -match '^\d+$') { $pids += [int]$pid_ }
-        }
-
-        $pids = $pids | Sort-Object -Unique
-        if (-not $pids -or $pids.Count -eq 0) { return $false }
-
-        foreach ($pid in $pids) {
-            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+        foreach ($conn in $listeners) {
+            $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
             if (-not $proc -or $proc.ProcessName -notmatch '^wsl') {
                 return $false
             }
@@ -1876,9 +1867,9 @@ exec bash "`$TMP_SCRIPT"
         [Console]::OutputEncoding = $utf8Encoding
 
         if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser -- bash -li $wslTmpDeploy
+            & wsl -d $DistroName -u $WslUser -- bash -li $wslTmpDeploy 2>$null
         } else {
-            & wsl -d $DistroName -- bash -li $wslTmpDeploy
+            & wsl -d $DistroName -- bash -li $wslTmpDeploy 2>$null
         }
         return ($LASTEXITCODE -eq 0)
     } catch {
