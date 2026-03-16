@@ -1797,12 +1797,13 @@ function Start-WslImageOnlyDeploy {
     Write-Info "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..."
 
     $hostLanIp = Get-PreferredHostIPv4
-    # WSL mode: the existing container will be stopped by install-imageonly.sh
-    # before binding ports, so skip availability checks and pass defaults directly.
-    $defaultHttpPort = [int]$DEFAULT_HTTP_PORT
-    $defaultHttpsPort = [int]$DEFAULT_HTTPS_PORT
-    $defaultSshPort = 2222
-    $defaultGwTlsPort = 18790
+    # Check Windows host ports, but tolerate WSL relay processes (wslrelay/wslhost)
+    # holding the port — those are just forwarding for the existing WSL container
+    # and will be released when install-imageonly.sh stops the old container.
+    $defaultHttpPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTP_PORT) -RangeStart 8080 -RangeEnd 8099 -AllowReservedWslRelay
+    $defaultHttpsPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTPS_PORT) -RangeStart 8443 -RangeEnd 8499 -AllowReservedWslRelay
+    $defaultSshPort = Find-AvailablePort -PreferredPort 2222 -RangeStart 2223 -RangeEnd 2299 -AllowReservedWslRelay
+    $defaultGwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18800 -RangeEnd 18899 -AllowReservedWslRelay
 
     Write-Log "WSL host port hints: HTTP=$defaultHttpPort HTTPS=$defaultHttpsPort SSH=$defaultSshPort GW_TLS=$defaultGwTlsPort"
 
