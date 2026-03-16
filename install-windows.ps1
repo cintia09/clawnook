@@ -1745,6 +1745,12 @@ function Start-WslImageOnlyDeploy {
     Write-Info "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..."
 
     $hostLanIp = Get-PreferredHostIPv4
+    $defaultHttpPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTP_PORT) -RangeStart 8080 -RangeEnd 8099
+    $defaultHttpsPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTPS_PORT) -RangeStart 8443 -RangeEnd 8499
+    $defaultSshPort = Find-AvailablePort -PreferredPort 2222 -RangeStart 2223 -RangeEnd 2299
+    $defaultGwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18800 -RangeEnd 18899
+
+    Write-Log "WSL host port hints: HTTP=$defaultHttpPort HTTPS=$defaultHttpsPort SSH=$defaultSshPort GW_TLS=$defaultGwTlsPort"
 
     # Download install-imageonly.sh inside WSL, then launch in a new terminal window
     $bootstrapScript = @"
@@ -1758,6 +1764,10 @@ export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color
 export OPENCLAW_HOST_IP="$hostLanIp"
 export OPENCLAW_WSL_DISTRO="$DistroName"
 export OPENCLAW_WSL_USER="$WslUser"
+export HTTP_PORT="$defaultHttpPort"
+export HTTPS_PORT="$defaultHttpsPort"
+export SSH_PORT="$defaultSshPort"
+export GW_TLS_PORT="$defaultGwTlsPort"
 
 # Redirect stdout/stderr to /dev/tty so all output is visible in the console.
 # Without this, wsl --exec pipes stdout through PowerShell which buffers/discards it.
