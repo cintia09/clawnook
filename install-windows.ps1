@@ -1797,6 +1797,7 @@ function Start-WslImageOnlyDeploy {
     $defaultGwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18800 -RangeEnd 18899 -AllowReservedWslRelay
 
     Write-Log "WSL host port hints: HTTP=$defaultHttpPort HTTPS=$defaultHttpsPort SSH=$defaultSshPort GW_TLS=$defaultGwTlsPort"
+    Write-Info "正在启动 WSL 环境并下载安装脚本，请稍候..."
 
     # Download install-imageonly.sh inside WSL, then launch in a new terminal window
     $bootstrapScript = @"
@@ -1824,10 +1825,15 @@ echo "  (与 Linux 安装流程一致)"
 echo "=========================================="
 echo ""
 
+echo "[INFO] 正在确保 Docker 服务已启动..."
+sudo service docker start >/dev/null 2>&1 || true
+echo "[INFO] Docker 已就绪"
+
 # Download with cache-busting
-echo "[INFO] 正在下载安装脚本..."
+echo "[INFO] 正在下载安装脚本（从 GitHub）..."
 for i in 1 2 3; do
     if curl --noproxy '*' -fsSL --connect-timeout 15 --retry 2 "`$SCRIPT_URL?ts=`$(date +%s)" -o "`$TMP_SCRIPT"; then
+        echo "[INFO] 安装脚本下载成功"
         break
     fi
     echo "[WARN] 下载失败，重试 (`$i/3)..."
@@ -1841,8 +1847,7 @@ if [ ! -s "`$TMP_SCRIPT" ]; then
 fi
 
 chmod +x "`$TMP_SCRIPT"
-sudo service docker start >/dev/null 2>&1 || true
-echo "[INFO] 启动安装..."
+echo "[INFO] 启动安装脚本..."
 echo ""
 
 exec bash "`$TMP_SCRIPT"
