@@ -3535,6 +3535,7 @@ async function loadDeviceManagement(forceConnectedRefresh = false) {
   const cmdWinEl = $('device-setup-command-win');
   const cmdBgEl = $('device-setup-command-bg');
   const cmdWinBgEl = $('device-setup-command-win-bg');
+  const cmdNoteEl = $('device-setup-command-note');
   if (cmdEl) {
     if (cmdRes.success && cmdRes.hasToken) {
       cmdEl.textContent = cmdRes.command;
@@ -3562,6 +3563,9 @@ async function loadDeviceManagement(forceConnectedRefresh = false) {
     } else {
       cmdWinBgEl.textContent = '# Windows 后台命令加载失败';
     }
+  }
+  if (cmdNoteEl) {
+    cmdNoteEl.textContent = cmdRes.tlsNote || '命令会根据当前 HTTPS 配置决定是否保留 NODE_TLS_REJECT_UNAUTHORIZED=0；无法可靠判断时会保守保留。';
   }
 
   // 在线节点列表

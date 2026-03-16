@@ -585,7 +585,7 @@
               <summary class="muted small" style="cursor:pointer;user-select:none">点击展开连接命令</summary>
               <div style="margin-top:8px;margin-bottom:6px">
                 <span class="muted small" style="cursor:pointer;margin-right:12px;font-weight:700" id="tab-cmd-linux" onclick="setDeviceCommandTab('linux')"><b>🐧 Linux / macOS（前台）</b></span>
-                <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-bg" onclick="setDeviceCommandTab('linux-bg')">🐧 后台运行（推荐）</span>
+                <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-bg" onclick="setDeviceCommandTab('linux-bg')">🐧 Linux / macOS（后台）</span>
                 <span class="muted small" style="cursor:pointer;margin-right:12px" id="tab-cmd-win" onclick="setDeviceCommandTab('win')">🪟 Windows PowerShell</span>
                 <span class="muted small" style="cursor:pointer" id="tab-cmd-win-bg" onclick="setDeviceCommandTab('win-bg')">🪟 Windows 后台运行</span>
               </div>
@@ -596,6 +596,8 @@
                 <pre class="terminal cmd-pane" id="device-setup-command-win-bg" style="display:none;height:auto;min-height:44px;padding:12px 48px 12px 12px;font-size:13px;user-select:all;white-space:pre-wrap;word-break:break-all">加载中...</pre>
                 <button class="btn btn-sm" id="btn-copy-setup-cmd" style="position:absolute;top:8px;right:8px;font-size:11px;padding:2px 8px" title="复制命令">📋</button>
               </div>
+              <div class="muted small" id="device-setup-command-note" style="margin-top:6px">加载中...</div>
+              <div class="muted small" style="margin-top:4px">后台命令会先停止本机已有的 OpenClaw Node 后台实例，再启动新的单实例守护脚本，避免同一台机器重复连接到同一个网关。</div>
             </details>
             <div class="muted small" style="margin-top:6px">💡 命令会自动在远端创建 <code>~/.openclaw/openclaw.json</code> 并设置命令执行策略，然后启动节点连接。运行后需在下方审批才能接入。</div>
             <details style="margin-top:8px;padding:10px 14px;background:#1a2a1a;border:1px solid #3fb950;border-radius:6px;font-size:12px;line-height:1.7;color:#c9d1d9">
