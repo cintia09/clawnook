@@ -826,6 +826,8 @@ download_with_resume(){
   local attempt rc=0 before_bytes after_bytes grown_bytes grown_mib
   local -a curl_args
 
+  mkdir -p "$(dirname "$output")" 2>/dev/null || true
+
   curl_args=(
     -C -
     --progress-bar
@@ -919,6 +921,9 @@ download_tarball(){
     warn "缺少有效 release tag，跳过 release 资产下载"
     return 1
   fi
+
+  mkdir -p "$TMP_DIR" 2>/dev/null || true
+
   local primary_url="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${IMAGE_TARBALL}"
   expected_sig="${TAG}|${IMAGE_TARBALL}"
   primary_http_code="$(curl -sSLI -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 "$primary_url" 2>/dev/null || true)"
