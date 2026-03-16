@@ -1830,6 +1830,8 @@ create_and_start(){
   echo ""
   printf '  %b升级命令%b\n' "$WHITE" "$NC"
   printf '     %b%s%b\n' "$CYAN" "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install-imageonly.sh | sudo bash" "$NC"
+  echo ""
+  printf '  %b完整日志: %s%b\n' "$DIM" "$LOG_FILE" "$NC"
 
   if [ "$key_injected" != "true" ] || [ "$ssh_login_user" = "root" ]; then
     echo ""
