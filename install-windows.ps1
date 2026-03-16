@@ -1298,7 +1298,7 @@ function Ensure-WslDefaultUser {
 #!/bin/bash
 set -e
 
-preferred="${OPENCLAW_PREFERRED_USER:-openclaw}"
+        preferred="${1:-openclaw}"
 
 pick_regular_user() {
     if [ -n "$preferred" ] && [ "$preferred" != "root" ] && id "$preferred" >/dev/null 2>&1; then
@@ -1387,7 +1387,7 @@ echo "OPENCLAW_WSL_HOME=$home_dir"
         try {
                 Get-Content $tmpScript -Raw | & wsl -d $DistroName -u root --exec bash -c "cat > $wslTmpPath" 2>$null
                 & wsl -d $DistroName -u root --exec bash -c "chmod +x $wslTmpPath" 2>$null
-            $setupOutput = & wsl -d $DistroName -u root --exec env "OPENCLAW_PREFERRED_USER=$preferredUser" "LANG=C.UTF-8" "LC_ALL=C.UTF-8" bash $wslTmpPath 2>&1 | Out-String
+            $setupOutput = & wsl -d $DistroName -u root --exec bash $wslTmpPath $preferredUser 2>$null | Out-String
                 Write-Log "WSL user setup output: $setupOutput"
 
                 foreach ($line in ($setupOutput -split "`r?`n")) {
@@ -1663,6 +1663,7 @@ set -e
 # Clear proxy env — WSL NAT mode cannot reach Windows localhost proxies
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 export http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= all_proxy= ALL_PROXY=
+export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color
 export OPENCLAW_HOST_IP="$hostLanIp"
 export OPENCLAW_WSL_DISTRO="$DistroName"
 export OPENCLAW_WSL_USER="$WslUser"
@@ -1726,9 +1727,9 @@ exec bash "`$TMP_SCRIPT"
         [Console]::OutputEncoding = $utf8Encoding
 
         if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser --exec env "OPENCLAW_HOST_IP=$hostLanIp" "OPENCLAW_WSL_DISTRO=$DistroName" "OPENCLAW_WSL_USER=$WslUser" "LANG=C.UTF-8" "LC_ALL=C.UTF-8" "TERM=xterm-256color" bash $wslTmpDeploy
+            & wsl -d $DistroName -u $WslUser --exec bash $wslTmpDeploy
         } else {
-            & wsl -d $DistroName --exec env "OPENCLAW_HOST_IP=$hostLanIp" "OPENCLAW_WSL_DISTRO=$DistroName" "LANG=C.UTF-8" "LC_ALL=C.UTF-8" "TERM=xterm-256color" bash $wslTmpDeploy
+            & wsl -d $DistroName --exec bash $wslTmpDeploy
         }
         return ($LASTEXITCODE -eq 0)
     } catch {
