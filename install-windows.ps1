@@ -1263,7 +1263,7 @@ function Wait-WslReady {
     $elapsed = 0
     while ($elapsed -lt $MaxWaitSeconds) {
         try {
-            $test = & wsl -d $DistroName --exec echo "ready" 2>&1
+            $test = & wsl -d $DistroName --exec echo "ready" 2>$null
             if ($test -match "ready") {
                 Write-Host "`r$(' ' * 70)`r" -NoNewline
                 Write-OK "$DistroName 已就绪"
@@ -1727,9 +1727,9 @@ exec bash "`$TMP_SCRIPT"
         [Console]::OutputEncoding = $utf8Encoding
 
         if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser --exec bash $wslTmpDeploy
+            & wsl -d $DistroName -u $WslUser --exec bash $wslTmpDeploy 2>$null
         } else {
-            & wsl -d $DistroName --exec bash $wslTmpDeploy
+            & wsl -d $DistroName --exec bash $wslTmpDeploy 2>$null
         }
         return ($LASTEXITCODE -eq 0)
     } catch {
@@ -3206,9 +3206,9 @@ function Main {
 
         try {
             if ($script:wslDefaultUser) {
-                $dockerCheck = & wsl -d $distroName -u $script:wslDefaultUser --exec bash -lc "command -v docker >/dev/null 2>&1 && docker --version" 2>&1
+                $dockerCheck = & wsl -d $distroName -u $script:wslDefaultUser --exec bash -lc "command -v docker >/dev/null 2>&1 && docker --version" 2>$null
             } else {
-                $dockerCheck = & wsl -d $distroName --exec bash -c "command -v docker && docker --version" 2>&1
+                $dockerCheck = & wsl -d $distroName --exec bash -c "command -v docker && docker --version" 2>$null
             }
             if ($dockerCheck -match "Docker version") {
                 $dockerInstalled = $true
@@ -5847,9 +5847,9 @@ function Main {
         $containerExists = $false
         try {
             if ($script:wslDefaultUser) {
-                $containerCheck = & wsl -d $distroName -u $script:wslDefaultUser --exec bash -lc "sudo service docker start >/dev/null 2>&1 || true; docker ps -a --filter 'name=^/openclaw-pro$' --format '{{.Names}}' 2>/dev/null" 2>&1
+                $containerCheck = & wsl -d $distroName -u $script:wslDefaultUser --exec bash -lc "sudo service docker start >/dev/null 2>&1 || true; docker ps -a --filter 'name=^/openclaw-pro$' --format '{{.Names}}' 2>/dev/null" 2>$null
             } else {
-                $containerCheck = & wsl -d $distroName --exec bash -c "docker ps -a --filter 'name=^/openclaw-pro$' --format '{{.Names}}' 2>/dev/null" 2>&1
+                $containerCheck = & wsl -d $distroName --exec bash -c "docker ps -a --filter 'name=^/openclaw-pro$' --format '{{.Names}}' 2>/dev/null" 2>$null
             }
             if ($containerCheck -match "openclaw-pro") {
                 $containerExists = $true
