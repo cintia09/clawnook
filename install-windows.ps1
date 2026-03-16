@@ -89,6 +89,97 @@ function Get-WslTargetDir {
     return "/root/$DEFAULT_DEPLOY_DIR_NAME"
 }
 
+function Get-WslPrimaryIPv4 {
+    param([string]$DistroName)
+
+    if (-not $DistroName) { return "" }
+    try {
+        $raw = (& wsl -d $DistroName --exec sh -lc "ip -o -4 addr show scope global | awk '{split(\$4,a,\"/\"); print a[1]; exit}'" 2>$null | Out-String).Trim()
+        $ip = ($raw -split "`r?`n" | Where-Object { $_ -match '^\d{1,3}(?:\.\d{1,3}){3}$' } | Select-Object -First 1)
+        if ($ip) { return $ip.Trim() }
+    } catch { }
+    return ""
+}
+
+function Get-WslDeployConfig {
+    param(
+        [string]$DistroName,
+        [string]$WslUser
+    )
+
+    if (-not $DistroName) { return $null }
+
+    try {
+        if ($WslUser) {
+            $configText = (& wsl -d $DistroName -u $WslUser --exec bash -lc "sudo service docker start >/dev/null 2>&1 || true; docker exec openclaw-pro sh -lc 'cat /root/.openclaw/docker-config.json 2>/dev/null' 2>/dev/null || true" 2>$null | Out-String).Trim()
+        } else {
+            $configText = (& wsl -d $DistroName --exec bash -lc "service docker start >/dev/null 2>&1 || true; docker exec openclaw-pro sh -lc 'cat /root/.openclaw/docker-config.json 2>/dev/null' 2>/dev/null || true" 2>$null | Out-String).Trim()
+        }
+
+        if (-not $configText) { return $null }
+        return ($configText | ConvertFrom-Json)
+    } catch {
+        Write-Log "Failed to read WSL deploy config: $_" "WARN"
+        return $null
+    }
+}
+
+function Sync-WslWindowsPortAccess {
+    param(
+        [string]$DistroName,
+        [string]$WslUser
+    )
+
+    $wslIp = Get-WslPrimaryIPv4 -DistroName $DistroName
+    if (-not $wslIp) {
+        Write-Warn "未能识别 WSL 内网 IP，跳过 Windows 端口转发配置"
+        return $false
+    }
+
+    $deployConfig = Get-WslDeployConfig -DistroName $DistroName -WslUser $WslUser
+    if (-not $deployConfig) {
+        Write-Warn "未能读取 WSL 部署端口配置，跳过 Windows 端口转发配置"
+        return $false
+    }
+
+    $portList = New-Object System.Collections.Generic.List[int]
+    if ($deployConfig.cert_mode -eq 'letsencrypt' -and $deployConfig.http_port) {
+        $portList.Add([int]$deployConfig.http_port)
+    }
+    if ($deployConfig.https_port) { $portList.Add([int]$deployConfig.https_port) }
+    if ($deployConfig.gateway_tls_port) { $portList.Add([int]$deployConfig.gateway_tls_port) }
+    if ($deployConfig.ssh_port) { $portList.Add([int]$deployConfig.ssh_port) }
+    if ($deployConfig.browser_bridge_enabled -and $deployConfig.browser_bridge_port) {
+        $portList.Add([int]$deployConfig.browser_bridge_port)
+    }
+
+    $ports = $portList | Sort-Object -Unique
+    if (-not $ports -or $ports.Count -eq 0) {
+        Write-Warn "WSL 部署未返回可转发端口，跳过 Windows 端口转发配置"
+        return $false
+    }
+
+    $portText = $ports -join ','
+    foreach ($port in $ports) {
+        & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>$null | Out-Null
+        & netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$port connectaddress=$wslIp connectport=$port 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Windows 端口转发配置失败: $port -> ${wslIp}:$port"
+            return $false
+        }
+    }
+
+    & netsh advfirewall firewall delete rule name="OpenClaw-WSL" 2>$null | Out-Null
+    & netsh advfirewall firewall add rule name="OpenClaw-WSL" dir=in action=allow protocol=tcp localport=$portText 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Windows 防火墙开放失败，请手动放行端口: $portText"
+        return $false
+    }
+
+    Write-OK "WSL NAT 端口已映射到 Windows: $portText -> $wslIp"
+    return $true
+}
+
 function Resolve-LocalDeployDir {
     param([string]$BasePath)
 
@@ -2833,14 +2924,26 @@ function Show-Completion {
         $httpsDomain = if ($Domain) { $Domain } else { "localhost" }
         $httpsUrl = if ($HttpsPort -eq 443) { "https://${httpsDomain}" } else { "https://${httpsDomain}:${HttpsPort}" }
         $sshCmd = if ($sshUser -and $sshUser -ne "administrator") { "ssh ${sshUser}@<host> -p ${SshPort}" } else { "ssh root@<host> -p ${SshPort}" }
+        $modeText = if ($IsDockerDesktop) { "Docker Desktop" } else { "WSL" }
+        $statusText = "OpenClaw Pro 容器已启动"
+        $portSummary = if ($CertMode -eq 'letsencrypt') {
+            "HTTP ${HttpPort}, HTTPS ${HttpsPort}, SSH ${SshPort}"
+        } else {
+            "HTTPS ${HttpsPort}, SSH ${SshPort}"
+        }
+        $certSummary = if ($CertMode -eq 'internal') { "自签证书（首次访问需手动继续）" } else { "Let's Encrypt 公网证书" }
 
         Write-Host "  安装摘要" -ForegroundColor White
+        Write-SummaryLine "模式" $modeText
+        Write-SummaryLine "状态" $statusText
         Write-SummaryLine "主站" $httpsUrl
         Write-SummaryLine "容器" $execCmd
         Write-SummaryLine "SSH" $sshCmd
         if ($HomeBaseDir) { Write-SummaryLine "目录" $HomeBaseDir }
         Write-SummaryLine "日志" $LOG_FILE
         Write-SummaryLine "WSL" (Get-WslTargetDir)
+        Write-SummaryLine "端口" $portSummary
+        Write-SummaryLine "证书" $certSummary
         if ($sshUser -and $sshUser -ne "root" -and $sshUser -ne "administrator") {
             Write-SummaryLine "提权" "ssh 登录后执行 sudo -i"
             if ($script:sshRootFallback) {
@@ -2858,6 +2961,8 @@ function Show-Completion {
         Write-Host "" 
         Write-Host "  升级命令" -ForegroundColor White
         Write-Host "     irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows.ps1 | iex" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  完整日志: $LOG_FILE" -ForegroundColor DarkGray
     } else {
         Write-Host ""
         Write-Host "  -------------------------------------------------" -ForegroundColor DarkGray
@@ -5873,6 +5978,7 @@ function Main {
         Write-Log "Deploy launched: $launched"
 
         if ($launched) {
+            Sync-WslWindowsPortAccess -DistroName $distroName -WslUser $script:wslDefaultUser | Out-Null
             # install-imageonly.sh owns the interaction and completion summary in WSL mode.
             return
         } else {
@@ -5895,38 +6001,6 @@ function Main {
     $bbEnabled = if ($null -ne $script:browserBridgeEnabled) { [bool]$script:browserBridgeEnabled } else { $false }
     if ($null -eq $launched) { $launched = $false }
     Show-Completion -DeployLaunched $launched -HomeBaseDir $homeBaseDir -IsDockerDesktop $dockerDesktopMode -GatewayPort $gwPort -PanelPort $wpPort -Domain $dom -CertMode $cmode -HttpPort $hPort -HttpsPort $hsPort -SshPort $sPort -AutoOpenFirewall $autoFw -BrowserBridgeEnabled $bbEnabled
-
-    if ($launched) {
-        $enterContainerName = if ($script:deployedContainerName) { $script:deployedContainerName } else { "openclaw-pro" }
-        $enterExecUser = if ($script:hostUserForSSH -and $script:hostUserForSSH -ne "root") { $script:hostUserForSSH } else { "" }
-        Write-LaunchAccessSummary -IsDockerDesktop $dockerDesktopMode -GatewayPort $gwPort -PanelPort $wpPort -Domain $dom -CertMode $cmode -HttpPort $hPort -HttpsPort $hsPort -SshPort $sPort -BrowserBridgeEnabled $bbEnabled
-        Write-Host "  ==================================================" -ForegroundColor DarkCyan
-        Write-Host "  🚪 默认进入容器终端（输入 exit 返回）" -ForegroundColor Cyan
-        if ($enterExecUser) {
-            Write-Host "     docker exec -it -u $enterExecUser $enterContainerName bash" -ForegroundColor Yellow
-        } else {
-            Write-Host "     docker exec -it $enterContainerName bash" -ForegroundColor Yellow
-        }
-        $sshHintUser = if ($script:hostUserForSSH) { $script:hostUserForSSH } else { "root" }
-        Write-Host "" 
-        Write-Host "  🔐 SSH 登录（推荐）" -ForegroundColor Cyan
-        Write-Host "     ssh -p $sPort ${sshHintUser}@<host>" -ForegroundColor Yellow
-        Write-Host "  ==================================================" -ForegroundColor DarkCyan
-        Write-Host ""
-        try {
-            if ($enterExecUser) {
-                & docker exec -it -u $enterExecUser $enterContainerName bash
-            } else {
-                & docker exec -it $enterContainerName bash
-            }
-        } catch {
-            if ($enterExecUser) {
-                Write-Warn "自动进入容器失败，请手动执行: docker exec -it -u $enterExecUser $enterContainerName bash"
-            } else {
-                Write-Warn "自动进入容器失败，请手动执行: docker exec -it $enterContainerName bash"
-            }
-        }
-    }
 
     Read-Host "按回车关闭此窗口"
 }
