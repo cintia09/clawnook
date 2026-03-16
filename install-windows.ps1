@@ -94,11 +94,39 @@ function Get-WslPrimaryIPv4 {
 
     if (-not $DistroName) { return "" }
     try {
-        $raw = (& wsl -d $DistroName --exec sh -lc "ip -o -4 addr show scope global | awk '{split(\$4,a,\"/\"); print a[1]; exit}'" 2>$null | Out-String).Trim()
+        $raw = (& wsl -d $DistroName --exec sh -lc "ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if(\$i==\"src\") {print \$(i+1); exit}}; hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if (\$i != \"127.0.0.1\") {print \$i; exit}}; ip -o -4 addr show 2>/dev/null | awk '{split(\$4,a,\"/\"); if (a[1] != \"127.0.0.1\") { print a[1]; exit }}'" 2>$null | Out-String).Trim()
         $ip = ($raw -split "`r?`n" | Where-Object { $_ -match '^\d{1,3}(?:\.\d{1,3}){3}$' } | Select-Object -First 1)
         if ($ip) { return $ip.Trim() }
     } catch { }
     return ""
+}
+
+function Test-ReservedWslRelayPort {
+    param([int]$Port)
+
+    try {
+        $netstat = netstat -ano 2>$null | Where-Object { $_ -match ":${Port}\s" -and $_ -match "LISTENING" }
+        if (-not $netstat) { return $false }
+
+        $pids = @()
+        foreach ($line in $netstat) {
+            $pid_ = ($line -split '\s+' | Select-Object -Last 1)
+            if ($pid_ -match '^\d+$') { $pids += [int]$pid_ }
+        }
+
+        $pids = $pids | Sort-Object -Unique
+        if (-not $pids -or $pids.Count -eq 0) { return $false }
+
+        foreach ($pid in $pids) {
+            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            if (-not $proc -or $proc.ProcessName -notmatch '^wslrelay$') {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 function Get-WslDeployConfig {
@@ -1762,10 +1790,10 @@ function Start-WslImageOnlyDeploy {
     Write-Info "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..."
 
     $hostLanIp = Get-PreferredHostIPv4
-    $defaultHttpPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTP_PORT) -RangeStart 8080 -RangeEnd 8099
-    $defaultHttpsPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTPS_PORT) -RangeStart 8443 -RangeEnd 8499
-    $defaultSshPort = Find-AvailablePort -PreferredPort 2222 -RangeStart 2223 -RangeEnd 2299
-    $defaultGwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18800 -RangeEnd 18899
+    $defaultHttpPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTP_PORT) -RangeStart 8080 -RangeEnd 8099 -AllowReservedWslRelay
+    $defaultHttpsPort = Find-AvailablePort -PreferredPort ([int]$DEFAULT_HTTPS_PORT) -RangeStart 8443 -RangeEnd 8499 -AllowReservedWslRelay
+    $defaultSshPort = Find-AvailablePort -PreferredPort 2222 -RangeStart 2223 -RangeEnd 2299 -AllowReservedWslRelay
+    $defaultGwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18800 -RangeEnd 18899 -AllowReservedWslRelay
 
     Write-Log "WSL host port hints: HTTP=$defaultHttpPort HTTPS=$defaultHttpsPort SSH=$defaultSshPort GW_TLS=$defaultGwTlsPort"
 
@@ -1878,14 +1906,19 @@ function Remove-LiteLocalImageTag {
 
 # --- Port availability check --------------------------------------------------
 function Test-PortAvailable {
-    param([int]$Port)
+    param(
+        [int]$Port,
+        [switch]$AllowReservedWslRelay
+    )
     # Check 1: TcpListener on all interfaces (0.0.0.0)
     try {
         $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $Port)
         $listener.Start()
         $listener.Stop()
     } catch {
-        return $false
+        if (-not ($AllowReservedWslRelay -and (Test-ReservedWslRelayPort -Port $Port))) {
+            return $false
+        }
     }
     # Check 1b: TcpListener on loopback (127.0.0.1)
     # 某些 Windows/Docker 场景下，0.0.0.0 可绑定但 127.0.0.1 已被占用
@@ -1894,7 +1927,9 @@ function Test-PortAvailable {
         $listenerLoop.Start()
         $listenerLoop.Stop()
     } catch {
-        return $false
+        if (-not ($AllowReservedWslRelay -and (Test-ReservedWslRelayPort -Port $Port))) {
+            return $false
+        }
     }
     # Check 2: Also check Docker container port mappings (single port and range)
     try {
@@ -1959,10 +1994,15 @@ function Get-PortProcess {
 }
 
 function Find-AvailablePort {
-    param([int]$PreferredPort, [int]$RangeStart = 18000, [int]$RangeEnd = 19000)
+    param(
+        [int]$PreferredPort,
+        [int]$RangeStart = 18000,
+        [int]$RangeEnd = 19000,
+        [switch]$AllowReservedWslRelay
+    )
 
     # Try preferred port first
-    if (Test-PortAvailable $PreferredPort) {
+    if (Test-PortAvailable -Port $PreferredPort -AllowReservedWslRelay:$AllowReservedWslRelay) {
         return $PreferredPort
     }
 
@@ -1975,7 +2015,7 @@ function Find-AvailablePort {
     # Search in range
     for ($p = $RangeStart; $p -le $RangeEnd; $p++) {
         if ($p -eq $PreferredPort) { continue }
-        if (Test-PortAvailable $p) {
+        if (Test-PortAvailable -Port $p -AllowReservedWslRelay:$AllowReservedWslRelay) {
             Write-OK "找到可用端口: $p"
             return $p
         }
@@ -2951,26 +2991,12 @@ function Show-Completion {
         $httpsDomain = if ($Domain) { $Domain } else { "localhost" }
         $httpsUrl = if ($HttpsPort -eq 443) { "https://${httpsDomain}" } else { "https://${httpsDomain}:${HttpsPort}" }
         $sshCmd = if ($sshUser -and $sshUser -ne "administrator") { "ssh ${sshUser}@<host> -p ${SshPort}" } else { "ssh root@<host> -p ${SshPort}" }
-        $modeText = if ($IsDockerDesktop) { "Docker Desktop" } else { "WSL" }
-        $statusText = "OpenClaw Pro 容器已启动"
-        $portSummary = if ($CertMode -eq 'letsencrypt') {
-            "HTTP ${HttpPort}, HTTPS ${HttpsPort}, SSH ${SshPort}"
-        } else {
-            "HTTPS ${HttpsPort}, SSH ${SshPort}"
-        }
-        $certSummary = if ($CertMode -eq 'internal') { "自签证书（首次访问需手动继续）" } else { "Let's Encrypt 公网证书" }
-
         Write-Host "  安装摘要" -ForegroundColor White
-        Write-SummaryLine "模式" $modeText
-        Write-SummaryLine "状态" $statusText
         Write-SummaryLine "主站" $httpsUrl
         Write-SummaryLine "容器" $execCmd
         Write-SummaryLine "SSH" $sshCmd
         if ($HomeBaseDir) { Write-SummaryLine "目录" $HomeBaseDir }
         Write-SummaryLine "日志" $LOG_FILE
-        Write-SummaryLine "WSL" (Get-WslTargetDir)
-        Write-SummaryLine "端口" $portSummary
-        Write-SummaryLine "证书" $certSummary
         if ($sshUser -and $sshUser -ne "root" -and $sshUser -ne "administrator") {
             Write-SummaryLine "提权" "ssh 登录后执行 sudo -i"
             if ($script:sshRootFallback) {
@@ -2990,8 +3016,6 @@ function Show-Completion {
         Write-Host "" 
         Write-Host "  升级命令" -ForegroundColor White
         Write-Host "     irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows.ps1 | iex" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "  完整日志: $LOG_FILE" -ForegroundColor DarkGray
     } else {
         Write-Host ""
         Write-Host "  -------------------------------------------------" -ForegroundColor DarkGray
