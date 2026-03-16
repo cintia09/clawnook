@@ -1872,9 +1872,9 @@ exec bash "`$TMP_SCRIPT"
         [Console]::OutputEncoding = $utf8Encoding
 
         if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser -- bash -li $wslTmpDeploy 2>$null
+            & wsl -d $DistroName -u $WslUser -- bash $wslTmpDeploy
         } else {
-            & wsl -d $DistroName -- bash -li $wslTmpDeploy 2>$null
+            & wsl -d $DistroName -- bash $wslTmpDeploy
         }
         return ($LASTEXITCODE -eq 0)
     } catch {
