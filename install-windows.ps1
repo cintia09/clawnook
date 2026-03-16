@@ -1863,42 +1863,32 @@ exec bash "`$TMP_SCRIPT"
         return $false
     }
 
-    # Run the Linux installer in a dedicated PowerShell window so WSL gets a real
-    # interactive console. Hosting the full TTY flow in the current PowerShell
-    # session has proven unreliable and can appear hung before any Linux-side output.
+    # Run interactively in the current console. WSL entry itself can be slow on a
+    # cold start, so pre-warm the distro and show explicit progress before the
+    # bootstrap script takes over.
     try {
-        $wslCommandText = if ($WslUser) {
-            "wsl -d \"$DistroName\" -u \"$WslUser\" -- bash \"$wslTmpDeploy\""
+        $warmupStart = Get-Date
+        Write-Info "正在进入 WSL 用户会话（首次或冷启动通常需要几秒到几十秒）..."
+        if ($WslUser) {
+            & wsl -d $DistroName -u $WslUser --exec sh -lc "printf '[INFO] WSL 用户会话已就绪\\n'" 2>$null
         } else {
-            "wsl -d \"$DistroName\" -- bash \"$wslTmpDeploy\""
+            & wsl -d $DistroName --exec sh -lc "printf '[INFO] WSL 用户会话已就绪\\n'" 2>$null
         }
+        $warmupSeconds = [Math]::Round(((Get-Date) - $warmupStart).TotalSeconds, 1)
+        Write-Info "WSL 已就绪，准备启动安装脚本（耗时 ${warmupSeconds}s）..."
 
-        $childCommand = @"
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false)
-`$OutputEncoding = [Console]::OutputEncoding
-Write-Host ''
-Write-Host 'OpenClaw WSL 安装向导已启动，请在此窗口继续操作。' -ForegroundColor Cyan
-Write-Host ''
-& $wslCommandText
-`$exitCode = `$LASTEXITCODE
-if (`$exitCode -ne 0) {
-    Write-Host ''
-    Write-Host "WSL 安装未完成，退出码: `$exitCode" -ForegroundColor Yellow
-    Read-Host '按回车关闭窗口'
-}
-exit `$exitCode
-"@
+        $originalInputEncoding = [Console]::InputEncoding
+        $originalOutputEncoding = [Console]::OutputEncoding
+        $utf8Encoding = New-Object System.Text.UTF8Encoding($false)
+        [Console]::InputEncoding = $utf8Encoding
+        [Console]::OutputEncoding = $utf8Encoding
 
-        Write-Info "已在新窗口打开 WSL 安装向导，请在新窗口继续操作..."
-        $childProcess = Start-Process -FilePath "powershell.exe" -ArgumentList @(
-            "-NoLogo",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            $childCommand
-        ) -Wait -PassThru
-        return ($childProcess.ExitCode -eq 0)
+        if ($WslUser) {
+            & wsl -d $DistroName -u $WslUser -- bash $wslTmpDeploy
+        } else {
+            & wsl -d $DistroName -- bash $wslTmpDeploy
+        }
+        return ($LASTEXITCODE -eq 0)
     } catch {
         Write-Err "WSL 交互安装失败: $_"
         Write-Suggestion "请手动打开 WSL 终端，执行以下命令完成安装："
@@ -1912,6 +1902,9 @@ exit `$exitCode
         Write-Host "    env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName LANG=C.UTF-8 LC_ALL=C.UTF-8 bash $wslTmpDeploy" -ForegroundColor White
         Write-Host ""
         return $false
+    } finally {
+        if ($null -ne $originalInputEncoding) { [Console]::InputEncoding = $originalInputEncoding }
+        if ($null -ne $originalOutputEncoding) { [Console]::OutputEncoding = $originalOutputEncoding }
     }
 }
 
