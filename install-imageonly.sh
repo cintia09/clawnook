@@ -235,7 +235,22 @@ success(){ log OK "$*"; }
 print_summary_line(){
   local label="$1"
   local value="$2"
-  printf '  %b%-10s%b %b%s%b\n' "$YELLOW" "$label" "$NC" "$CYAN" "$value" "$NC"
+  local target_width=12
+  local display_width=0
+  local char=""
+  local padding=""
+  while IFS= read -r -n1 char; do
+    if printf '%s' "$char" | LC_ALL=C grep -q '^[ -~]$'; then
+      display_width=$((display_width + 1))
+    else
+      display_width=$((display_width + 2))
+    fi
+  done <<< "$label"
+  while [ $display_width -lt $target_width ]; do
+    padding="${padding} "
+    display_width=$((display_width + 1))
+  done
+  printf '  %b%s%s%b %b%s%b\n' "$YELLOW" "$label" "$padding" "$NC" "$CYAN" "$value" "$NC"
 }
 
 prompt(){
@@ -1793,6 +1808,11 @@ create_and_start(){
   local main_url=""
   local ssh_target=""
   local ssh_user_display=""
+  local mode_text="Linux"
+  local status_text="OpenClaw Pro 容器已启动"
+  local wsl_target="-"
+  local port_summary=""
+  local cert_summary=""
   [ "$HTTPS_PORT" != "443" ] && url_suffix=":${HTTPS_PORT}"
   main_url="https://${DOMAIN}${url_suffix}"
   if [ "$ssh_login_user" = "root" ]; then
@@ -1803,17 +1823,42 @@ create_and_start(){
     ssh_user_display="root"
   fi
   ssh_target="ssh ${ssh_user_display}@<host> -p ${SSH_PORT}"
+  if [ -n "${OPENCLAW_WSL_DISTRO:-}" ]; then
+    mode_text="WSL"
+    wsl_target="$BASE_DIR"
+  fi
+  if [ "$CERT_MODE" = "letsencrypt" ] && [ "$HTTP_PORT" -gt 0 ] 2>/dev/null; then
+    port_summary="HTTP ${HTTP_PORT}, HTTPS ${HTTPS_PORT}, SSH ${SSH_PORT}"
+  else
+    port_summary="HTTPS ${HTTPS_PORT}, SSH ${SSH_PORT}"
+  fi
+  if [ "$CERT_MODE" = "internal" ]; then
+    cert_summary="自签证书（首次访问需手动继续）"
+  else
+    cert_summary="Let's Encrypt 公网证书"
+  fi
 
   echo ""
   printf '%b安装完成%b\n' "$GREEN" "$NC"
+  printf '  %b安装摘要%b\n' "$WHITE" "$NC"
+  print_summary_line "模式" "$mode_text"
+  print_summary_line "状态" "$status_text"
   print_summary_line "主站" "$main_url"
   print_summary_line "容器" "$container_exec_hint"
   print_summary_line "SSH" "$ssh_target"
   print_summary_line "目录" "$BASE_DIR"
   print_summary_line "日志" "$LOG_FILE"
+  if [ "$wsl_target" != "-" ]; then
+    print_summary_line "WSL" "$wsl_target"
+  fi
+  print_summary_line "端口" "$port_summary"
+  print_summary_line "证书" "$cert_summary"
   if [ -n "$host_user" ] && [ "$host_user" != "root" ] && [ "$ssh_user_display" = "$host_user" ]; then
     print_summary_line "提权" "ssh 登录后执行 sudo -i"
   fi
+  echo ""
+  printf '  %b升级命令%b\n' "$WHITE" "$NC"
+  printf '     %b%s%b\n' "$CYAN" "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install-imageonly.sh | sudo bash" "$NC"
 
   if [ "$key_injected" != "true" ] || [ "$ssh_login_user" = "root" ]; then
     info "宿主机或者远端机器需要SSH公钥注入，才能通过SSH方式登录容器(宿主机也可通过上面提示的docker命令进入)，如不需要，请忽略。"

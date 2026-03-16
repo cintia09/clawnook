@@ -373,7 +373,24 @@ function Write-Suggestion {
 
 function Write-SummaryLine {
     param([string]$Label, [string]$Value)
-    Write-Host ("  {0,-10} {1}" -f $Label, $Value) -ForegroundColor White
+
+    $targetWidth = 12
+    $displayWidth = 0
+    foreach ($ch in $Label.ToCharArray()) {
+        if ([int][char]$ch -le 127) {
+            $displayWidth += 1
+        } else {
+            $displayWidth += 2
+        }
+    }
+    $padding = ""
+    if ($displayWidth -lt $targetWidth) {
+        $padding = " " * ($targetWidth - $displayWidth)
+    }
+
+    Write-Host "  " -NoNewline
+    Write-Host ($Label + $padding) -NoNewline -ForegroundColor Yellow
+    Write-Host (" " + $Value) -ForegroundColor Cyan
 }
 
 function Write-InstallProgress {
@@ -2961,12 +2978,14 @@ function Show-Completion {
             }
         }
 
-        if ($script:sshInjectedKeyPath) {
-            Write-OK "SSH 公钥已自动注入: $script:sshInjectedKeyPath"
-        } else {
-            Write-Warn "SSH 公钥未自动注入，请手动执行以下命令："
-            $currentSshUser = if ($script:hostUserForSSH) { $script:hostUserForSSH } else { "root" }
-            Write-Host "     cat ~/.ssh/id_rsa.pub | ssh -p ${SshPort} ${currentSshUser}@<host> `"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys`"" -ForegroundColor White
+        if (-not $IsDockerDesktop) {
+            if ($script:sshInjectedKeyPath) {
+                Write-OK "SSH 公钥已自动注入: $script:sshInjectedKeyPath"
+            } else {
+                Write-Warn "SSH 公钥未自动注入，请手动执行以下命令："
+                $currentSshUser = if ($script:hostUserForSSH) { $script:hostUserForSSH } else { "root" }
+                Write-Host "     cat ~/.ssh/id_rsa.pub | ssh -p ${SshPort} ${currentSshUser}@<host> `"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys`"" -ForegroundColor White
+            }
         }
         Write-Host "" 
         Write-Host "  升级命令" -ForegroundColor White
