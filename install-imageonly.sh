@@ -37,7 +37,6 @@ PROXY_PREFIXES=(
   "https://gh-proxy.com/"
   "https://ghproxy.net/"
   "https://mirror.ghproxy.com/"
-  "https://github.moeyy.xyz/"
 )
 
 TTY_IN="/dev/tty"
@@ -474,7 +473,7 @@ probe_range_capable_source(){
 
   for url in "$@"; do
     rm -f "$header_file" 2>/dev/null || true
-    if curl -r 0-0 -fsSL --connect-timeout 8 --max-time 20 -D "$header_file" -o /dev/null "$url"; then
+    if curl -r 0-0 -fsSL --connect-timeout 8 --max-time 20 -D "$header_file" -o /dev/null "$url" 2>/dev/null; then
       status_line="$(awk 'toupper($0) ~ /^HTTP\// { line=$0 } END { print line }' "$header_file" 2>/dev/null || true)"
       if printf '%s\n' "$status_line" | grep -Eq ' 206 '; then
         printf '%s\n' "$url"
@@ -842,7 +841,7 @@ download_with_resume(){
       info "重新发起下载：第 ${attempt}/3 次尝试"
     fi
 
-    if curl "${curl_args[@]}" -o "$output" "$url"; then
+    if curl "${curl_args[@]}" -o "$output" "$url" 2>/dev/null; then
       return 0
     else
       rc=$?
