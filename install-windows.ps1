@@ -3911,7 +3911,8 @@ function Main {
                         }
                     }
                     if ($doReinstall) {
-                        $choice = '2'
+                        # Pre-select the preferred container for upgrade, but let user
+                        # choose between upgrade [1] and full reinstall [2] in the menu below.
                         if ($outdated.Count -eq 1) {
                             $preferredUpgradeContainer = $outdated[0].Name
                         } else {
@@ -3932,15 +3933,18 @@ function Main {
                             }
                         }
                         $preferredStateVolume = Get-StateVolumeName -ContainerName $preferredUpgradeContainer
-                        Write-Info "将优先执行升级（保留配置和状态卷 $preferredStateVolume，并切换到目标版本）"
+                        Write-Host ""
+                        Write-Info "已预选升级容器: $preferredUpgradeContainer（状态卷: $preferredStateVolume）"
+                        Write-Host "  💡 接下来请选择操作方式（升级重建 或 全新升级重建）" -ForegroundColor Cyan
                     }
                 }
             }
 
             if (-not $choice) {
+                Write-Host ""
                 Write-Host "  请选择操作:" -ForegroundColor White
                 if ($hasOutdatedContainers) {
-                    Write-Host "     [1] 升级重建（切换到目标版本；保留状态卷中的 openclaw 数据，重新配置端口/HTTPS）" -ForegroundColor Gray
+                    Write-Host "     [1] 升级重建（切换到目标版本；保留状态卷数据与配置，沿用当前端口/HTTPS）" -ForegroundColor Gray
                     Write-Host "     [2] 全新升级重建（切换到目标版本；删除旧容器 + 配置 + 状态卷数据，重新配置端口/HTTPS）" -ForegroundColor Gray
                 } else {
                     Write-Host "     [1] 重装（切换到目标版本，或在当前版本上重建容器；保留状态卷中的 openclaw 数据，重新配置端口/HTTPS）" -ForegroundColor Gray
