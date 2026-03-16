@@ -1387,7 +1387,7 @@ echo "OPENCLAW_WSL_HOME=$home_dir"
         try {
                 Get-Content $tmpScript -Raw | & wsl -d $DistroName -u root --exec bash -c "cat > $wslTmpPath" 2>$null
                 & wsl -d $DistroName -u root --exec bash -c "chmod +x $wslTmpPath" 2>$null
-                $setupOutput = & wsl -d $DistroName -u root --exec env OPENCLAW_PREFERRED_USER=$preferredUser LANG=C.UTF-8 LC_ALL=C.UTF-8 bash $wslTmpPath 2>&1 | Out-String
+            $setupOutput = & wsl -d $DistroName -u root --exec env "OPENCLAW_PREFERRED_USER=$preferredUser" "LANG=C.UTF-8" "LC_ALL=C.UTF-8" bash $wslTmpPath 2>&1 | Out-String
                 Write-Log "WSL user setup output: $setupOutput"
 
                 foreach ($line in ($setupOutput -split "`r?`n")) {
@@ -1726,9 +1726,9 @@ exec bash "`$TMP_SCRIPT"
         [Console]::OutputEncoding = $utf8Encoding
 
         if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser --exec env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName OPENCLAW_WSL_USER=$WslUser LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color bash $wslTmpDeploy
+            & wsl -d $DistroName -u $WslUser --exec env "OPENCLAW_HOST_IP=$hostLanIp" "OPENCLAW_WSL_DISTRO=$DistroName" "OPENCLAW_WSL_USER=$WslUser" "LANG=C.UTF-8" "LC_ALL=C.UTF-8" "TERM=xterm-256color" bash $wslTmpDeploy
         } else {
-            & wsl -d $DistroName --exec env OPENCLAW_HOST_IP=$hostLanIp OPENCLAW_WSL_DISTRO=$DistroName LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color bash $wslTmpDeploy
+            & wsl -d $DistroName --exec env "OPENCLAW_HOST_IP=$hostLanIp" "OPENCLAW_WSL_DISTRO=$DistroName" "LANG=C.UTF-8" "LC_ALL=C.UTF-8" "TERM=xterm-256color" bash $wslTmpDeploy
         }
         return ($LASTEXITCODE -eq 0)
     } catch {
