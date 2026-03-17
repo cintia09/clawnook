@@ -3973,17 +3973,29 @@ app.get('/api/update/check', async (req, res) => {
       }
     } catch {}
 
-    // --- 方式2: raw.githubusercontent.com 读 version.txt (API 不可达时的后备) ---
-    if (!latestVersion) {
+    // --- 方式2: raw.githubusercontent.com 读 version.txt (补充：可能比 release 更新) ---
+    {
       try {
         const rawResp = await fetchWithFallback(`${GITHUB_RAW_BASE}/main/version.txt`, {
           headers: { 'User-Agent': 'openclaw-pro' },
           timeout: 6000
         });
         if (rawResp.ok) {
-          latestVersion = (await rawResp.text()).trim();
-          releaseName = latestVersion;
-          console.log(`[update] GitHub API unavailable, got version from version.txt: ${latestVersion}`);
+          const versionTxt = (await rawResp.text()).trim();
+          const versionTxtNorm = normalizeVersionTag(versionTxt);
+          const releaseNorm = normalizeVersionTag(latestVersion);
+          if (!latestVersion) {
+            // GitHub API 不可达
+            latestVersion = versionTxt;
+            releaseName = versionTxt;
+            console.log(`[update] GitHub API unavailable, got version from version.txt: ${versionTxt}`);
+          } else if (versionTxtNorm && releaseNorm && compareSemver(versionTxtNorm, releaseNorm) > 0) {
+            // version.txt 比 release 更新（release 未及时创建）
+            latestVersion = versionTxt;
+            releaseName = versionTxt;
+            releaseUrl = `https://github.com/${GITHUB_REPO}/releases`;
+            console.log(`[update] version.txt (${versionTxt}) is newer than release (${releaseNorm}), using version.txt`);
+          }
         }
       } catch {}
     }
