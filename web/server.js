@@ -5156,8 +5156,18 @@ async function fetchNodeIpv4Address(nodeId, platform) {
 app.get('/api/node/setup-command', (req, res) => {
   try {
     const token = getGatewayAuthToken();
-    const host = (req.headers['x-forwarded-host'] || req.headers.host || '').replace(/:\d+$/, '') || '127.0.0.1';
     const dcfg = readDockerConfig();
+    const configuredDomain = String(dcfg?.domain || '').trim();
+    const certMode = String(dcfg?.cert_mode || '').trim().toLowerCase();
+    const configuredDomainIsIp = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(configuredDomain)
+      || (configuredDomain.includes(':') && /^[0-9a-f:]+$/i.test(configuredDomain));
+    const requestedHost = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+      .replace(/^\[([^\]]+)\](?::\d+)?$/, '$1')
+      .replace(/:\d+$/, '')
+      .trim();
+    const host = configuredDomain && certMode === 'letsencrypt' && !configuredDomainIsIp
+      ? configuredDomain
+      : (requestedHost || configuredDomain || '127.0.0.1');
     const tlsMode = getNodeTlsCommandMode(dcfg);
     const gatewayTlsPort = Number(dcfg.gateway_tls_public_port || dcfg.gateway_tls_port || 18790) || 18790;
     if (!token) {

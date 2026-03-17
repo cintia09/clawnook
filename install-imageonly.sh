@@ -1423,9 +1423,7 @@ prompt_deploy_config(){
     [ "$HTTP_PORT" -eq 0 ] && HTTP_PORT=80
     HTTP_PORT="$(find_available_port "$HTTP_PORT" 8080 8099)"
   else
-    # 自签名模式也需要 80 端口 (HTTP→HTTPS 重定向 + 浏览器插件 ws:// 通道)
-    [ "$HTTP_PORT" -eq 0 ] && HTTP_PORT=80
-    HTTP_PORT="$(find_available_port "$HTTP_PORT" 8080 8099)"
+    HTTP_PORT=0
   fi
 
   HTTPS_PORT="${HTTPS_PORT:-443}"
@@ -1742,8 +1740,11 @@ create_and_start(){
   # Build port arguments
   local port_args=()
   if [ "$HTTPS_ENABLED" = "true" ]; then
-    # 始终映射 80 端口 (Let's Encrypt 需要 ACME 验证; 自签名模式 Caddy 提供 HTTP→HTTPS 重定向 + ws:// WebSocket 透传)
-    port_args+=(-p "${HTTP_PORT}:80" -p "${HTTPS_PORT}:443" -p "${GW_TLS_PORT}:18790" -p "127.0.0.1:${GW_PORT}:18789" -p "127.0.0.1:${WEB_PORT}:3000" -p "${SSH_PORT}:22")
+    if [ "$CERT_MODE" = "letsencrypt" ] && [ "$HTTP_PORT" -gt 0 ] 2>/dev/null; then
+      port_args+=(-p "${HTTP_PORT}:80" -p "${HTTPS_PORT}:443" -p "${GW_TLS_PORT}:18790" -p "127.0.0.1:${GW_PORT}:18789" -p "127.0.0.1:${WEB_PORT}:3000" -p "${SSH_PORT}:22")
+    else
+      port_args+=(-p "${HTTPS_PORT}:443" -p "${GW_TLS_PORT}:18790" -p "127.0.0.1:${GW_PORT}:18789" -p "127.0.0.1:${WEB_PORT}:3000" -p "${SSH_PORT}:22")
+    fi
   else
     port_args+=(-p "${GW_TLS_PORT}:18790" -p "127.0.0.1:${GW_PORT}:18789" -p "127.0.0.1:${WEB_PORT}:3000" -p "${SSH_PORT}:22")
   fi
