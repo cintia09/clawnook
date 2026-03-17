@@ -17,6 +17,7 @@ MAX_RETRIES=3
 BACKOFF_WAIT=300
 PORT=18789
 MAX_LOG_LINES=5000
+GATEWAY_SHUTDOWN_TIMEOUT=20
 
 HOME="${HOME:-/root}"
 export HOME
@@ -43,6 +44,8 @@ MAX_BACKUPS=30
 CONSECUTIVE_FAILURES=0
 LAST_PID=""
 STARTUP_OLD_PIDS=""
+STARTUP_RUNTIME_LOG_FILE=""
+STARTUP_RUNTIME_LOG_LINES=0
 LAST_IDLE_RUNTIME_LOG_TS=0
 IDLE_RUNTIME_LOG_INTERVAL=300
 HEARTBEAT_INTERVAL=300
@@ -562,6 +565,14 @@ gateway_reported_no_listeners() {
   if [ -s "$GATEWAY_LOG" ]; then
     log_to_check="$GATEWAY_LOG"
   elif [ -f "$runtime_log" ]; then
+    local start_line=1
+    if [ "$STARTUP_RUNTIME_LOG_FILE" = "$runtime_log" ] && [[ "$STARTUP_RUNTIME_LOG_LINES" =~ ^[0-9]+$ ]]; then
+      start_line=$((STARTUP_RUNTIME_LOG_LINES + 1))
+    fi
+    if [ "$start_line" -gt 1 ]; then
+      tail -n "+${start_line}" "$runtime_log" 2>/dev/null | tail -n 40 | grep -Eiq 'Port [0-9]+ is already in use|EADDRINUSE'
+      return $?
+    fi
     log_to_check="$runtime_log"
   else
     return 1
@@ -612,19 +623,34 @@ is_watchdog_standby_active() {
 }
 
 kill_gateway() {
-  local pid
-  pid=$(get_gateway_pid)
-  [[ -z "$pid" && -n "$LAST_PID" ]] && kill -0 "$LAST_PID" 2>/dev/null && pid=$LAST_PID
-  if [[ -n "$pid" ]]; then
-    log "Killing gateway (PID $pid)"
-    kill -TERM "$pid" 2>/dev/null || true
-    pkill -TERM -P "$pid" 2>/dev/null || true
-    local waited=0
-    while [[ $waited -lt 5 ]] && kill -0 "$pid" 2>/dev/null; do
+  local pid target_pids waited
+  target_pids="$(collect_gateway_pids | tr '\n' ' ')"
+  if [[ -n "$LAST_PID" ]] && kill -0 "$LAST_PID" 2>/dev/null && ! pid_in_list "$LAST_PID" $target_pids; then
+    target_pids="$target_pids $LAST_PID"
+  fi
+
+  if [[ -n "${target_pids// }" ]]; then
+    log "Killing gateway PIDs:${target_pids}"
+    for pid in $target_pids; do
+      kill -TERM "$pid" 2>/dev/null || true
+      pkill -TERM -P "$pid" 2>/dev/null || true
+    done
+
+    waited=0
+    while [[ $waited -lt 5 ]]; do
+      local any_alive=0
+      for pid in $target_pids; do
+        if kill -0 "$pid" 2>/dev/null; then
+          any_alive=1
+          break
+        fi
+      done
+      [[ $any_alive -eq 0 ]] && break
       sleep 1
       ((waited++))
     done
   fi
+
   pkill -9 -x "openclaw-gateway" 2>/dev/null || true
   pkill -9 -x "openclaw-gatewa" 2>/dev/null || true
   pkill -9 -x "openclaw" 2>/dev/null || true
@@ -632,7 +658,25 @@ kill_gateway() {
   pkill -9 -f "openclaw.*gateway run" 2>/dev/null || true
   [[ -n "$LAST_PID" ]] && kill -9 "$LAST_PID" 2>/dev/null || true
   LAST_PID=""
-  sleep 2
+}
+
+wait_for_gateway_release() {
+  local timeout="${1:-$GATEWAY_SHUTDOWN_TIMEOUT}"
+  local elapsed=0
+  local current_pids=""
+
+  while [[ $elapsed -lt $timeout ]]; do
+    current_pids="$(collect_gateway_pids | tr '\n' ' ')"
+    if [[ -z "${current_pids// }" ]] && ! is_port_listening; then
+      return 0
+    fi
+    sleep 1
+    ((elapsed++))
+  done
+
+  current_pids="$(collect_gateway_pids | tr '\n' ' ')"
+  log "WARN: gateway release wait timed out after ${timeout}s (portBusy=$(is_port_listening && echo y || echo n) pids=${current_pids:-none})"
+  return 1
 }
 
 wait_for_ready() {
@@ -643,7 +687,7 @@ wait_for_ready() {
 
   while [[ $elapsed -lt $timeout ]]; do
     if gateway_reported_no_listeners; then
-      log "Gateway reported no listeners on port $PORT; aborting startup wait early"
+      log "Gateway log indicates port $PORT bind/listen failure; aborting startup wait early"
       return 1
     fi
 
@@ -751,6 +795,12 @@ start_once() {
   fi
   log "Gateway launch command: $launch_cmd"
   STARTUP_OLD_PIDS="$(collect_gateway_pids | tr '\n' ' ')"
+  STARTUP_RUNTIME_LOG_FILE="/tmp/openclaw/openclaw-$(date +%Y-%m-%d).log"
+  if [ -f "$STARTUP_RUNTIME_LOG_FILE" ]; then
+    STARTUP_RUNTIME_LOG_LINES=$(wc -l < "$STARTUP_RUNTIME_LOG_FILE" 2>/dev/null | tr -d ' ')
+  else
+    STARTUP_RUNTIME_LOG_LINES=0
+  fi
   nohup bash --noprofile --norc -lc "$launch_cmd" > "$GATEWAY_LOG" 2>&1 &
   LAST_PID=$!
   log "Gateway process launched (PID $LAST_PID), polling every ${POLL_INTERVAL}s (timeout ${STARTUP_TIMEOUT}s)..."
@@ -773,8 +823,13 @@ start_once() {
 }
 
 start_gateway() {
-  if is_gateway_process_alive; then
+  if is_gateway_process_alive || is_port_listening; then
     kill_gateway
+  fi
+
+  if ! wait_for_gateway_release "$GATEWAY_SHUTDOWN_TIMEOUT"; then
+    CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+    return 1
   fi
 
   log "Starting gateway..."
@@ -945,14 +1000,18 @@ while true; do
 
   if ! is_gateway_process_alive; then
     log "Gateway is DOWN — restarting"
-    handle_restart
+    if ! handle_restart; then
+      :
+    fi
   elif ! is_port_listening; then
     gateway_pid=""
     gateway_pid=$(get_gateway_pid)
     if [ -z "$gateway_pid" ]; then
       LAST_PID=""
       log "Gateway PID missing while port $PORT is not listening — restarting"
-      handle_restart
+      if ! handle_restart; then
+        :
+      fi
       continue
     fi
     uptime=0
