@@ -628,6 +628,28 @@ function loadOpenClawModelCatalog() {
 }
 setTimeout(loadOpenClawModelCatalog, 1000);
 
+/**
+ * 将探测验证后的模型能力直接加入内置目录，同时持久化到 model-catalog-cache.json
+ * 这样下次 lookupModelCapabilities 在 step 1/2 就能直接命中，不再走家族推测和重复探测
+ */
+function addModelToCatalog(providerName, modelId, capabilities) {
+  if (!_openclawModelCatalog) return;
+  const provKey = providerName.toLowerCase();
+  if (!_openclawModelCatalog[provKey]) _openclawModelCatalog[provKey] = {};
+  // 只保留 catalog 安全字段，排除内部标记和工作用字段
+  const catalogFields = {};
+  for (const field of ['name', 'api', 'reasoning', 'input', 'contextWindow', 'maxTokens', 'compat', 'cost', 'headers']) {
+    if (capabilities[field] !== undefined) catalogFields[field] = capabilities[field];
+  }
+  _openclawModelCatalog[provKey][modelId] = catalogFields;
+  // 持久化到缓存文件
+  try {
+    fs.writeFileSync('/root/.openclaw/model-catalog-cache.json',
+      JSON.stringify(_openclawModelCatalog), { encoding: 'utf8', mode: 0o600 });
+  } catch {}
+  console.log(`[catalog] 已将探测结果写入模型目录: ${provKey}/${modelId}`);
+}
+
 // Gateway 支持的 api 枚举值（写入 openclaw.json 时必须校验）
 const VALID_GATEWAY_API_VALUES = new Set([
   'openai-completions', 'openai-responses', 'openai-codex-responses',
@@ -1298,6 +1320,13 @@ async function finalizeInferredModelValidation(job, state = {}) {
   const opState = getOpenClawOperationState();
   fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
 
+  // 将验证后的真实能力直接写入内置模型目录，后续 lookup 直接命中
+  const finalEntry = (models.providers[job.providerName]?.models || []).find(m => m.id === job.modelId);
+  if (finalEntry) {
+    const { id, ...caps } = finalEntry;
+    addModelToCatalog(job.providerName, job.modelId, caps);
+  }
+
   if (opState.type === 'idle') {
     queueGatewayRestart('ai-config-async-model-validation');
     console.log(`[ai/config] ${job.model} 后台运行时验证成功，已更新配置并提交 Gateway 重载请求`);
@@ -1449,6 +1478,16 @@ function syncConfiguredModelsToModelsJson() {
       if (!prov.models) prov.models = [];
       const existingIdx = prov.models.findIndex(m => m.id === modelId);
       const entry = getCachedModelEntry(provName, modelId);
+      // 对家族推测匹配的模型排队后台运行时验证
+      const caps = getCachedModelCapabilities(provName, modelId);
+      if (caps && caps._inferred && caps._matchedFamily) {
+        queueInferredModelValidation({
+          model: modelStr,
+          providerName: provName,
+          modelId,
+          matchedFamily: caps._matchedFamily
+        });
+      }
       if (existingIdx === -1) {
         prov.models.push(entry);
         configChanged = true;
@@ -10161,9 +10200,11 @@ function scanSkillsDir(dir, source) {
       const skillMd = path.join(skillDir, 'SKILL.md');
       let description = '';
       let contentHash = '';
+      let skillName = '';
       if (fs.existsSync(skillMd)) {
         const parsed = parseSkillMd(skillMd);
         if (parsed) {
+          skillName = parsed.name || '';
           description = parsed.description || '';
           contentHash = crypto.createHash('md5').update(parsed.content).digest('hex');
         }
@@ -10196,7 +10237,7 @@ function scanSkillsDir(dir, source) {
           }
         }
       } catch {}
-      results.push({ name: e.name, skillName: parsed?.name || '', description, path: skillDir, contentHash, source, securityWarnings, securityDetails });
+      results.push({ name: e.name, skillName, description, path: skillDir, contentHash, source, securityWarnings, securityDetails });
     }
   } catch {}
   return results;
