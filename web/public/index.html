@@ -605,6 +605,7 @@
               <div style="margin-top:6px">
               • <b>推荐使用"后台运行"</b>命令：使用 <code>nohup</code> + 重连循环，Gateway 重启或网络中断后会自动重连（5秒间隔）<br>
               • 不同网关会写入 <code>~/.openclaw/nodes/&lt;网关ID&gt;/</code> 独立目录，可同时连接多个网关<br>
+              • <b>Windows</b> 后台模式同样支持多网关隔离；命令执行后会打印当前网关专用的日志、错误日志和停止命令<br>
               • 日志输出到当前网关对应目录下的 <code>node-host.log</code>；执行命令后会显示准确路径<br>
               • 关闭 SSH 后进程不会退出（<code>nohup</code> 会话独立）<br>
               • 停止节点：执行命令后终端会显示当前网关专用的停止命令<br>
@@ -744,6 +745,7 @@
                     • <b>推荐使用"后台运行"命令</b>，使用 <code>nohup</code> + 重连循环包装<br>
                     • Gateway 重启后，节点会在 5 秒内自动重连<br>
                     • 不同网关会写入 <code>~/.openclaw/nodes/&lt;网关ID&gt;/</code> 独立目录，可同时连接多个网关<br>
+                    • <b>Windows</b> 后台模式同样支持多网关隔离；命令执行后会打印当前网关专用的日志、错误日志和停止命令<br>
                     • 关闭 SSH 会话后进程不会退出（<code>nohup</code> 独立会话）<br>
                     • 日志输出到当前网关对应目录下的 <code>node-host.log</code>；执行命令后会显示准确路径<br>
                     • 停止节点：执行命令后终端会显示当前网关专用的停止命令<br>
