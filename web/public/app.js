@@ -3920,15 +3920,17 @@ function skillCard(s) {
 function scanSkillCard(s, idx) {
   // Match with installed skills
   const installed = _installedSkills.find(i => i.name === s.dirName);
-  // Only show "has update" when content changed AND installed skill is NOT user-managed
-  // (user-managed skills with same name are likely custom/unrelated; avoid false-positive update prompts)
   const contentDiffers = installed && s.contentHash && installed.contentHash && s.contentHash !== installed.contentHash && s.dirName === installed.name;
-  const hasUpdate = contentDiffers && installed.source !== 'managed';
-  const nameConflict = contentDiffers && installed.source === 'managed';
+  // If both sides have a meaningful SKILL.md name and they differ → different skill, just dir-name collision
+  const skillNameMismatch = contentDiffers && installed.skillName && s.name && s.name !== s.dirName && installed.skillName !== s.name;
+  const hasUpdate = contentDiffers && !skillNameMismatch && installed.source !== 'managed';
+  const nameConflict = contentDiffers && (skillNameMismatch || installed.source === 'managed');
   const isLocalScan = !!s._localScan;
   let statusBadge = '';
   if (installed && hasUpdate) {
     statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px;font-weight:700">↑ 有更新</span>';
+  } else if (skillNameMismatch) {
+    statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px">⚠ 同名目录 (不同 Skill)</span>';
   } else if (nameConflict) {
     statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px">⚠ 同名已安装 (自定义)</span>';
   } else if (installed && isLocalScan) {
@@ -3954,6 +3956,7 @@ function scanSkillCard(s, idx) {
           <div class="muted small" style="margin-top:1px">${escapeHtml(s.description || '')}</div>
           <div class="muted small" style="margin-top:1px;color:#888">📁 ${escapeHtml(s.relPath || s.dirName)}</div>
           ${warningHtml}${errorHtml}
+        </div>
       </div>
     </div>`;
 }

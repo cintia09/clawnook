@@ -1419,18 +1419,36 @@ function syncConfiguredModelsToModelsJson() {
     for (const fb of subFb) {
       if (fb && fb.includes('/')) configuredModels.push(fb);
     }
-    if (configuredModels.length === 0) return;
+    const uniqueConfiguredModels = Array.from(new Set(configuredModels));
+    if (uniqueConfiguredModels.length === 0) return;
+    const modelEntryCache = new Map();
+    const modelCapsCache = new Map();
+    const getCachedModelEntry = (provName, modelId) => {
+      const key = `${provName}/${modelId}`;
+      if (!modelEntryCache.has(key)) {
+        modelEntryCache.set(key, buildModelEntry(provName, modelId));
+      }
+      const entry = modelEntryCache.get(key);
+      return entry ? { ...entry } : entry;
+    };
+    const getCachedModelCapabilities = (provName, modelId) => {
+      const key = `${provName}/${modelId}`;
+      if (!modelCapsCache.has(key)) {
+        modelCapsCache.set(key, lookupModelCapabilities(provName, modelId));
+      }
+      return modelCapsCache.get(key);
+    };
     // 同步到 openclaw.json（gateway 启动时读取此文件生成 models.json）
     let configChanged = false;
     if (!config.models) config.models = {};
     if (!config.models.providers) config.models.providers = {};
-    for (const modelStr of configuredModels) {
+    for (const modelStr of uniqueConfiguredModels) {
       const [provName, modelId] = modelStr.split('/');
       const prov = config.models.providers[provName];
       if (!prov) continue;
       if (!prov.models) prov.models = [];
       const existingIdx = prov.models.findIndex(m => m.id === modelId);
-      const entry = buildModelEntry(provName, modelId);
+      const entry = getCachedModelEntry(provName, modelId);
       if (existingIdx === -1) {
         prov.models.push(entry);
         configChanged = true;
@@ -1459,7 +1477,7 @@ function syncConfiguredModelsToModelsJson() {
     for (const [provName, prov] of Object.entries(config.models.providers)) {
       if (!prov.models || !Array.isArray(prov.models)) continue;
       for (const m of prov.models) {
-        const mCap = lookupModelCapabilities(provName, m.id);
+        const mCap = getCachedModelCapabilities(provName, m.id);
         const correctApi = sanitizeApiValue(mCap?.api, provName);
         if (correctApi && m.api !== correctApi) {
           console.log(`[sync] 修正 ${provName}/${m.id}.api: ${m.api} → ${correctApi}`);
@@ -1477,13 +1495,13 @@ function syncConfiguredModelsToModelsJson() {
       const models = readJson(modelsPath, { providers: {} });
       if (models?.providers) {
         let modelsChanged = false;
-        for (const modelStr of configuredModels) {
+        for (const modelStr of uniqueConfiguredModels) {
           const [provName, modelId] = modelStr.split('/');
           const prov = models.providers[provName];
           if (!prov) continue;
           if (!prov.models) prov.models = [];
           const existingIdx = prov.models.findIndex(m => m.id === modelId);
-          const entry = buildModelEntry(provName, modelId);
+          const entry = getCachedModelEntry(provName, modelId);
           if (existingIdx === -1) {
             prov.models.push(entry);
             modelsChanged = true;
@@ -1509,7 +1527,7 @@ function syncConfiguredModelsToModelsJson() {
         for (const [provName2, prov2] of Object.entries(models.providers)) {
           if (!prov2.models || !Array.isArray(prov2.models)) continue;
           for (const m of prov2.models) {
-            const mCap = lookupModelCapabilities(provName2, m.id);
+            const mCap = getCachedModelCapabilities(provName2, m.id);
             const correctApi = sanitizeApiValue(mCap?.api, provName2);
             if (correctApi && m.api !== correctApi) {
               m.api = correctApi;
@@ -10166,7 +10184,7 @@ function scanSkillsDir(dir, source) {
           }
         }
       } catch {}
-      results.push({ name: e.name, description, path: skillDir, contentHash, source, securityWarnings, securityDetails });
+      results.push({ name: e.name, skillName: parsed?.name || '', description, path: skillDir, contentHash, source, securityWarnings, securityDetails });
     }
   } catch {}
   return results;
