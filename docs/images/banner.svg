@@ -27,7 +27,7 @@
   <circle cx="600" cy="235" r="1.8" fill="#ef444420"/>
 
   <!-- Lobster cartoon character -->
-  <g transform="translate(115, 130) scale(1.1)">
+  <g transform="translate(248, 62) scale(0.6)">
     <!-- Body -->
     <ellipse cx="0" cy="0" rx="38" ry="28" fill="#ef4444" opacity="0.95"/>
     <ellipse cx="0" cy="5" rx="30" ry="18" fill="#f87171" opacity="0.6"/>
@@ -72,17 +72,17 @@
   </g>
 
   <!-- Title text -->
-  <text x="400" y="85" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="48" font-weight="800" fill="white" filter="url(#shadow)">
+  <text x="440" y="75" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="48" font-weight="800" fill="white" filter="url(#shadow)">
     OpenClaw Pro
   </text>
 
   <!-- Tagline -->
-  <text x="400" y="125" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="18" fill="#9ca3af" font-weight="400">
+  <text x="400" y="112" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="18" fill="#9ca3af" font-weight="400">
     你的私人 AI 助手，一键部署到任何平台
   </text>
 
   <!-- Feature pills -->
-  <g transform="translate(400, 165)">
+  <g transform="translate(400, 152)">
     <!-- One-click Install -->
     <rect x="-310" y="-14" width="105" height="28" rx="14" fill="#f9731620" stroke="#f97316" stroke-width="1" opacity="0.8"/>
     <text x="-257" y="5" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="12" fill="#f97316" font-weight="600">🚀 一键安装</text>
@@ -105,7 +105,7 @@
   </g>
 
   <!-- Subtitle -->
-  <text x="400" y="215" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="14" fill="#6b7280">
+  <text x="400" y="200" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="14" fill="#6b7280">
     面向 Linux · macOS · Windows 的 OpenClaw 一键部署工具
   </text>
 
