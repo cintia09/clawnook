@@ -27,7 +27,7 @@
   <circle cx="600" cy="235" r="1.8" fill="#ef444420"/>
 
   <!-- Lobster cartoon character -->
-  <g transform="translate(248, 62) scale(0.6)">
+  <g transform="translate(220, 58) scale(0.75)">
     <!-- Body -->
     <ellipse cx="0" cy="0" rx="38" ry="28" fill="#ef4444" opacity="0.95"/>
     <ellipse cx="0" cy="5" rx="30" ry="18" fill="#f87171" opacity="0.6"/>
@@ -72,7 +72,7 @@
   </g>
 
   <!-- Title text -->
-  <text x="440" y="75" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="48" font-weight="800" fill="white" filter="url(#shadow)">
+  <text x="450" y="75" text-anchor="middle" font-family="'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="48" font-weight="800" fill="white" filter="url(#shadow)">
     OpenClaw Pro
   </text>
 
