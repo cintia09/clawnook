@@ -1,5 +1,5 @@
 // ============================================================
-// server.js — OpenClaw Web 管理面板 (docker/web)
+// server.js — OpenClaw Web Panel (docker/web)
 // - Express on 3000
 // - Auth: signed cookie + PBKDF2 (docker-config.json)
 // - Keep legacy APIs: status/config/restart/openclaw/logs/trading
@@ -452,7 +452,7 @@ function writeAiModels(obj) {
 }
 
 // ============================================================
-// Helpers: API Key 加密/解密（AES-256-CBC + PBKDF2）
+// Helpers: API Key encryption/decryption (AES-256-CBC + PBKDF2)
 // ============================================================
 const ENC_KEY_PATH = '/root/.openclaw/.enc_key';
 
@@ -470,9 +470,9 @@ function ensureEncryptionKey() {
     const key = crypto.randomBytes(32).toString('base64').slice(0, 32);
     fs.mkdirSync(path.dirname(ENC_KEY_PATH), { recursive: true });
     fs.writeFileSync(ENC_KEY_PATH, key, { mode: 0o400 });
-    console.log('[enc] 加密主密钥已自动生成');
+    console.log('[enc] Encryption master key auto-generated');
   } catch (e) {
-    console.warn('[enc] 无法生成加密密钥:', e.message);
+    console.warn('[enc] Cannot generate encryption key:', e.message);
   }
 }
 
@@ -489,7 +489,7 @@ function encryptValue(plaintext) {
     enc += cipher.final('base64');
     return 'ENC:' + salt.toString('base64') + ':' + enc;
   } catch (e) {
-    console.warn('[enc] 加密失败:', e.message);
+    console.warn('[enc] Encryption failed:', e.message);
     return plaintext;
   }
 }
@@ -512,7 +512,7 @@ function decryptValue(encrypted) {
     dec += decipher.final('utf8');
     return dec;
   } catch (e) {
-    console.warn('[enc] 解密失败:', e.message);
+    console.warn('[enc] Decryption failed:', e.message);
     return encrypted;
   }
 }
@@ -528,11 +528,11 @@ function isEncrypted(value) {
   return typeof value === 'string' && value.startsWith('ENC:');
 }
 
-// 启动时确保加密密钥存在
+// Ensure encryption key exists at startup
 ensureEncryptionKey();
 
-// 启动时自动修复：将 models.json 中被错误加密的 API key 解密回明文
-// （models.json 必须保留明文，因为 openclaw gateway 直接读取）
+// Auto-fix: decrypt incorrectly encrypted API keys in models.json to plaintext
+// （models.json must keep plaintext because openclaw gateway reads directly）
 function repairModelsJsonApiKeys() {
   const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
   try {
@@ -546,27 +546,27 @@ function repairModelsJsonApiKeys() {
         if (decrypted && decrypted !== prov.apiKey) {
           prov.apiKey = decrypted;
           changed = true;
-          console.log(`[enc] 已将 ${pName} 的 API key 恢复为明文（openclaw 需要明文读取）`);
+          console.log(`[enc] Restored ${pName} API key to plaintext (openclaw requires plaintext)`);
         }
       }
     }
     if (changed) {
       writeJson(modelsPath, models);
-      console.log('[enc] models.json API key 修复完成');
+      console.log('[enc] models.json API key fix complete');
     }
   } catch (e) {
-    console.warn('[enc] API key 修复失败:', e.message);
+    console.warn('[enc] API key fix failed:', e.message);
   }
 }
 setTimeout(repairModelsJsonApiKeys, 3000);
 
 // ============================================================
-// OpenClaw 内置模型目录 — 启动时从 models.generated.js 加载
-// 用于：保存配置时自动查询模型能力（reasoning, contextWindow 等）
+// OpenClaw built-in model catalog — loaded from models.generated.js at startup
+// Used for auto-querying model capabilities (reasoning, contextWindow, etc.) when saving config
 // ============================================================
 let _openclawModelCatalog = null; // { provider: { modelId: { name, api, reasoning, input, contextWindow, maxTokens, compat } } }
 
-// 我们的 provider 名称 → OpenClaw 内置 provider 名称 映射
+// Our provider name → OpenClaw built-in provider name mapping
 const PROVIDER_TO_OPENCLAW_MAP = {
   'gemini': 'google',
   'google': 'google',
@@ -588,9 +588,9 @@ const PROVIDER_TO_OPENCLAW_MAP = {
   'google-vertex': 'google-vertex',
 };
 
-// 加载 OpenClaw 内置模型目录
+// Load OpenClaw built-in model catalog
 function loadOpenClawModelCatalog() {
-  // 支持多个可能的安装路径：npm-global 安装 和 openclaw-source 源码安装
+  // Support multiple possible install paths：npm-global install and openclaw-source source install
   const catalogPaths = [
     '/root/.openclaw/openclaw-source/node_modules/@mariozechner/pi-ai/dist/models.generated.js',
     '/root/.npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-ai/dist/models.generated.js',
@@ -598,59 +598,59 @@ function loadOpenClawModelCatalog() {
   const catalogPath = catalogPaths.find(p => fs.existsSync(p.replace('/dist/models.generated.js', '')));
   try {
     if (!catalogPath) {
-      // 尝试从缓存中加载
+      // Try loading from cache
       const cachePath = '/root/.openclaw/model-catalog-cache.json';
       if (fs.existsSync(cachePath)) {
         _openclawModelCatalog = readJson(cachePath, null);
         if (_openclawModelCatalog) {
-          console.log(`[catalog] 已从缓存加载模型目录 (${Object.keys(_openclawModelCatalog).length} providers)`);
+          console.log(`[catalog] Loaded model catalog from cache (${Object.keys(_openclawModelCatalog).length} providers)`);
           return;
         }
       }
-      console.log('[catalog] OpenClaw 模型目录未找到');
+      console.log('[catalog] OpenClaw Model catalog not found');
       return;
     }
-    // 使用 require 加载 ESM 模块中的 MODELS
+    // Load MODELS from ESM module via require
     const { execSync } = require('child_process');
     const json = execSync(`node -e "const m = require('${catalogPath}'); process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(m.MODELS).map(([p, models]) => [p, Object.fromEntries(Object.entries(models).map(([id, model]) => [id, { name: model.name, api: model.api, reasoning: model.reasoning, input: model.input, contextWindow: model.contextWindow, maxTokens: model.maxTokens, compat: model.compat || undefined }]))]))))"`, {
       encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe']
     });
     _openclawModelCatalog = JSON.parse(json);
-    // 缓存到文件
+    // Cache to file
     try {
       fs.writeFileSync('/root/.openclaw/model-catalog-cache.json', json, { encoding: 'utf8', mode: 0o600 });
     } catch {}
     const totalModels = Object.values(_openclawModelCatalog).reduce((sum, prov) => sum + Object.keys(prov).length, 0);
-    console.log(`[catalog] 已加载 OpenClaw 模型目录: ${Object.keys(_openclawModelCatalog).length} providers, ${totalModels} models`);
+    console.log(`[catalog] Loaded OpenClaw model catalog: ${Object.keys(_openclawModelCatalog).length} providers, ${totalModels} models`);
   } catch (e) {
-    console.warn('[catalog] 加载模型目录失败:', e.message);
+    console.warn('[catalog] Failed to load model catalog:', e.message);
   }
 }
 setTimeout(loadOpenClawModelCatalog, 1000);
 
 /**
- * 将探测验证后的模型能力直接加入内置目录，同时持久化到 model-catalog-cache.json
- * 这样下次 lookupModelCapabilities 在 step 1/2 就能直接命中，不再走家族推测和重复探测
+ * Add probe-verified model capabilities to built-in catalog and persist to model-catalog-cache.json
+ * So next lookupModelCapabilities hits directly in step 1/2 without family inference or re-probing
  */
 function addModelToCatalog(providerName, modelId, capabilities) {
   if (!_openclawModelCatalog) return;
   const provKey = providerName.toLowerCase();
   if (!_openclawModelCatalog[provKey]) _openclawModelCatalog[provKey] = {};
-  // 只保留 catalog 安全字段，排除内部标记和工作用字段
+  // Keep only safe catalog fields, exclude internal markers and working fields
   const catalogFields = {};
   for (const field of ['name', 'api', 'reasoning', 'input', 'contextWindow', 'maxTokens', 'compat', 'cost', 'headers']) {
     if (capabilities[field] !== undefined) catalogFields[field] = capabilities[field];
   }
   _openclawModelCatalog[provKey][modelId] = catalogFields;
-  // 持久化到缓存文件
+  // Persist to cache file
   try {
     fs.writeFileSync('/root/.openclaw/model-catalog-cache.json',
       JSON.stringify(_openclawModelCatalog), { encoding: 'utf8', mode: 0o600 });
   } catch {}
-  console.log(`[catalog] 已将探测结果写入模型目录: ${provKey}/${modelId}`);
+  console.log(`[catalog] Probe results written to model catalog: ${provKey}/${modelId}`);
 }
 
-// Gateway 支持的 api 枚举值（写入 openclaw.json 时必须校验）
+// Gateway-supported api enum values (must validate when writing openclaw.json)
 const VALID_GATEWAY_API_VALUES = new Set([
   'openai-completions', 'openai-responses', 'openai-codex-responses',
   'anthropic-messages', 'google-generative-ai', 'github-copilot',
@@ -658,18 +658,18 @@ const VALID_GATEWAY_API_VALUES = new Set([
 ]);
 
 /**
- * 将模型目录中的 api 值映射为 gateway 合法值
- * 如果值不在 gateway 支持列表中，返回对应 provider 的安全默认值
+ * Map catalog api value to gateway-valid value
+ * If value not in supported list, return safe default for provider
  */
 function sanitizeApiValue(api, providerName) {
   if (!api || VALID_GATEWAY_API_VALUES.has(api)) return api;
-  // 常见映射：azure-openai-responses → openai-responses
+  // Common mapping: azure-openai-responses → openai-responses
   const FALLBACK_MAP = {
     'azure-openai-responses': 'openai-responses',
     'azure-openai-completions': 'openai-completions',
   };
   if (FALLBACK_MAP[api]) return FALLBACK_MAP[api];
-  // 按 provider 给默认值
+  // Default by provider
   const PROVIDER_DEFAULT_API = {
     'github-copilot': 'github-copilot',
     'gemini': 'google-generative-ai',
@@ -690,10 +690,10 @@ function normalizeProviderApiForSync(currentApi, providerName, fallbackApi) {
 }
 
 /**
- * 从 OpenClaw 内置目录查询模型能力
- * @param {string} providerName - 我们的 provider 名称 (如 'gemini', 'bailian')
- * @param {string} modelId - 模型 ID (如 'gemini-3-flash-preview')
- * @returns {object|null} 模型能力定义，或 null（未找到时）
+ * Query model capabilities from OpenClaw built-in catalog
+ * @param {string} providerName - Our provider name (e.g. 'gemini', 'bailian')
+ * @param {string} modelId - model ID (e.g. 'gemini-3-flash-preview')
+ * @returns {object|null} model capability definition, or null (when not found)
  */
 function lookupModelCapabilities(providerName, modelId) {
   if (!_openclawModelCatalog) {
@@ -701,21 +701,21 @@ function lookupModelCapabilities(providerName, modelId) {
   }
   if (!_openclawModelCatalog) return { _catalogUnavailable: true };
 
-  // 1. 直接查找：先用映射后的 provider 名
+  // 1. Direct lookup: try mapped provider name first
   const openclawProvider = PROVIDER_TO_OPENCLAW_MAP[providerName.toLowerCase()] || providerName.toLowerCase();
   const providerModels = _openclawModelCatalog[openclawProvider];
   if (providerModels && providerModels[modelId]) {
     return providerModels[modelId];
   }
 
-  // 2. 模糊匹配：在所有 provider 中按 modelId 搜索（处理 provider 名不一致的情况）
+  // 2. Fuzzy match: search by modelId across all providers (handle name mismatch)
   for (const [prov, models] of Object.entries(_openclawModelCatalog)) {
     if (models[modelId]) {
       return models[modelId];
     }
   }
 
-  // 3. 前缀匹配：例如 'gemini-3-flash-preview-0508' 匹配 'gemini-3-flash-preview'
+  // 3. Prefix match: e.g. 'gemini-3-flash-preview-0508' matches 'gemini-3-flash-preview'
   for (const [prov, models] of Object.entries(_openclawModelCatalog)) {
     for (const [id, model] of Object.entries(models)) {
       if (modelId.startsWith(id) || id.startsWith(modelId)) {
@@ -724,21 +724,21 @@ function lookupModelCapabilities(providerName, modelId) {
     }
   }
 
-  // 4. 家族前缀匹配：提取模型家族前缀（纯字母部分），匹配同家族模型
-  // 例如 'qwen3.5-plus' → 'qwen'，'claude-sonnet-4' → 'claude'，匹配 OpenClaw 目录中任意同家族模型
+  // 4. Family prefix match: extract model family prefix (alpha), match same-family models
+  // e.g. 'qwen3.5-plus' → 'qwen'，'claude-sonnet-4' → 'claude'，matches any model in the same family in the OpenClaw catalog
   const familyMatch = modelId.match(/^([a-z]+)/i);
   if (familyMatch) {
     const familyPrefix = familyMatch[1].toLowerCase();
-    // 在所有 provider 中查找同家族的任意模型（以该前缀开头）
+    // Search all providers for any same-family model (starting with prefix)
     for (const [prov, models] of Object.entries(_openclawModelCatalog)) {
       for (const [id, model] of Object.entries(models)) {
-        // 检查模型ID是否以家族前缀开头（考虑多种命名格式：qwen-xxx, qwen/xxx, qwen_xxx）
+        // Check if model ID starts with family prefix（considering multiple naming formats：qwen-xxx, qwen/xxx, qwen_xxx）
         const idLower = id.toLowerCase();
         if (idLower.startsWith(familyPrefix + '-') ||
             idLower.startsWith(familyPrefix + '/') ||
             idLower.startsWith(familyPrefix + '_') ||
             idLower === familyPrefix) {
-          // 找到同家族模型，标记为推测匹配
+          // Found same-family model, marked as speculative match
           return {
             ...model,
             _inferred: true,
@@ -754,17 +754,17 @@ function lookupModelCapabilities(providerName, modelId) {
 }
 
 /**
- * 为指定模型生成完整的 models.json 条目
- * 优先从 OpenClaw 内置目录获取真实能力，未命中时用安全默认值
- * @param {string} providerName - provider 名称
- * @param {string} modelId - 模型 ID
- * @returns {object} 完整的模型条目
+ * Generate complete models.json entry for specified model
+ * Prefer real capabilities from OpenClaw built-in catalog，use safe defaults when not matched
+ * @param {string} providerName - provider name
+ * @param {string} modelId - model ID
+ * @returns {object} complete model entry
  */
 function buildModelEntry(providerName, modelId) {
   const catalogEntry = lookupModelCapabilities(providerName, modelId);
 
   if (catalogEntry?._catalogUnavailable) {
-    console.log(`[catalog] 模型目录不可用，模型 ${providerName}/${modelId} 使用安全默认值`);
+    console.log(`[catalog] Model catalog unavailable, model ${providerName}/${modelId} using safe defaults`);
     return {
       id: modelId,
       name: modelId,
@@ -786,12 +786,12 @@ function buildModelEntry(providerName, modelId) {
     const resolvedContextWindow = catalogEntry.contextWindow || 128000;
     const resolvedMaxTokens = catalogEntry.maxTokens || 4096;
     if (catalogEntry.api != null && safeApi !== catalogEntry.api) {
-      console.log(`[catalog] 模型 ${providerName}/${modelId} api 值 "${catalogEntry.api}" 不被 gateway 支持，映射为 "${safeApi}"`);
+      console.log(`[catalog] model ${providerName}/${modelId} api value "${catalogEntry.api}" not supported by gateway, mapped to "${safeApi}"`);
     }
     if (isInferred) {
-      console.log(`[catalog] 模型 ${providerName}/${modelId} 家族匹配成功 (${catalogEntry._matchedFamily})，推测使用同家族参数: reasoning=${resolvedReasoning}, api=${safeApi}, ctx=${resolvedContextWindow}`);
+      console.log(`[catalog] model ${providerName}/${modelId} Family match succeeded (${catalogEntry._matchedFamily}), using inferred same-family params: reasoning=${resolvedReasoning}, api=${safeApi}, ctx=${resolvedContextWindow}`);
     } else {
-      console.log(`[catalog] 模型 ${providerName}/${modelId} 命中内置目录: reasoning=${resolvedReasoning}, api=${safeApi}, ctx=${resolvedContextWindow}`);
+      console.log(`[catalog] model ${providerName}/${modelId} matched built-in catalog: reasoning=${resolvedReasoning}, api=${safeApi}, ctx=${resolvedContextWindow}`);
     }
     return {
       id: modelId,
@@ -807,8 +807,8 @@ function buildModelEntry(providerName, modelId) {
     };
   }
 
-  // 未命中内置目录 — 使用安全默认值
-  console.log(`[catalog] 模型 ${providerName}/${modelId} 未命中内置目录，使用安全默认值 (reasoning=false)`);
+  // Not found in built-in catalog — using safe defaults
+  console.log(`[catalog] model ${providerName}/${modelId} not found in built-in catalog, using safe defaults (reasoning=false)`);
   return {
     id: modelId,
     name: modelId,
@@ -822,13 +822,13 @@ function buildModelEntry(providerName, modelId) {
 }
 
 /**
- * 测试模型是否真实可用
- * 向 provider 发起一个极简的 chat completion 请求验证模型是否存在
- * 使用 execFileSync + curl 数组参数，继承代理环境变量且避免 shell 注入
- * @param {string} provider - provider 名称
- * @param {string} modelId - 模型 ID
+ * Test if model is actually available
+ * Send minimal chat completion request to provider to verify model exists
+ * Use execFileSync + curl array args, inherit proxy env and avoid shell injection
+ * @param {string} provider - provider name
+ * @param {string} modelId - model ID
  * @param {string} apiKey - API Key
- * @param {string} baseUrl - API 基础 URL
+ * @param {string} baseUrl - API base URL
  * @returns {Promise<{available: boolean, error?: string}>}
  */
 async function testModelAvailability(provider, modelId, apiKey, baseUrl) {
@@ -836,7 +836,7 @@ async function testModelAvailability(provider, modelId, apiKey, baseUrl) {
   try {
     const endpoint = baseUrl || getDefaultBaseUrl(provider);
     if (!endpoint) {
-      return { available: false, error: '未找到 API 端点' };
+      return { available: false, error: 'API endpoint not found' };
     }
 
     const { execFile } = require('child_process');
@@ -851,7 +851,7 @@ async function testModelAvailability(provider, modelId, apiKey, baseUrl) {
       max_tokens: 5
     });
 
-    // execFile 以数组传参，不经过 shell，杜绝命令注入
+    // execFile uses array args without shell, preventing command injection
     const args = [
       '-sS', '--connect-timeout', '10', '--max-time', '20',
       '-X', 'POST',
@@ -883,16 +883,16 @@ async function testModelAvailability(provider, modelId, apiKey, baseUrl) {
     const elapsed = Date.now() - startTime;
 
     if (httpCode >= 200 && httpCode < 300) {
-      console.log(`[model-test] ${provider}/${modelId} 测试成功 (${elapsed}ms)`);
+      console.log(`[model-test] ${provider}/${modelId} test passed (${elapsed}ms)`);
       return { available: true };
     }
 
-    console.log(`[model-test] ${provider}/${modelId} 测试失败: HTTP ${httpCode} (${elapsed}ms)`);
+    console.log(`[model-test] ${provider}/${modelId} test failed: HTTP ${httpCode} (${elapsed}ms)`);
     return { available: false, error: `HTTP ${httpCode}: ${responseBody.slice(0, 200)}` };
 
   } catch (e) {
     const elapsed = Date.now() - startTime;
-    console.log(`[model-test] ${provider}/${modelId} 测试异常: ${e.message} (${elapsed}ms)`);
+    console.log(`[model-test] ${provider}/${modelId} test error: ${e.message} (${elapsed}ms)`);
     return { available: false, error: e.message };
   }
 }
@@ -1067,21 +1067,21 @@ function applyModelFieldOverrides(baseEntry, overrides) {
 function shouldRetryInferredModelValidation(errorText) {
   const text = String(errorText || '').toLowerCase();
   if (!text) return false;
-  if (/http 400|http 401|http 403|http 404|invalid api key|模型不可用|model_not_found|not found/.test(text)) return false;
+  if (/http 400|http 401|http 403|http 404|invalid api key|Model unavailable|model_not_found|not found/.test(text)) return false;
   return /timeout|timed out|econn|socket|network|fetch failed|http 429|http 500|http 502|http 503|http 504|temporar|rate limit|unavailable/.test(text);
 }
 
 async function fetchRemoteProviderModels(provider, apiKey, baseUrl) {
   const endpoint = baseUrl || getDefaultBaseUrl(provider);
-  if (!endpoint) return { ok: false, error: '未找到 API 端点', models: [] };
-  if (provider === 'anthropic') return { ok: false, error: 'Anthropic 不支持 /models 端点', models: [] };
+  if (!endpoint) return { ok: false, error: 'API endpoint not found', models: [] };
+  if (provider === 'anthropic') return { ok: false, error: 'Anthropic does not support /models endpoint', models: [] };
 
   const modelsUrl = provider === 'ollama' ? `${endpoint}/api/tags` : `${endpoint}/models`;
   const headers = {};
   let fetchUrl = modelsUrl;
 
   if (provider === 'gemini') {
-    if (!apiKey) return { ok: false, error: 'Gemini 缺少 API Key', models: [] };
+    if (!apiKey) return { ok: false, error: 'Gemini missing API Key', models: [] };
     fetchUrl = `${modelsUrl}?key=${encodeURIComponent(apiKey)}`;
   } else if (!['ollama', 'lmstudio', 'vllm'].includes(provider) && apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`;
@@ -1117,19 +1117,19 @@ async function fetchRemoteProviderModels(provider, apiKey, baseUrl) {
 
     return { ok: true, models };
   } catch (err) {
-    return { ok: false, error: err?.message || '获取模型列表失败', models: [] };
+    return { ok: false, error: err?.message || 'Failed to fetch model list', models: [] };
   }
 }
 
 function formatRuntimeModelOverrides(overrides) {
-  if (!overrides || typeof overrides !== 'object') return '无额外参数';
+  if (!overrides || typeof overrides !== 'object') return 'No additional parameters';
   const parts = [];
   if (overrides.reasoning !== undefined) parts.push(`reasoning=${overrides.reasoning}`);
   if (overrides.api) parts.push(`api=${overrides.api}`);
   if (overrides.contextWindow) parts.push(`ctx=${overrides.contextWindow}`);
   if (overrides.maxTokens) parts.push(`max=${overrides.maxTokens}`);
   if (Array.isArray(overrides.input) && overrides.input.length > 0) parts.push(`input=${overrides.input.join(',')}`);
-  return parts.length > 0 ? parts.join(', ') : '无额外参数';
+  return parts.length > 0 ? parts.join(', ') : 'No additional parameters';
 }
 
 const pendingDeferredGatewayRestartRequests = new Map();
@@ -1248,7 +1248,7 @@ function upsertProviderModelEntry(targetProviders, provName, modId, options = {}
   if (entry.api) {
     const desiredProvApi = normalizeProviderApiForSync(targetProviders[provName].api, provName, entry.api);
     if (desiredProvApi && desiredProvApi !== targetProviders[provName].api) {
-      console.log(`[ensureModelEntry] 修正 provider ${provName}.api: ${targetProviders[provName].api} → ${desiredProvApi}`);
+      console.log(`[ensureModelEntry] Corrected provider ${provName}.api: ${targetProviders[provName].api} → ${desiredProvApi}`);
       targetProviders[provName].api = desiredProvApi;
     }
   }
@@ -1259,46 +1259,46 @@ async function finalizeInferredModelValidation(job, state = {}) {
   const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
   let config = readJson(configPath, {});
   if (!collectConfiguredModelStrings(config).has(job.model)) {
-    console.log(`[ai/config] ${job.model} 已不在当前配置中，跳过后台验证结果回写`);
+    console.log(`[ai/config] ${job.model} no longer in current config, skipping background validation write-back`);
     return { status: 'done' };
   }
 
   const creds = getModelValidationCredentials(job.providerName);
   if (!creds.apiKey || creds.apiKey === 'YOUR_API_KEY') {
-    console.log(`[ai/config] ${job.model} 后台验证跳过：${job.providerName} 没有配置有效的 API Key`);
+    console.log(`[ai/config] ${job.model} Background validation skipped: ${job.providerName} has no valid API Key configured`);
     return { status: 'done' };
   }
 
-  console.log(`[ai/config] ${job.model} 家族匹配成功 (${job.matchedFamily})，开始第 ${state.attempts || 1} 次后台运行时验证...`);
+  console.log(`[ai/config] ${job.model} Family match succeeded (${job.matchedFamily})，starting attempt #${state.attempts || 1}  background runtime verification...`);
   const remoteModelsResult = await fetchRemoteProviderModels(job.providerName, creds.apiKey, creds.baseUrl);
   const remoteModel = remoteModelsResult.models.find((item) => item.id.toLowerCase() === String(job.modelId || '').toLowerCase()) || null;
   if (remoteModel?.overrides && Object.keys(remoteModel.overrides).length > 0) {
-    console.log(`[ai/config] ${job.model} 后台元数据命中，获取到真实参数: ${formatRuntimeModelOverrides(remoteModel.overrides)}`);
+    console.log(`[ai/config] ${job.model} Background metadata hit, got real params: ${formatRuntimeModelOverrides(remoteModel.overrides)}`);
   } else if (remoteModelsResult.ok) {
-    console.log(`[ai/config] ${job.model} 后台元数据已查询，但 provider 未返回更精确的参数，保留当前推测值`);
+    console.log(`[ai/config] ${job.model} Background metadata queried but provider returned no more precise params, keeping inferred values`);
   } else if (remoteModelsResult.error) {
-    console.log(`[ai/config] ${job.model} 后台元数据查询失败: ${remoteModelsResult.error}`);
+    console.log(`[ai/config] ${job.model} Background metadata query failed: ${remoteModelsResult.error}`);
   }
 
   const testResult = await testModelAvailability(job.providerName, job.modelId, creds.apiKey, creds.baseUrl);
   if (!testResult.available) {
-    const errorText = testResult.error || '模型不可用';
+    const errorText = testResult.error || 'Model unavailable';
     const attemptCount = Number(state.attempts || 1);
     const queuedAt = Number(state.queuedAt || Date.now());
     const canRetry = attemptCount < INFERRED_MODEL_VALIDATION_MAX_ATTEMPTS
       && (Date.now() - queuedAt) < INFERRED_MODEL_VALIDATION_TOTAL_TIMEOUT_MS
       && shouldRetryInferredModelValidation(errorText);
     if (canRetry) {
-      console.log(`[ai/config] ${job.model} 后台运行时验证失败，将重试: ${errorText}`);
+      console.log(`[ai/config] ${job.model} Background runtime verification failed, will retry: ${errorText}`);
       return { status: 'retry', delayMs: INFERRED_MODEL_VALIDATION_RETRY_DELAY_MS };
     }
-    console.log(`[ai/config] ${job.model} 后台运行时验证失败，保留当前配置: ${errorText}`);
+    console.log(`[ai/config] ${job.model} Background runtime verification failed, keeping current config: ${errorText}`);
     return { status: 'done' };
   }
 
   config = readJson(configPath, {});
   if (!collectConfiguredModelStrings(config).has(job.model)) {
-    console.log(`[ai/config] ${job.model} 在后台验证完成前已被移除，跳过结果回写`);
+    console.log(`[ai/config] ${job.model} Removed before background verification completed, skipping write-back`);
     return { status: 'done' };
   }
 
@@ -1320,7 +1320,7 @@ async function finalizeInferredModelValidation(job, state = {}) {
   const opState = getOpenClawOperationState();
   fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
 
-  // 将验证后的真实能力直接写入内置模型目录，后续 lookup 直接命中
+  // Write verified real capabilities to built-in model catalog，subsequent lookup matches directly
   const finalEntry = (models.providers[job.providerName]?.models || []).find(m => m.id === job.modelId);
   if (finalEntry) {
     const { id, ...caps } = finalEntry;
@@ -1329,13 +1329,13 @@ async function finalizeInferredModelValidation(job, state = {}) {
 
   if (opState.type === 'idle') {
     queueGatewayRestart('ai-config-async-model-validation');
-    console.log(`[ai/config] ${job.model} 后台运行时验证成功，已更新配置并提交 Gateway 重载请求`);
+    console.log(`[ai/config] ${job.model} Background runtime verification succeeded, config updated and Gateway reload requested`);
   } else if (opState.type === 'restarting_gateway') {
     queueGatewayRestartWhenIdle('ai-config-async-model-validation-post-restart');
-    console.log(`[ai/config] ${job.model} 后台运行时验证成功，配置已更新；当前 Gateway 正在重载，已登记重载完成后的补充重启`);
+    console.log(`[ai/config] ${job.model} Background runtime verification succeeded; Gateway reloading, registered post-reload restart`);
   } else {
     queueGatewayRestartWhenIdle('ai-config-async-model-validation-after-busy');
-    console.log(`[ai/config] ${job.model} 后台运行时验证成功，配置已更新；当前操作 ${opState.type} 进行中，已登记稍后重载`);
+    console.log(`[ai/config] ${job.model} Background runtime verification succeeded; current operation ${opState.type} in progress, registered deferred reload`);
   }
 
   return { status: 'done' };
@@ -1353,20 +1353,20 @@ function queueInferredModelValidation(job) {
       state.attempts += 1;
 
       if ((Date.now() - state.queuedAt) >= INFERRED_MODEL_VALIDATION_TOTAL_TIMEOUT_MS) {
-        console.log(`[ai/config] ${job.model} 后台验证超过总超时 ${Math.floor(INFERRED_MODEL_VALIDATION_TOTAL_TIMEOUT_MS / 1000)}s，停止重试`);
+        console.log(`[ai/config] ${job.model} Background verification exceeded total timeout ${Math.floor(INFERRED_MODEL_VALIDATION_TOTAL_TIMEOUT_MS / 1000)}s，stopping retries`);
         pendingInferredModelValidationJobs.delete(key);
         return;
       }
 
       const opState = getOpenClawOperationState();
       if (opState.type === 'installing' || opState.type === 'updating' || opState.type === 'uninstalling' || opState.type === 'repairing_config') {
-        console.log(`[ai/config] ${job.model} 后台验证遇到操作 ${opState.type}，${Math.floor(INFERRED_MODEL_VALIDATION_BUSY_DELAY_MS / 1000)}s 后重试`);
+        console.log(`[ai/config] ${job.model} Background verification encountered operation ${opState.type}, retrying in ${Math.floor(INFERRED_MODEL_VALIDATION_BUSY_DELAY_MS / 1000)}s`);
         schedule(INFERRED_MODEL_VALIDATION_BUSY_DELAY_MS);
         return;
       }
 
       if (state.attempts > INFERRED_MODEL_VALIDATION_MAX_ATTEMPTS) {
-        console.log(`[ai/config] ${job.model} 后台验证超过最大重试次数 ${INFERRED_MODEL_VALIDATION_MAX_ATTEMPTS}，停止重试`);
+        console.log(`[ai/config] ${job.model} Background verification exceeded max attempts ${INFERRED_MODEL_VALIDATION_MAX_ATTEMPTS}，stopping retries`);
         pendingInferredModelValidationJobs.delete(key);
         return;
       }
@@ -1380,11 +1380,11 @@ function queueInferredModelValidation(job) {
       } catch (err) {
         if (state.attempts < INFERRED_MODEL_VALIDATION_MAX_ATTEMPTS
           && (Date.now() - state.queuedAt) < INFERRED_MODEL_VALIDATION_TOTAL_TIMEOUT_MS) {
-          console.error(`[ai/config] ${job.model} 后台运行时验证异常，将重试:`, err?.message || err);
+          console.error(`[ai/config] ${job.model} Background runtime verification error, will retry:`, err?.message || err);
           schedule(INFERRED_MODEL_VALIDATION_RETRY_DELAY_MS);
           return;
         }
-        console.error(`[ai/config] ${job.model} 后台运行时验证异常:`, err?.message || err);
+        console.error(`[ai/config] ${job.model} Background runtime verification error:`, err?.message || err);
       } finally {
         if (!state.timer) pendingInferredModelValidationJobs.delete(key);
       }
@@ -1397,7 +1397,7 @@ function queueInferredModelValidation(job) {
 }
 
 /**
- * 获取 OpenClaw 支持的内置 provider 列表
+ * Get built-in provider list
  */
 function getOpenClawBuiltinProviders() {
   if (!_openclawModelCatalog) return [];
@@ -1405,7 +1405,7 @@ function getOpenClawBuiltinProviders() {
 }
 
 /**
- * 获取指定 provider 的所有内置模型列表
+ * Get all built-in models for provider
  */
 function getOpenClawProviderModels(providerName) {
   if (!_openclawModelCatalog) return [];
@@ -1423,8 +1423,8 @@ function getOpenClawProviderModels(providerName) {
   }));
 }
 
-// 启动时确保 models.json 和 openclaw.json 中的 models 数组包含已配置的模型
-// 使用 OpenClaw 内置模型目录自动探测能力
+// Ensure models.json and openclaw.json models array contains configured models at startup
+// Use OpenClaw built-in model catalog to auto-detect capabilities
 function syncConfiguredModelsToModelsJson() {
   try {
     const modelsPath = '/root/.openclaw/agents/main/agent/models.json';
@@ -1432,7 +1432,7 @@ function syncConfiguredModelsToModelsJson() {
     if (!fs.existsSync(configPath)) return;
     const config = readJson(configPath, {});
     const defaults = config?.agents?.defaults || {};
-    // 收集所有已配置的模型 (provider/modelId)
+    // Collect all configured models (provider/modelId)
     const configuredModels = [];
     const primary = defaults.model?.primary;
     if (primary && primary.includes('/')) configuredModels.push(primary);
@@ -1467,7 +1467,7 @@ function syncConfiguredModelsToModelsJson() {
       }
       return modelCapsCache.get(key);
     };
-    // 同步到 openclaw.json（gateway 启动时读取此文件生成 models.json）
+    // Sync to openclaw.json (gateway reads this at startup to generate models.json)
     let configChanged = false;
     if (!config.models) config.models = {};
     if (!config.models.providers) config.models.providers = {};
@@ -1478,7 +1478,7 @@ function syncConfiguredModelsToModelsJson() {
       if (!prov.models) prov.models = [];
       const existingIdx = prov.models.findIndex(m => m.id === modelId);
       const entry = getCachedModelEntry(provName, modelId);
-      // 对家族推测匹配的模型排队后台运行时验证
+      // Queue family-speculative models for background runtime verification
       const caps = getCachedModelCapabilities(provName, modelId);
       if (caps && caps._inferred && caps._matchedFamily) {
         queueInferredModelValidation({
@@ -1491,35 +1491,35 @@ function syncConfiguredModelsToModelsJson() {
       if (existingIdx === -1) {
         prov.models.push(entry);
         configChanged = true;
-        console.log(`[sync] 已将模型 ${modelStr} 添加到 openclaw.json`);
+        console.log(`[sync] Added model ${modelStr} to openclaw.json`);
       } else {
-        // 已存在时，用目录能力更新关键字段（保留用户自定义值）
+        // When exists, update key fields with catalog capabilities（keeping user custom value）
         const existing = prov.models[existingIdx];
         const fieldsToSync = ['name', 'api', 'headers', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat', 'cost'];
         for (const field of fieldsToSync) {
           if (entry[field] !== undefined && JSON.stringify(existing[field]) !== JSON.stringify(entry[field])) {
-            console.log(`[sync] 更新 ${modelStr}.${field}: ${JSON.stringify(existing[field])} → ${JSON.stringify(entry[field])}`);
+            console.log(`[sync] Update ${modelStr}.${field}: ${JSON.stringify(existing[field])} → ${JSON.stringify(entry[field])}`);
             existing[field] = entry[field];
             configChanged = true;
           }
         }
       }
-      // provider 级 api 仅在当前值缺失或非法时修正，不按单个模型的 api 翻转。
+      // Provider-level api only corrected when current value is missing or invalid，do not flip per-model api.
       const syncedProviderApi = normalizeProviderApiForSync(prov.api, provName, entry.api);
       if (syncedProviderApi && prov.api && syncedProviderApi !== prov.api) {
-        console.log(`[sync] 修正 provider ${provName}.api: ${prov.api} → ${syncedProviderApi} (来自模型目录)`);
+        console.log(`[sync] Corrected provider ${provName}.api: ${prov.api} → ${syncedProviderApi} (from model catalog)`);
         prov.api = syncedProviderApi;
         configChanged = true;
       }
     }
-    // 最终一致性检查：确保所有 provider 下模型的 api 与 catalog 一致
+    // Final consistency check: ensure all models api matches catalog
     for (const [provName, prov] of Object.entries(config.models.providers)) {
       if (!prov.models || !Array.isArray(prov.models)) continue;
       for (const m of prov.models) {
         const mCap = getCachedModelCapabilities(provName, m.id);
         const correctApi = sanitizeApiValue(mCap?.api, provName);
         if (correctApi && m.api !== correctApi) {
-          console.log(`[sync] 修正 ${provName}/${m.id}.api: ${m.api} → ${correctApi}`);
+          console.log(`[sync] Corrected ${provName}/${m.id}.api: ${m.api} → ${correctApi}`);
           m.api = correctApi;
           configChanged = true;
         }
@@ -1527,9 +1527,9 @@ function syncConfiguredModelsToModelsJson() {
     }
     if (configChanged) {
       writeJson(configPath, config);
-      console.log('[sync] openclaw.json 已更新');
+      console.log('[sync] openclaw.json updated');
     }
-    // 同步到 models.json（如果文件存在）
+    // Sync to models.json (if file exists)
     if (fs.existsSync(modelsPath)) {
       const models = readJson(modelsPath, { providers: {} });
       if (models?.providers) {
@@ -1544,7 +1544,7 @@ function syncConfiguredModelsToModelsJson() {
           if (existingIdx === -1) {
             prov.models.push(entry);
             modelsChanged = true;
-            console.log(`[sync] 已将模型 ${modelStr} 添加到 models.json`);
+            console.log(`[sync] Added model ${modelStr} to models.json`);
           } else {
             const existing = prov.models[existingIdx];
             const fieldsToSync = ['name', 'api', 'headers', 'reasoning', 'contextWindow', 'maxTokens', 'input', 'compat', 'cost'];
@@ -1555,14 +1555,14 @@ function syncConfiguredModelsToModelsJson() {
               }
             }
           }
-          // provider 级 api 仅在当前值缺失或非法时修正。
+          // Provider-level api only corrected when current value is missing or invalid。
           const syncedProviderApi = normalizeProviderApiForSync(prov.api, provName, entry.api);
           if (syncedProviderApi && prov.api && syncedProviderApi !== prov.api) {
             prov.api = syncedProviderApi;
             modelsChanged = true;
           }
         }
-        // 最终一致性检查
+        // Final consistency check
         for (const [provName2, prov2] of Object.entries(models.providers)) {
           if (!prov2.models || !Array.isArray(prov2.models)) continue;
           for (const m of prov2.models) {
@@ -1576,12 +1576,12 @@ function syncConfiguredModelsToModelsJson() {
         }
         if (modelsChanged) {
           writeJson(modelsPath, models);
-          console.log('[sync] models.json 已更新');
+          console.log('[sync] models.json updated');
         }
       }
     }
   } catch (e) {
-    console.warn('[sync] models.json 同步失败:', e.message);
+    console.warn('[sync] models.json Sync failed:', e.message);
   }
 }
 setTimeout(syncConfiguredModelsToModelsJson, 4000);
@@ -1719,7 +1719,7 @@ function extractLogTimestampMs(line) {
 }
 
 function formatLogTime(ts) {
-  if (!Number.isFinite(ts) || ts <= 0) return '未知时间';
+  if (!Number.isFinite(ts) || ts <= 0) return 'Unknown time';
   return formatDateTimeInLogTimezone(ts);
 }
 
@@ -1817,7 +1817,7 @@ function collapseWatchdogLogLines(lines) {
     if (count > 1) {
       const lastTs = extractLogTimestampMs(source[j - 1]);
       const foldType = signature === 'standby' ? 'watchdog standby' : 'watchdog idle';
-      out.push(`[watchdog] [${formatLogTime(lastTs)}] [fold] ${foldType} 连续 ${count} 条已折叠`);
+      out.push(`[watchdog] [${formatLogTime(lastTs)}] [fold] ${foldType} ${count} consecutive entries folded`);
     }
     i = j - 1;
   }
@@ -1875,7 +1875,7 @@ function mergeLogBlocksByTimeline(blocksText, { foldWatchdog = true, maxLines = 
     if (!inferredTs) {
       const taskIdMatch = normalized.match(/\btask=([^\s]+)/i);
       const elapsedMatch = normalized.match(/\belapsed=(\d+)s/i)
-        || normalized.match(/安装进行中[.…]*\s*(\d+)s/);
+        || normalized.match(/Installation in progress[.…]*\s*(\d+)s/);
       if (elapsedMatch?.[1]) {
         const taskBaseTs = taskIdMatch?.[1] ? taskStartTs.get(taskIdMatch[1]) : 0;
         const sourceBaseTs = source ? sourceStartTs.get(source) : 0;
@@ -1929,7 +1929,7 @@ function readLatestInstallTaskLogSection(lines = 200) {
       if (/^=====\s*\[[^\]]+\]\s*task\s+/i.test(t)) return true;
       if (/^\[openclaw\]|^\[gateway\]|^\[progress\]|^\[watchdog\]/i.test(t)) return true;
       if (/^(npm ERR!|pnpm |curl:|tar:|unzip:|node:|Error:|fatal:)/i.test(t)) return true;
-      if (/\b(exit=\d+|signal=|timeout|超时|failed|失败|not found|EADDRINUSE|ECONN|ETIMEDOUT|EAI_AGAIN)\b/i.test(t)) return true;
+      if (/\b(exit=\d+|signal=|timeout|timeout|failed|failed|not found|EADDRINUSE|ECONN|ETIMEDOUT|EAI_AGAIN)\b/i.test(t)) return true;
       if (/^echo\s+"\[openclaw\]/.test(t)) return false;
       if (/^(set\s+-e|[A-Z_][A-Z0-9_]*=|if\s|elif\s|else$|fi$|then$|do$|done$|while\s|for\s|case\s|esac$|\{\s*$|\}\s*$|local\s|return\s+\d+)/.test(t)) return false;
       if (/^(mkdir|rm|cp|ln|cd|export|sleep|mv|cat|awk|sed|grep)\b/.test(t)) return false;
@@ -1954,7 +1954,7 @@ function collapseInstallLogLines(text) {
     /^\[openclaw\]\s+command prepared\b/i,
     /^\[openclaw\]\s+log file:/i,
     /^\[openclaw\]\s+preflight:/i,
-    /^\[openclaw\]\s+安装脚本开始执行/i,
+    /^\[openclaw\]\s+Install script starting/i,
     /^npm warn deprecated/i,
     /^npm WARN deprecated/i,
     /^\[state\]\s+operation=\S+\s+status=begin\b/i,
@@ -1984,7 +1984,7 @@ function collapseInstallLogLines(text) {
         // C10: preserve task= so mergeLogBlocksByTimeline can infer correct timestamp
         const taskIdFromLine = String(lines[i] || '').match(/\btask=([^\s]+)/i);
         const taskSuffix = taskIdFromLine?.[1] ? ` task=${taskIdFromLine[1]}` : '';
-        out.push(`[state] 安装进行中... ${elapsed}s${taskSuffix} (${count} 条进度已折叠)`);
+        out.push(`[state] Installation in progress... ${elapsed}s${taskSuffix} (${count} progress entries folded)`);
       }
       i = j - 1;
       continue;
@@ -2080,32 +2080,32 @@ function parseBracketTimestamp(line) {
 
 function detectDiscordConnectError(logText) {
   const lines = String(logText || '').split('\n');
-  // 从最新开始向前扫描，找到最近的 Discord 连接错误
+  // Scan backwards from latest to find most recent Discord connection error
   let lastDiscordError = '';
   let lastDiscordErrorTs = 0;
   let lastDiscordOk = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = String(lines[i] || '');
     if (!line) continue;
-    // Discord 成功连接标志
+    // Discord successful connection flag
     if (/\[discord\]\s+(connected|ready|logged in|Logged in as)/i.test(line)) {
       lastDiscordOk = parseBracketTimestamp(line) || Date.now();
       break;
     }
-    // Discord TLS / fetch 错误
+    // Discord TLS / fetch errors
     if (!lastDiscordError && /\[discord\]\s+(gateway\s+error|final reply failed|fetch failed)/i.test(line)) {
       lastDiscordErrorTs = parseBracketTimestamp(line) || 0;
       if (/Client network socket disconnected.*TLS/i.test(line) || /fetch failed/i.test(line)) {
-        lastDiscordError = 'TLS连接失败（网络被阻断，建议配置 HTTPS_PROXY 代理）';
+        lastDiscordError = 'TLS connection failed (network blocked, configure HTTPS_PROXY recommended)';
       } else {
-        lastDiscordError = 'Discord 网关连接失败';
+        lastDiscordError = 'Discord gateway connection failed';
       }
     }
   }
   if (!lastDiscordError) return '';
-  // 如果最后一次成功连接比错误更新，则忽略
+  // If last successful connection is newer than error, ignore
   if (lastDiscordOk > lastDiscordErrorTs) return '';
-  // 错误超过 10 分钟不再显示
+  // Errors older than 10 minutes are no longer shown
   if (lastDiscordErrorTs && (Date.now() - lastDiscordErrorTs) > 600000) return '';
   return lastDiscordError;
 }
@@ -2377,20 +2377,20 @@ function getNodeTlsCommandMode(dcfg) {
   if (rawDomain && !isIpHost && certMode === 'letsencrypt') {
     return {
       disableVerify: false,
-      note: '当前为域名 + 可信 HTTPS，命令已省略 NODE_TLS_REJECT_UNAUTHORIZED=0。'
+      note: 'Domain + trusted HTTPS detected. NODE_TLS_REJECT_UNAUTHORIZED=0 omitted.'
     };
   }
 
   if ((rawDomain && isIpHost) || certMode === 'internal') {
     return {
       disableVerify: true,
-      note: '当前为 IP/自签 HTTPS，命令保留 NODE_TLS_REJECT_UNAUTHORIZED=0。'
+      note: 'IP/self-signed HTTPS, command retains NODE_TLS_REJECT_UNAUTHORIZED=0。'
     };
   }
 
   return {
     disableVerify: true,
-    note: '无法可靠判断当前证书是否受信任，命令保守保留 NODE_TLS_REJECT_UNAUTHORIZED=0。'
+    note: 'Cannot reliably determine if certificate is trusted，Command conservatively keeps NODE_TLS_REJECT_UNAUTHORIZED=0.'
   };
 }
 
@@ -2429,7 +2429,7 @@ function ensureGatewayWatchdog(callback) {
     'sleep 1',
     'pgrep -f "[o]penclaw-gateway-watchdog.sh" >/dev/null 2>&1'
   ].join('\n');
-  // 清除容器构建时遗留的旧版本环境变量，让 watchdog 从 package.json 重新检测
+  // Clear stale version env vars from container build，Let watchdog re-detect from package.json
   const cleanEnv = { ...process.env, TERM: 'dumb' };
   delete cleanEnv.OPENCLAW_VERSION;
   delete cleanEnv.OPENCLAW_SERVICE_VERSION;
@@ -2590,7 +2590,7 @@ function runOpenClawCli(command, timeoutMs = 30000) {
 function runOpenClawCliWithPtyInput(command, inputText = '', timeoutMs = 45000) {
   return new Promise((resolve) => {
     if (!runCommandOk('command -v script >/dev/null 2>&1', 800)) {
-      resolve({ ok: false, code: 1, output: 'script 命令不可用，无法执行需要 TTY 的登录/令牌写入流程' });
+      resolve({ ok: false, code: 1, output: 'script command unavailable, cannot run TTY-required login/token flow' });
       return;
     }
 
@@ -2707,11 +2707,11 @@ async function getLatestOpenClawRelease(repo) {
       timeout: 12000
     });
     if (!resp || !resp.ok) {
-      throw new Error(`无法获取 ${safeRepo} release 信息`);
+      throw new Error(`Failed to fetch ${safeRepo} release info`);
     }
     const release = await resp.json();
     const tag = String(release?.tag_name || '').trim();
-    if (!tag) throw new Error(`release tag 为空 (${safeRepo})`);
+    if (!tag) throw new Error(`Release tag is empty (${safeRepo})`);
     const assets = Array.isArray(release?.assets)
       ? release.assets
         .map((item) => ({
@@ -2752,7 +2752,7 @@ async function getLatestOpenClawRelease(repo) {
     const encodedTag = encodeURIComponent(tag);
     const tarballUrl = `https://codeload.github.com/${safeRepo}/tar.gz/refs/tags/${encodedTag}`;
     const binaryAsset = resolveOpenClawNpmDistTarballAsset(tag);
-    console.warn(`[openclaw][release] GitHub release 查询失败，回退 npm 元数据生成 release: ${safeRepo}@${tag} (${err?.message || 'unknown'})`);
+    console.warn(`[openclaw][release] GitHub release query failed, falling back to npm metadataGenerating release: ${safeRepo}@${tag} (${err?.message || 'unknown'})`);
     return {
       repo: safeRepo,
       tag,
@@ -2776,7 +2776,7 @@ async function resolveLatestOpenClawInstallRelease(repo) {
   const safeRepo = parseGitHubRepo(repo) || OPENCLAW_SOURCE_REPO_DEFAULT;
   const publishedVersion = getLatestPublishedOpenClawVersion();
   if (!publishedVersion) {
-    throw new Error('无法从 npm 获取 OpenClaw 已发布版本');
+    throw new Error('Cannot fetch published OpenClaw versions from npm');
   }
   const tag = `v${publishedVersion}`;
   return {
@@ -3040,7 +3040,7 @@ async function maybeTriggerOpenClawRuntimeRecovery(issue = '') {
     const command = buildOpenClawPreferredInstallCommand(release);
     const taskId = runOpenClawTask(
       command,
-      `检测到运行入口缺失(${openClawRuntimeRecoveryState.lastIssue})，自动执行 npm 安装恢复（${release.tag})`,
+      `Entry point missing(${openClawRuntimeRecoveryState.lastIssue})，auto npm install recovery（${release.tag})`,
       'installing',
       { release }
     );
@@ -3212,11 +3212,11 @@ async function refreshLatestOpenClawVersionCache({ force = false } = {}) {
       latestOpenClawVersionCache.error = '';
       latestOpenClawVersionCache.updatedAt = Date.now();
     } else {
-      latestOpenClawVersionCache.error = '无法连接版本源';
+      latestOpenClawVersionCache.error = 'Cannot reach version source';
       if (!latestOpenClawVersionCache.updatedAt) latestOpenClawVersionCache.updatedAt = Date.now();
     }
   } catch (e) {
-    latestOpenClawVersionCache.error = e?.message || String(e || '版本检查失败');
+    latestOpenClawVersionCache.error = e?.message || String(e || 'Version check failed');
     latestOpenClawVersionCache.hasLinuxBinaryAsset = null;
     latestOpenClawVersionCache.assetsSummary = '';
     if (!latestOpenClawVersionCache.updatedAt) latestOpenClawVersionCache.updatedAt = Date.now();
@@ -3454,7 +3454,7 @@ function ensureWebAuthConfig() {
 
   if (!cfg.webAuth.secret) cfg.webAuth.secret = crypto.randomBytes(32).toString('hex');
   cfg.webAuth.users = cfg.webAuth.users || {};
-  // 不要写入默认弱口令：首次访问需要先完成初始化设置密码
+  // Do not write default weak password: first access requires setting password
   cfg.webAuth.setupRequired = !cfg.webAuth.users.admin;
 
   writeDockerConfig(cfg);
@@ -3599,7 +3599,7 @@ function proxyGatewayRequest(req, res) {
     if (responseHeaders.location) {
       responseHeaders.location = rewriteGatewayLocationHeader(responseHeaders.location, gatewayPort);
     }
-    // 对 HTML 响应注入 __OPENCLAW_CONTROL_UI_BASE_PATH__，确保 SPA 的 WebSocket 走 /gateway-proxy 代理
+    // Inject into HTML response __OPENCLAW_CONTROL_UI_BASE_PATH__, Ensure SPA WebSocket goes through /gateway-proxy proxy
     const ct = String(responseHeaders['content-type'] || '').toLowerCase();
     if (ct.includes('text/html')) {
       let body = Buffer.alloc(0);
@@ -3630,7 +3630,7 @@ function proxyGatewayRequest(req, res) {
 
   proxyReq.on('error', (err) => {
     if (!res.headersSent) {
-      res.status(502).send(`Gateway 不可用：${err.message}`);
+      res.status(502).send(`Gateway unavailable：${err.message}`);
       return;
     }
     try { res.end(); } catch {}
@@ -3828,7 +3828,7 @@ app.post('/api/terminal/resize', (req, res) => {
 });
 
 // ============================================================
-// API: bootstrap (首次设置密码)
+// API: bootstrap (first-time password setup)
 // ============================================================
 app.get('/api/bootstrap/status', (req, res) => {
   dockerConfig = readDockerConfig();
@@ -3838,14 +3838,14 @@ app.get('/api/bootstrap/status', (req, res) => {
 
 app.post('/api/bootstrap/setup', (req, res) => {
   dockerConfig = readDockerConfig();
-  if (dockerConfig.webAuth?.users?.admin) return res.status(409).json({ error: '已初始化' });
+  if (dockerConfig.webAuth?.users?.admin) return res.status(409).json({ error: 'Already initialized' });
 
   const { password } = req.body || {};
   if (!password || typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: '请设置至少8位的管理密码' });
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
   }
   if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
-    return res.status(400).json({ error: '密码需包含大写字母、小写字母、数字和特殊字符' });
+    return res.status(400).json({ error: 'Password must include uppercase, lowercase, digits and special characters' });
   }
 
   dockerConfig.webAuth = dockerConfig.webAuth || {};
@@ -3858,7 +3858,7 @@ app.post('/api/bootstrap/setup', (req, res) => {
   dockerConfig.webAuth.setupRequired = false;
   writeDockerConfig(dockerConfig);
 
-  // setup 后自动登录
+  // Auto-login after setup
   const secret = dockerConfig.webAuth.secret;
   setSessionCookie(res, { u: 'admin', exp: Date.now() + SESSION_TTL_MS }, secret, { secure: isHttpsRequest(req) });
   res.json({ success: true });
@@ -3891,24 +3891,24 @@ app.post('/api/login', (req, res) => {
     } else {
       const remainSec = Math.ceil((st.lockUntil - Date.now()) / 1000);
       return res.status(429).json({
-        error: `登录失败过多，已锁定。请 ${remainSec}s 后重试`,
+        error: `Too many failures, locked. Retry in ${remainSec}s`,
         locked: true,
-        resetHint: '如需重置密码，请通过 SSH 或 docker exec 登录容器后执行命令：openclaw-reset-password'
+        resetHint: 'To reset password, SSH or docker exec into container and run: openclaw-reset-password'
       });
     }
   }
 
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: '缺少用户名或密码' });
+  if (!username || !password) return res.status(400).json({ error: 'Missing username or password' });
 
   if (!dockerConfig.webAuth?.users?.admin) {
-    return res.status(409).json({ error: '请先完成初始化：设置管理密码', setupRequired: true });
+    return res.status(409).json({ error: 'Please complete initial setup: set admin password', setupRequired: true });
   }
 
   const user = dockerConfig.webAuth?.users?.[username];
   if (!user || !verifyPassword(password, user.password)) {
     recordLoginFailure(ip);
-    return res.status(401).json({ error: '用户名或密码错误' });
+    return res.status(401).json({ error: 'Invalid username or password' });
   }
 
   recordLoginSuccess(ip);
@@ -3928,11 +3928,11 @@ app.post('/api/password', (req, res) => {
   if (!sess?.u) return res.status(401).json({ error: 'unauthorized' });
 
   const { oldPassword, newPassword } = req.body || {};
-  if (!oldPassword || !newPassword) return res.status(400).json({ error: '缺少参数' });
-  if (typeof newPassword !== 'string' || newPassword.length < 8) return res.status(400).json({ error: '新密码至少8位' });
+  if (!oldPassword || !newPassword) return res.status(400).json({ error: 'Missing parameters' });
+  if (typeof newPassword !== 'string' || newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
 
   const user = dockerConfig.webAuth?.users?.[sess.u];
-  if (!user || !verifyPassword(oldPassword, user.password)) return res.status(401).json({ error: '当前密码不正确' });
+  if (!user || !verifyPassword(oldPassword, user.password)) return res.status(401).json({ error: 'Current password is incorrect' });
 
   dockerConfig.webAuth.users[sess.u].password = pbkdf2HashPassword(newPassword);
   dockerConfig.webAuth.users[sess.u].passwordChangedAt = new Date().toISOString();
@@ -3979,7 +3979,7 @@ function normalizeVersionTag(v) {
 }
 
 let updateCache = { data: null, checkedAt: 0 };
-let _dockerfileChangeLogged = false;   // 只打印一次 Dockerfile 变更日志
+let _dockerfileChangeLogged = false;   // Only log Dockerfile change once
 
 app.get('/api/update/check', async (req, res) => {
   const currentVersion = getCurrentVersion();
@@ -3997,7 +3997,7 @@ app.get('/api/update/check', async (req, res) => {
     let releaseName = '';
     let publishedAt = '';
 
-    // --- 方式1: GitHub API ---
+    // --- Method 1: GitHub API ---
     try {
       const resp = await fetchWithFallback(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
         headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'openclaw-pro' },
@@ -4012,7 +4012,7 @@ app.get('/api/update/check', async (req, res) => {
       }
     } catch {}
 
-    // --- 方式2: raw.githubusercontent.com 读 version.txt (补充：可能比 release 更新) ---
+    // --- Method 2: raw.githubusercontent.com version.txt (note: may be newer than release) ---
     {
       try {
         const rawResp = await fetchWithFallback(`${GITHUB_RAW_BASE}/main/version.txt`, {
@@ -4024,12 +4024,12 @@ app.get('/api/update/check', async (req, res) => {
           const versionTxtNorm = normalizeVersionTag(versionTxt);
           const releaseNorm = normalizeVersionTag(latestVersion);
           if (!latestVersion) {
-            // GitHub API 不可达
+            // GitHub API unreachable
             latestVersion = versionTxt;
             releaseName = versionTxt;
             console.log(`[update] GitHub API unavailable, got version from version.txt: ${versionTxt}`);
           } else if (versionTxtNorm && releaseNorm && compareSemver(versionTxtNorm, releaseNorm) > 0) {
-            // version.txt 比 release 更新（release 未及时创建）
+            // version.txt newer than release (release not yet created)
             latestVersion = versionTxt;
             releaseName = versionTxt;
             releaseUrl = `https://github.com/${GITHUB_REPO}/releases`;
@@ -4040,7 +4040,7 @@ app.get('/api/update/check', async (req, res) => {
     }
 
     if (!latestVersion) {
-      return res.json({ currentVersion, latestVersion: null, error: '无法连接 GitHub（API 和 raw 均不可达）' });
+      return res.json({ currentVersion, latestVersion: null, error: 'Cannot reach GitHub (both API and raw unreachable)' });
     }
     const currentNorm = normalizeVersionTag(currentVersion);
     const latestNorm = normalizeVersionTag(latestVersion);
@@ -4056,13 +4056,13 @@ app.get('/api/update/check', async (req, res) => {
       }
     }
 
-    // 当部署版本比 GitHub release 更新（pre-release / 未发布 release）时，
-    // 将 latestVersion 修正为 currentVersion，避免面板显示过时的 release 版本号
+    // When deployed version is newer than GitHub release (pre-release / unreleased)，
+    // Set latestVersion to currentVersion to avoid showing outdated release version
     let displayLatestVersion = latestVersion;
     if (!hasUpdate && currentNorm && latestNorm && currentNorm !== 'unknown' && currentNorm !== 'dev') {
       const cmp = compareSemver(currentNorm, latestNorm);
       if (cmp > 0) {
-        // 当前版本高于 GitHub release → 显示当前版本作为最新
+        // Current version > GitHub release → show current as latest
         displayLatestVersion = currentVersion;
       }
     }
@@ -4103,10 +4103,10 @@ app.get('/api/update/check', async (req, res) => {
       const localHash = getLocalDockerfileHash();
       if (remoteHashes.length > 0 && localHash) {
         result.dockerfileChanged = !remoteHashes.includes(localHash);
-        // 仅当 release 版本有变化时，才需要展示“完整更新”或“热更新”提示
+        // Only show "full update" or "hot update" prompts when release version changes
         result.requiresFullUpdate = !!hasUpdate && result.dockerfileChanged;
       } else if (remoteHashes.length > 0 && !localHash) {
-        // 缺少本地 hash：尝试用“当前版本 tag 的 Dockerfile”进行对比，避免误报完整更新
+        // Missing local hash: try comparing with "Dockerfile of current version tag" to avoid false full-update report
         let currentRefHashes = [];
         const currentRefs = [];
         if (currentVersion) currentRefs.push(currentVersion);
@@ -4131,12 +4131,12 @@ app.get('/api/update/check', async (req, res) => {
           result.dockerfileChanged = !remoteHashes.some((h) => currentHashSet.has(h));
           result.requiresFullUpdate = !!hasUpdate && result.dockerfileChanged;
         } else {
-          // 无法确定底层是否变更：不强制完整更新，保留热更新入口
+          // Cannot determine underlying changes: do not force full update, keep hot update option
           result.dockerfileChanged = false;
           result.requiresFullUpdate = false;
         }
       } else {
-        // 无法比较 Dockerfile：不强制完整更新
+        // Cannot compare Dockerfile: do not force full update
         result.dockerfileChanged = false;
         result.requiresFullUpdate = false;
       }
@@ -4154,7 +4154,7 @@ app.get('/api/update/check', async (req, res) => {
       }
     }
 
-    // hasUpdate 仅由 release 版本变化触发；不会因为 Dockerfile 变化单独触发更新提示。
+    // hasUpdate only triggered by release version change, not Dockerfile change alone.
 
     updateCache = { data: { latestVersion: displayLatestVersion, hasUpdate: result.hasUpdate, publishedAt, releaseUrl, releaseName, requiresFullUpdate: result.requiresFullUpdate, dockerfileChanged: result.dockerfileChanged }, checkedAt: Date.now() };
     res.json(result);
@@ -4183,7 +4183,7 @@ const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}`;
 const WEB_PANEL_BACKUP_DIR = '/root/.openclaw/web-panel-backup';
 
 /**
- * 热更新前备份当前文件，供 watchdog 回退使用
+ * Backup current files before hot update，for watchdog rollback
  */
 function backupCurrentHotpatchFiles() {
   try {
@@ -4198,7 +4198,7 @@ function backupCurrentHotpatchFiles() {
         }
       } catch {}
     }
-    // 同时备份版本号
+    // Also backup version number
     try {
       const ver = fs.readFileSync(VERSION_FILE, 'utf8').trim();
       if (ver) meta.backupVersion = ver;
@@ -4206,13 +4206,13 @@ function backupCurrentHotpatchFiles() {
     fs.writeFileSync(path.join(WEB_PANEL_BACKUP_DIR, '.backup-meta'), JSON.stringify(meta, null, 2));
     return true;
   } catch (e) {
-    console.error('[hotpatch] 备份当前文件失败:', e.message);
+    console.error('[hotpatch] Failed to backup current files:', e.message);
     return false;
   }
 }
 
 /**
- * 从备份恢复指定文件
+ * Restore specified files from backup
  */
 function restoreHotpatchFile(basename) {
   try {
@@ -4237,25 +4237,25 @@ app.get('/api/update/hotpatch/status', (req, res) => {
 
 app.post('/api/update/hotpatch', async (req, res) => {
   if (hotpatchState.status === 'running') {
-    return res.status(409).json({ error: '热更新正在进行中' });
+    return res.status(409).json({ error: 'Hot update in progress' });
   }
 
   const branch = (req.body && req.body.branch) || 'main';
   const force = (req.body && req.body.force) || false;
   hotpatchState = { status: 'running', log: '', startedAt: Date.now(), updated: [], failed: [], force };
-  res.json({ success: true, message: force ? '强制热更新已开始' : '热更新已开始' });
+  res.json({ success: true, message: force ? 'Force hot update started' : 'Hot update started' });
 
   const log = (msg) => { hotpatchState.log += msg + '\n'; console.log('[hotpatch] ' + msg); };
 
   try {
-    // 在更新任何文件前，备份当前版本供回退使用
+    // Backup current version before updating for rollback
     if (backupCurrentHotpatchFiles()) {
-      log('已备份当前文件到 web-panel-backup/');
+      log('Backed up current files to web-panel-backup/');
     } else {
-      log('⚠ 备份当前文件失败，继续更新（回退功能不可用）');
+      log('⚠ Failed to backup current files, continuing update (rollback unavailable)');
     }
 
-    log(`${force ? '强制' : ''}从 GitHub (${branch}) 拉取最新文件...`);
+    log(`${force ? 'Force ' : ''}Pulling latest files from GitHub (${branch})...`);
     let needCaddyRestart = false;
     let needWebRestart = false;
     let needContainerRestart = false;
@@ -4269,7 +4269,7 @@ app.post('/api/update/hotpatch', async (req, res) => {
         });
 
         if (!resp.ok) {
-          log(`  ⚠ ${ghPath}: HTTP ${resp.status}, 跳过`);
+          log(`  ⚠ ${ghPath}: HTTP ${resp.status}, skipped`);
           hotpatchState.failed.push(ghPath);
           continue;
         }
@@ -4282,7 +4282,7 @@ app.post('/api/update/hotpatch', async (req, res) => {
           try { existingContent = fs.readFileSync(localPath, 'utf8'); } catch {}
 
           if (content === existingContent) {
-            log(`  ✓ ${ghPath}: 无变化`);
+            log(`  ✓ ${ghPath}: no changes`);
             continue;
           }
         }
@@ -4297,7 +4297,7 @@ app.post('/api/update/hotpatch', async (req, res) => {
           try { fs.chmodSync(localPath, 0o755); } catch {}
         }
 
-        log(`  ✅ ${ghPath}: 已更新`);
+        log(`  ✅ ${ghPath}: updated`);
         hotpatchState.updated.push(ghPath);
 
         if (ghPath === 'Caddyfile.template') needCaddyRestart = true;
@@ -4309,33 +4309,33 @@ app.post('/api/update/hotpatch', async (req, res) => {
       }
     }
 
-    // server.js 语法预检：写入后立即验证，失败则立即回退
+    // server.js syntax check: verify after write, rollback on failure
     if (hotpatchState.updated.includes('web/server.js')) {
       try {
         execSync('node -c /opt/openclaw-web/server.js', { timeout: 15000, stdio: 'pipe' });
-        log('  ✓ server.js 语法检查通过');
+        log('  ✓ server.js syntax check passed');
       } catch (syntaxErr) {
         const stderr = (syntaxErr.stderr || '').toString().trim();
-        log(`  ❌ server.js 语法错误! ${stderr}`);
-        log('  ↩ 正在从备份恢复 server.js...');
+        log(`  ❌ server.js syntax error! ${stderr}`);
+        log('  ↩ Restoring server.js from backup...');
         if (restoreHotpatchFile('server.js')) {
-          log('  ✅ server.js 已从备份恢复，跳过本次 server.js 更新');
+          log('  ✅ server.js restored from backup, skipping this server.js update');
           hotpatchState.updated = hotpatchState.updated.filter(f => f !== 'web/server.js');
           needWebRestart = false;
         } else {
-          log('  ⚠ 无法从备份恢复 server.js，面板可能无法启动');
+          log('  ⚠ Cannot restore from backup server.js，panel may fail to start');
         }
-        hotpatchState.failed.push('web/server.js (语法错误，已回退)');
+        hotpatchState.failed.push('web/server.js (syntax error, rolled back)');
       }
     }
 
     // Update version file ONLY if ALL files were successfully updated (no failures)
     if (hotpatchState.failed.length > 0) {
-      log(`⚠️ 版本号未更新: ${hotpatchState.failed.length} 个文件更新失败，请检查网络或 GitHub 访问`);
+      log(`⚠️ version not updated: ${hotpatchState.failed.length} file update(s) failed, check network or GitHub access`);
       hotpatchState.status = 'error';
       return;
     } else {
-      // 无失败：更新版本号（即使文件无变化，也同步最新版本标签）
+      // No failures: update version number (even if files unchanged, sync latest version tag)
       try {
         let newVersion = '';
         try {
@@ -4359,46 +4359,46 @@ app.post('/api/update/hotpatch', async (req, res) => {
         }
         if (newVersion) {
           fs.writeFileSync(VERSION_FILE, newVersion + '\n');
-          log(`版本号更新为: ${newVersion}`);
+          log(`Version updated to: ${newVersion}`);
         } else if (hotpatchState.updated.length === 0) {
-          log(`所有文件已是最新，无需变更`);
+          log(`All files are up to date, no changes needed`);
         }
       } catch {}
     }
 
     // Regenerate Caddyfile and restart Caddy if template changed
     if (needCaddyRestart) {
-      log('Caddyfile 模板已更新，重新生成配置并重启 Caddy...');
+      log('Caddyfile Template updated, regenerating config and restarting Caddy...');
       try {
         execSync('bash -c "source /usr/local/bin/start-services.sh 2>/dev/null; envsubst < /etc/caddy/Caddyfile.template > /tmp/Caddyfile" 2>/dev/null || true');
         execSync('pkill -USR1 caddy 2>/dev/null || true');
-        log('Caddy 已通知重载配置');
+        log('Caddy notified to reload config');
       } catch (e) {
-        log(`Caddy 重载失败 (非致命): ${e.message}`);
+        log(`Caddy reload failed (non-fatal): ${e.message}`);
       }
     }
 
     // Clear update cache
     updateCache = { data: null, checkedAt: 0 };
 
-    const summary = `热更新完成: ${hotpatchState.updated.length} 个文件已更新, ${hotpatchState.failed.length} 个失败`;
+    const summary = `Hot update complete: ${hotpatchState.updated.length} file(s) updated, ${hotpatchState.failed.length} failed`;
     log(summary);
     if (needContainerRestart) {
-      log('检测到 start-services.sh 已更新：请在宿主机执行 `docker restart openclaw-pro` 以使入口脚本变更生效（仅热更新不会立即生效）');
-      log('若容器名不确定：先执行 `docker ps --format "{{.Names}}"` 确认名称，再执行 `docker restart <容器名>`');
+      log('Detected start-services.sh updated: please run on host machine `docker restart openclaw-pro` to apply entry script changes (hot update alone will not take effect)');
+      log('If container name is unknown: first run `docker ps --format "{{.Names}}"` to confirm name, then run `docker restart <container-name>`');
     }
     hotpatchState.status = 'done';
 
     // If server.js was updated, schedule a self-restart
     if (needWebRestart && hotpatchState.updated.includes('web/server.js')) {
-      log('server.js 已更新，2 秒后自动重启 Web 面板...');
+      log('server.js updated, auto-restarting Web panel in 2 seconds...');
       setTimeout(() => {
         try { execSync('pkill -f "node server.js" 2>/dev/null || true'); } catch {}
         // The health check in start-services.sh will auto-restart the web panel
       }, 2000);
     }
   } catch (e) {
-    log(`热更新失败: ${e.message}`);
+    log(`Hot update failed: ${e.message}`);
     hotpatchState.status = 'error';
   }
 });
@@ -4529,7 +4529,7 @@ app.get('/api/status', async (req, res) => {
 // ============================================================
 // API: config (basic; keep legacy behavior)
 // ============================================================
-// 消息平台敏感字段列表
+// Messaging platform sensitive field list
 const MSG_SENSITIVE_FIELDS = ['apiKey', 'secret', 'token', 'encryptKey', 'password', 'appSecret'];
 
 function maskSensitiveFields(obj) {
@@ -4569,7 +4569,7 @@ app.get('/api/config', async (req, res) => {
     repairOpenClawConfigProviders();
     const configPath = '/root/.openclaw/openclaw.json';
 
-    // 读取 openclaw.json (原生读取避免超时)
+    // Read openclaw.json (native read to avoid timeout)
     let config = {};
     try {
       const configData = fs.readFileSync(configPath, 'utf8');
@@ -4578,7 +4578,7 @@ app.get('/api/config', async (req, res) => {
       config = {};
     }
 
-    // 只返回 channels 字段（掩码敏感信息）
+    // only return channels field (mask sensitive info)
     const result = { channels: config.channels || {} };
     const safe = maskSensitiveFields(result);
     res.json(safe);
@@ -4592,7 +4592,7 @@ app.post('/api/config', async (req, res) => {
     repairOpenClawConfigProviders();
     const configPath = '/root/.openclaw/openclaw.json';
 
-    // 读取现有 openclaw.json
+    // Read existing openclaw.json
     let config = {};
     try {
       const configData = fs.readFileSync(configPath, 'utf8');
@@ -4605,19 +4605,19 @@ app.post('/api/config', async (req, res) => {
 
     const savedChannels = [];
 
-    // 合并 channels 配置到 openclaw.json（明文存储，openclaw 直接读取）
+    // Merge channels config into openclaw.json (stored in plaintext, read directly by openclaw)
     if (updates.channels) {
       if (!config.channels) config.channels = {};
       savedChannels.push(...Object.keys(updates.channels));
-      // 在合并前，剥离掩码值（防止 *** 覆盖真实密钥）
+      // Before merging, strip masked values (prevent *** overwriting real keys)
       stripMaskedValues(updates.channels);
-      // 兼容历史错误字段并对齐 OpenClaw 当前 schema
+      // Compat with legacy wrong fields and align with current OpenClaw schema
       normalizeDiscordChannelConfig(updates.channels);
       normalizeDiscordChannelConfig(config.channels);
       normalizeFeishuChannelConfig(updates.channels);
       normalizeFeishuChannelConfig(config.channels);
 
-      // 多服务器模式：当前端显式要求替换 guilds 时，先清空旧值再合并
+      // Multi-server mode: clear old values first when frontend explicitly requests guilds replacement
       const replaceGuilds = !!updates.channels?.discord?.__replaceGuilds;
       if (replaceGuilds) {
         if (!config.channels.discord || typeof config.channels.discord !== 'object') {
@@ -4630,7 +4630,7 @@ app.post('/api/config', async (req, res) => {
       deepMerge(config.channels, updates.channels);
     }
 
-    // 写回 openclaw.json（自动清理非法 key）
+    // Write back openclaw.json (auto-clean invalid keys)
     try {
       writeOpenClawConfig(config);
     } catch (err) {
@@ -4644,11 +4644,11 @@ app.post('/api/config', async (req, res) => {
 
 });
 
-// 递归删除值匹配掩码模式 (***) 的字段，防止掩码值覆盖真实密钥
+// Recursively remove fields matching mask pattern (***)，Prevent masked values from overwriting real keys
 function stripMaskedValues(obj) {
   if (!obj || typeof obj !== 'object') return;
   for (const [k, v] of Object.entries(obj)) {
-    // UI 掩码值（*** 或 •••）不应覆盖真实密钥
+    // UI mask values (*** or •••) should not overwrite real keys
     const looksMasked = typeof v === 'string' && (
       /^\*{3,}/.test(v) ||
       /^•+$/.test(v) ||
@@ -4662,7 +4662,7 @@ function stripMaskedValues(obj) {
   }
 }
 
-// 兼容旧版/错误字段，统一到 OpenClaw 当前 schema
+// Compat old/wrong fields, normalize to current OpenClaw schema
 const VALID_DISCORD_STREAMING = new Set(['true', 'false', 'off', 'partial', 'block', 'progress']);
 
 function normalizeDiscordChannelConfig(channelsObj) {
@@ -4670,7 +4670,7 @@ function normalizeDiscordChannelConfig(channelsObj) {
   const discord = channelsObj.discord;
   if (!discord || typeof discord !== 'object') return;
 
-  // streaming 值校验：'full' 是无效值，映射为 'progress'
+  // streaming value validation: 'full' is invalid, mapped to 'progress'
   if (discord.streaming !== undefined) {
     const sv = String(discord.streaming).toLowerCase().trim();
     if (!VALID_DISCORD_STREAMING.has(sv)) {
@@ -4680,7 +4680,7 @@ function normalizeDiscordChannelConfig(channelsObj) {
     }
   }
 
-  // 旧字段 guildId 不在官方 schema 中，迁移到 guilds
+  // Legacy field guildId not in official schema, migrated to guilds
   if (typeof discord.guildId === 'string' && discord.guildId.trim()) {
     const gid = discord.guildId.trim();
     if (!discord.guilds || typeof discord.guilds !== 'object') {
@@ -4694,7 +4694,7 @@ function normalizeDiscordChannelConfig(channelsObj) {
     delete discord.guildId;
   }
 
-  // 账户级同样清理错误字段
+  // Also clean wrong fields at account level
   if (discord.accounts && typeof discord.accounts === 'object') {
     for (const accountCfg of Object.values(discord.accounts)) {
       if (!accountCfg || typeof accountCfg !== 'object') continue;
@@ -4714,25 +4714,25 @@ function normalizeDiscordChannelConfig(channelsObj) {
   }
 }
 
-// 飞书通道规范化：accounts.main → accounts.default，dmPolicy=open → allowFrom
+// Feishu channel normalization：accounts.main → accounts.default，dmPolicy=open → allowFrom
 function normalizeFeishuChannelConfig(channelsObj) {
   if (!channelsObj || typeof channelsObj !== 'object') return;
   const feishu = channelsObj.feishu;
   if (!feishu || typeof feishu !== 'object') return;
 
   if (feishu.accounts && typeof feishu.accounts === 'object') {
-    // 如果只有 main 没有 default，把 main 重命名为 default
+    // If only main exists without default, rename main to default
     if (feishu.accounts.main && !feishu.accounts.default) {
       feishu.accounts.default = feishu.accounts.main;
       delete feishu.accounts.main;
     }
-    // 对每个账户：dmPolicy=open 时自动补 allowFrom: ["*"]；清理空字符串可选字段
+    // For each account: auto-add allowFrom: when dmPolicy=open; ["*"]；clean empty string optional fields
     for (const acct of Object.values(feishu.accounts)) {
       if (!acct || typeof acct !== 'object') continue;
       if (acct.dmPolicy === 'open' && !acct.allowFrom) {
         acct.allowFrom = ['*'];
       }
-      // 移除空字符串的可选字段（避免 Gateway schema 报错）
+      // Remove empty string optional fields (avoid Gateway schema errors)
       for (const opt of ['verificationToken', 'encryptKey']) {
         if (acct[opt] === '') delete acct[opt];
       }
@@ -4741,7 +4741,7 @@ function normalizeFeishuChannelConfig(channelsObj) {
 }
 
 // ============================================================
-// API: 远端设备管理 (Node 模式)
+// API: Remote device management (Node mode)
 // ============================================================
 const BROWSER_CONTROL_PORT = 18791;
 
@@ -5221,7 +5221,7 @@ async function fetchNodeIpv4Address(nodeId, platform) {
   }
 }
 
-// GET /api/node/setup-command — 生成一键连接命令
+// GET /api/node/setup-command — Generate one-click connect command
 app.get('/api/node/setup-command', (req, res) => {
   try {
     const token = getGatewayAuthToken();
@@ -5240,7 +5240,7 @@ app.get('/api/node/setup-command', (req, res) => {
     const tlsMode = getNodeTlsCommandMode(dcfg);
     const gatewayTlsPort = Number(dcfg.gateway_tls_public_port || dcfg.gateway_tls_port || 18790) || 18790;
     if (!token) {
-      return res.json({ success: true, command: '# Gateway Auth Token 未配置，请先在 openclaw.json 中设置 gateway.auth.token', hasToken: false, commandWindows: '' });
+      return res.json({ success: true, command: '# Gateway Auth Token not configured，Please configure gateway.auth.token in openclaw.json first', hasToken: false, commandWindows: '' });
     }
     const cfg = readJson(CONFIG_PATH, {});
     const execSecurity = cfg?.tools?.exec?.security || 'full';
@@ -5312,8 +5312,8 @@ app.get('/api/node/setup-command', (req, res) => {
       'NODEBG',
       'chmod +x "$runner_file"',
       'nohup bash "$runner_file" > "$log_file" 2>&1 </dev/null &',
-      `echo "✅ Node 已在后台启动（多网关隔离模式），日志: ${nodeLogPathDisplay}"`,
-      `echo "🛑 停止当前网关: ${nodeStopCmd}"`
+      `echo "✅ Node Started in background (multi-gateway isolation mode), log: ${nodeLogPathDisplay}"`,
+      `echo "🛑 Stop current gateway: ${nodeStopCmd}"`
     ].join('\n');
     const windowsRunner = [
       `$d = Join-Path $env:USERPROFILE ".openclaw\\nodes\\${gatewayInstanceKey}"`,
@@ -5333,13 +5333,13 @@ app.get('/api/node/setup-command', (req, res) => {
       `$taskName = 'OpenClawNode_${gatewayInstanceKey.slice(0, 20)}'`,
       'schtasks /Delete /TN $taskName /F 2>$null',
       'try { schtasks /Create /TN $taskName /TR ("powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `\"" + $runnerFile + "`\"") /SC ONLOGON /RL LIMITED /F 2>&1 | Out-Null; $taskOk = $true } catch { $taskOk = $false }',
-      'if (-not $taskOk) { Write-Host "⚠️ 计划任务注册失败，后台进程仍会运行，但重启后需手动执行" }',
+      'if (-not $taskOk) { Write-Host "⚠️ Scheduled task registration failed, background process still running but requires manual restart after reboot" }',
       // Start the runner now
       `Start-Process -FilePath powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$runnerFile | Out-Null`,
-      `Write-Host "✅ Node 已在后台启动（多网关隔离模式），日志: ${nodeLogPathWindowsDisplay}"`,
-      `Write-Host "⚠️ 错误日志: ${nodeDirWindowsDisplay}\\node-host.stderr.log"`,
-      'if ($taskOk) { Write-Host "📌 已注册计划任务 \'$taskName\'，登录时自动启动" }',
-      `Write-Host "🛑 停止当前网关: ${nodeStopCmdWindows}"`
+      `Write-Host "✅ Node Started in background (multi-gateway isolation mode), log: ${nodeLogPathWindowsDisplay}"`,
+      `Write-Host "⚠️ Error log: ${nodeDirWindowsDisplay}\\node-host.stderr.log"`,
+      'if ($taskOk) { Write-Host "📌 Registered scheduled task \'$taskName\'，auto-starts on login" }',
+      `Write-Host "🛑 Stop current gateway: ${nodeStopCmdWindows}"`
     ].join('\n');
 
     const command = `${initCmd}\n${runCmd}`;
@@ -5357,7 +5357,7 @@ app.get('/api/node/setup-command', (req, res) => {
   }
 });
 
-// GET /api/node/security — 获取安全配置
+// GET /api/node/security — Get security config
 app.get('/api/node/security', (req, res) => {
   try {
     const cfg = readJson(CONFIG_PATH, {});
@@ -5371,7 +5371,7 @@ app.get('/api/node/security', (req, res) => {
   }
 });
 
-// POST /api/node/security — 保存安全配置
+// POST /api/node/security — Save security config
 app.post('/api/node/security', (req, res) => {
   try {
     const { autoApprove, browserMode, denyCommands, execSecurity } = req.body || {};
@@ -5413,15 +5413,15 @@ app.post('/api/node/security', (req, res) => {
   }
 });
 
-// POST /api/node/unpair — 取消配对
+// POST /api/node/unpair — Unpair
 app.post('/api/node/unpair', async (req, res) => {
   try {
     const { deviceId } = req.body || {};
-    if (!deviceId || typeof deviceId !== 'string') return res.status(400).json({ success: false, error: '缺少 deviceId' });
-    if (!/^[0-9a-fA-F-]{8,64}$/.test(deviceId)) return res.status(400).json({ success: false, error: 'deviceId 格式无效' });
+    if (!deviceId || typeof deviceId !== 'string') return res.status(400).json({ success: false, error: 'Missing deviceId' });
+    if (!/^[0-9a-fA-F-]{8,64}$/.test(deviceId)) return res.status(400).json({ success: false, error: 'Invalid deviceId format' });
 
     const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
-    if (!paired[deviceId]) return res.status(404).json({ success: false, error: '未找到该设备' });
+    if (!paired[deviceId]) return res.status(404).json({ success: false, error: 'Device not found' });
 
     let removedViaGateway = false;
     let gatewayError = null;
@@ -5449,9 +5449,9 @@ app.post('/api/node/unpair', async (req, res) => {
   }
 });
 
-// --- Gateway WebSocket 查询节点在线状态 ---
-// 优先以真实 device identity 的 control-ui 身份连接并调用 node.list
-// 失败时降级为 cli 身份连接，通过 presence 快照检测节点在线
+// --- Gateway WebSocket — query node online status ---
+// Prefer real device identity control-ui identity connection and call node.list
+// Fall back to cli identity on failure, detect node online via presence snapshot
 function normalizeNodePresenceKey(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
@@ -5539,7 +5539,7 @@ function queryGatewayNodeList(timeoutMs = 5000) {
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(String(data));
-        // 1) connect.challenge → 尝试带 device identity 的 control-ui 连接
+        // 1) connect.challenge → Attempt control-ui connection with device identity
         if (msg.event === 'connect.challenge') {
           const nonce = typeof msg.payload?.nonce === 'string' ? msg.payload.nonce.trim() : '';
           const connectParams = buildControlUiConnectParams(nonce);
@@ -5557,14 +5557,14 @@ function queryGatewayNodeList(timeoutMs = 5000) {
           }));
           return;
         }
-        // 2) connect 响应
+        // 2) connect response
         if (msg.id === connectId) {
           if (msg.ok) {
-            // control-ui 连接成功 → 调用 node.list
+            // control-ui connection succeeded → call node.list
             listId = crypto.randomUUID();
             ws.send(JSON.stringify({ type: 'req', id: listId, method: 'node.list', params: {} }));
           } else {
-            // control-ui 被拒绝（如 device identity required）→ 降级为 cli fallback
+            // control-ui rejected (e.g. device identity required) → degrade to cli fallback
             logNodeProbeDebug('[node] control-ui rejected:', msg.error?.code || 'unknown', '→ cli fallback');
             usedFallback = true;
             try { ws.close(); } catch {}
@@ -5572,7 +5572,7 @@ function queryGatewayNodeList(timeoutMs = 5000) {
           }
           return;
         }
-        // 3) node.list 响应
+        // 3) node.list response
         if (msg.id === listId) {
           if (msg.ok) {
             const nodes = Array.isArray(msg.payload?.nodes) ? msg.payload.nodes : null;
@@ -5594,7 +5594,7 @@ function queryGatewayNodeList(timeoutMs = 5000) {
   });
 }
 
-// 降级方案：cli 身份连接，从 presence 快照推断节点在线（无需 scopes）
+// Fallback: cli identity connection, infer node online from presence snapshot (no scopes needed)
 function queryGatewayNodeListFallback(gatewayPort, token, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false;
@@ -5629,11 +5629,11 @@ function queryGatewayNodeListFallback(gatewayPort, token, timeoutMs) {
         if (msg.id === connectId) {
           clearTimeout(timer);
           if (!msg.ok) { logNodeProbeDebug('[node] cli fallback connect failed:', msg.error?.code); finish(null); try { ws.close(); } catch {} return; }
-          // 从 presence 快照中提取 mode=node, reason=connect 条目
+          // Extract mode=node, reason=connect entries from presence snapshot
           const presence = msg.payload?.snapshot?.presence || [];
           const nodePresence = presence.filter(p => p.mode === 'node' && p.reason === 'connect');
           logNodeProbeDebug('[node] cli fallback presence:', presence.length, 'total,', nodePresence.length, 'nodes');
-          // 转换为 node.list 兼容格式（presence 中只有 host/mode/platform，无 nodeId）
+          // Convert to node.list compatible format (presence only has host/mode/platform, no nodeId)
           const nodes = nodePresence.map(p => ({
             displayName: p.host || '',
             platform: p.platform || 'unknown',
@@ -5791,7 +5791,7 @@ async function refreshNodeStatusSnapshot(options = {}) {
 setTimeout(() => { void refreshNodeStatusSnapshot(); }, 1500);
 setInterval(() => { void refreshNodeStatusSnapshot(); }, NODE_STATUS_POLL_INTERVAL_MS);
 
-// GET /api/node/connected — 获取当前已连接的远端设备列表
+// GET /api/node/connected — Get connected remote device list
 app.get('/api/node/connected', async (req, res) => {
   try {
     const accessPatch = ensureGatewayControlUiAccessForRequest(req);
@@ -5911,71 +5911,71 @@ app.get('/api/ai/status', async (req, res) => {
 
 app.post('/api/ai/model', async (req, res) => {
   const model = String(req.body?.model || '').trim();
-  if (!model) return res.status(400).json({ error: '模型不能为空' });
-  if (!/^[a-zA-Z0-9._/:\-]+$/.test(model)) return res.status(400).json({ error: '模型格式不合法' });
+  if (!model) return res.status(400).json({ error: 'Model cannot be empty' });
+  if (!/^[a-zA-Z0-9._/:\-]+$/.test(model)) return res.status(400).json({ error: 'Invalid model format' });
 
   const result = await runOpenClawCli(`openclaw models set "${model.replace(/"/g, '')}" 2>&1`, 60000);
-  if (!result.ok) return res.status(500).json({ error: compactOutput(result.output) || '设置模型失败' });
+  if (!result.ok) return res.status(500).json({ error: compactOutput(result.output) || 'Set model failed' });
   res.json({ success: true, output: compactOutput(result.output) });
 });
 
 app.post('/api/ai/auth/token', async (req, res) => {
   const provider = String(req.body?.provider || '').trim();
   const token = String(req.body?.token || '').trim();
-  if (!provider || !/^[a-zA-Z0-9\-]+$/.test(provider)) return res.status(400).json({ error: 'provider 不合法' });
-  if (!token) return res.status(400).json({ error: 'token 不能为空' });
+  if (!provider || !/^[a-zA-Z0-9\-]+$/.test(provider)) return res.status(400).json({ error: 'Invalid provider' });
+  if (!token) return res.status(400).json({ error: 'Token cannot be empty' });
 
   const command = `openclaw models auth paste-token --provider ${provider}`;
   const result = await runOpenClawCliWithPtyInput(command, token, 60000);
-  if (!result.ok) return res.status(500).json({ error: compactOutput(result.output) || '保存认证失败' });
+  if (!result.ok) return res.status(500).json({ error: compactOutput(result.output) || 'Save auth failed' });
   res.json({ success: true, output: compactOutput(result.output) });
 });
 
 app.post('/api/ai/auth/copilot/login', (req, res) => {
-  const taskId = runAiAuthTask('openclaw models auth login-github-copilot', 'GitHub Copilot 登录');
+  const taskId = runAiAuthTask('openclaw models auth login-github-copilot', 'GitHub Copilot Login');
   res.json({ success: true, taskId });
 });
 
-// 通用 OAuth 登录入口（直接实现 GitHub Device Flow，不依赖 CLI TTY）
+// Generic OAuth login entry（Directly implement GitHub Device Flow, no CLI TTY dependency）
 app.post('/api/ai/auth/oauth/login', async (req, res) => {
   const provider = String(req.body?.provider || '').trim();
   if (!provider || !/^[a-zA-Z0-9\-]+$/.test(provider)) {
-    return res.status(400).json({ error: 'provider 不合法' });
+    return res.status(400).json({ error: 'Invalid provider' });
   }
 
   if (provider === 'github-copilot') {
-    // 直接实现 GitHub Device Flow
+    // Directly implement GitHub Device Flow
     const taskId = Date.now().toString();
     aiAuthTasks[taskId] = { status: 'running', log: '', startedAt: Date.now(), seq: 0, chunks: [] };
     const task = aiAuthTasks[taskId];
-    appendAiTaskLog(task, `[ai] GitHub Copilot 设备授权\n`);
+    appendAiTaskLog(task, `[ai] GitHub Copilot Device Auth\n`);
 
-    // 异步执行 device flow
+    // Async execute device flow
     (async () => {
       try {
         const CLIENT_ID = 'Iv1.b507a08c87ecfe98';
         const DEVICE_CODE_URL = 'https://github.com/login/device/code';
         const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
 
-        // Step 1: 请求 device code
-        appendAiTaskLog(task, '[ai] 正在请求 GitHub 设备码...\n');
+        // Step 1: Request device code
+        appendAiTaskLog(task, '[ai] Requesting GitHub device code...\n');
         const dcRes = await fetch(DEVICE_CODE_URL, {
           method: 'POST',
           headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ client_id: CLIENT_ID, scope: 'read:user' }),
           signal: AbortSignal.timeout(30000)
         });
-        if (!dcRes.ok) throw new Error(`GitHub device code 请求失败: HTTP ${dcRes.status}`);
+        if (!dcRes.ok) throw new Error(`GitHub device code request failed: HTTP ${dcRes.status}`);
         const dcData = await dcRes.json();
         if (!dcData.device_code || !dcData.user_code || !dcData.verification_uri) {
-          throw new Error('GitHub device code 响应缺少必要字段');
+          throw new Error('GitHub device code response missing required fields');
         }
 
-        appendAiTaskLog(task, `\n请在浏览器中打开: ${dcData.verification_uri}\n`);
-        appendAiTaskLog(task, `输入授权码: ${dcData.user_code}\n\n`);
-        appendAiTaskLog(task, `[ai] 等待用户完成 GitHub 授权...\n`);
+        appendAiTaskLog(task, `\nPlease open in browser: ${dcData.verification_uri}\n`);
+        appendAiTaskLog(task, `Enter authorization code: ${dcData.user_code}\n\n`);
+        appendAiTaskLog(task, `[ai] Waiting for user to complete GitHub authorization...\n`);
 
-        // Step 2: 轮询等待授权
+        // Step 2: Poll for authorization
         const expiresAt = Date.now() + (dcData.expires_in || 900) * 1000;
         const intervalMs = Math.max(5000, (dcData.interval || 5) * 1000);
         let accessToken = null;
@@ -6004,31 +6004,31 @@ app.post('/api/ai/auth/oauth/login', async (req, res) => {
               continue;
             }
             if (tokenData.error === 'expired_token') {
-              throw new Error('设备码已过期，请重新启动授权');
+              throw new Error('Device code expired, please restart authorization');
             }
             if (tokenData.error === 'access_denied') {
-              throw new Error('用户取消了授权');
+              throw new Error('User cancelled authorization');
             }
             if (tokenData.error) {
-              throw new Error(`GitHub OAuth 错误: ${tokenData.error}`);
+              throw new Error(`GitHub OAuth error: ${tokenData.error}`);
             }
           } catch (pollErr) {
-            if (pollErr.message?.includes('设备码已过期') || pollErr.message?.includes('取消')) throw pollErr;
-            appendAiTaskLog(task, `[ai] 轮询出错: ${pollErr.message}, 继续等待...\n`);
+            if (pollErr.message?.includes('Device code expired') || pollErr.message?.includes('cancel')) throw pollErr;
+            appendAiTaskLog(task, `[ai] Polling error: ${pollErr.message}, continuing to wait...\n`);
           }
         }
 
-        if (!accessToken) throw new Error('授权超时，设备码已过期');
+        if (!accessToken) throw new Error('Authorization timeout，Device code expired');
 
-        appendAiTaskLog(task, '[ai] GitHub 访问令牌获取成功!\n');
+        appendAiTaskLog(task, '[ai] GitHub access token obtained successfully!\n');
 
-        // Step 3: 保存到 auth-profiles.json（兼容 openclaw 格式）
+        // Step 3: Save to auth-profiles.json (openclaw format compatible)
         const authProfiles = readAiAuthProfiles();
         saveCanonicalCopilotAuthProfile(authProfiles, accessToken);
         writeAiAuthProfiles(authProfiles);
-        appendAiTaskLog(task, '[ai] 认证信息已保存到 auth-profiles.json\n');
+        appendAiTaskLog(task, '[ai] Auth info saved to auth-profiles.json\n');
 
-        // Step 4: 确保 models.json 中有 github-copilot provider 条目
+        // Step 4: Ensure models.json has github-copilot provider entry
         const modelsData = readAiModels();
         const copilotBaseUrl = await resolveCopilotProviderBaseUrl(accessToken);
         if (!modelsData.providers['github-copilot']) {
@@ -6044,9 +6044,9 @@ app.post('/api/ai/auth/oauth/login', async (req, res) => {
           modelsData.providers['github-copilot'].api = 'github-copilot';
         }
         writeAiModels(modelsData);
-        appendAiTaskLog(task, '[ai] 已更新 models.json 中的 github-copilot 配置\n');
+        appendAiTaskLog(task, '[ai] Updated github-copilot config in models.json\n');
 
-        // Step 5: 同步 openclaw.json 中的 models.providers（确保 gateway 能识别）
+        // Step 5: Sync models.providers in openclaw.json (ensure gateway can recognize)
         const configPath = '/root/.openclaw/openclaw.json';
         let ocConfig = {};
         try { ocConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { ocConfig = {}; }
@@ -6061,19 +6061,19 @@ app.post('/api/ai/auth/oauth/login', async (req, res) => {
         }
         ocConfig.models.providers['github-copilot'].baseUrl = copilotBaseUrl;
         ocConfig.models.providers['github-copilot'].api = 'github-copilot';
-        // 注: openclaw.json 中不写 apiKey（token 式授权由 gateway 自行交换）
+        // Note: apiKey not written in openclaw.json (token auth exchanged by gateway internally)
         writeOpenClawConfig(ocConfig);
-        appendAiTaskLog(task, '[ai] 已同步 openclaw.json 中的 github-copilot provider\n');
+        appendAiTaskLog(task, '[ai] Synced github-copilot provider in openclaw.json\n');
 
         task.status = 'success';
         task.exitCode = 0;
-        appendAiTaskLog(task, '[ai] GitHub Copilot 授权完成 ✓\n');
+        appendAiTaskLog(task, '[ai] GitHub Copilot authorization complete ✓\n');
       } catch (err) {
-        appendAiTaskLog(task, `[ai] 授权失败: ${err.message}\n`);
+        appendAiTaskLog(task, `[ai] Authorization failed: ${err.message}\n`);
         task.status = 'failed';
         task.exitCode = 1;
       }
-      // 清理旧任务
+      // Clean up old tasks
       const keys = Object.keys(aiAuthTasks).sort();
       while (keys.length > 8) delete aiAuthTasks[keys.shift()];
     })();
@@ -6081,9 +6081,9 @@ app.post('/api/ai/auth/oauth/login', async (req, res) => {
     return res.json({ success: true, taskId });
   }
 
-  // 非 copilot 的其他 OAuth provider 仍使用 CLI
+  // Other non-copilot OAuth providers still use CLI
   const command = `openclaw models auth login --provider ${provider}`;
-  const taskId = runAiAuthTask(command, `${provider} OAuth 登录`);
+  const taskId = runAiAuthTask(command, `${provider} OAuth login`);
   res.json({ success: true, taskId });
 });
 
@@ -6101,11 +6101,11 @@ app.get('/api/ai/auth/task/:taskId', (req, res) => {
 // API: AI Config (New)
 // ============================================================
 
-// 读取 AI 配置
+// Read AI config
 app.get('/api/ai/config', async (req, res) => {
   try {
     const configPath = '/root/.openclaw/openclaw.json';
-    // 读取主配置
+    // Read main config
     let config = {};
     try {
       const configData = fs.readFileSync(configPath, 'utf8');
@@ -6114,10 +6114,10 @@ app.get('/api/ai/config', async (req, res) => {
       config = {};
     }
 
-    // 读取 models.json 获取提供商列表
+    // Read models.json to get provider list
     const models = readAiModels();
 
-    // 读取 auth-profiles.json
+    // Read auth-profiles.json
     const authProfiles = readAiAuthProfiles();
 
     const providers = new Set(Object.keys(models?.providers || {}));
@@ -6128,11 +6128,11 @@ app.get('/api/ai/config', async (req, res) => {
       if (!AUTH_PROFILE_META_KEYS.has(key) && profile?.provider) providers.add(profile.provider);
     }
 
-    // 构建 configuredKeys 数组（支持每个 provider 多个 key）
+    // Build configuredKeys array (supports multiple keys per provider)
     const configuredKeys = [];
     const configuredKeySignatures = new Set();
 
-    // 遍历 auth-profiles.profiles 找所有 key（支持多 key: provider, provider:2, provider:3 等）
+    // Iterate auth-profiles.profiles to find all keys (supports multi-key: provider, provider:2, provider:3 etc.)
     const profiles = authProfiles.profiles || {};
     for (const [profileId, profile] of Object.entries(profiles)) {
       if (!profile || !profile.provider) continue;
@@ -6147,14 +6147,14 @@ app.get('/api/ai/config', async (req, res) => {
       const signature = buildConfiguredKeySignature(pName, isOAuth ? 'oauth' : 'apikey', getAuthProfileIdentity(profile));
 
       if ((hasKey || isOAuth) && !configuredKeySignatures.has(signature)) {
-        // 检查这个 key 是否是当前活跃的（与 models.json 中的 apiKey 匹配）
+        // Check if this key is the currently active one (matches apiKey in models.json)
         const activeKey = prov?.apiKey || '';
         const isActive = isApiKey ? (rawKey === activeKey) : true;
 
         configuredKeys.push({
           id: profileId,
           provider: pName,
-          keyMasked: isApiKey ? maskApiKey(rawKey) : (isOAuth ? 'OAuth 已授权' : ''),
+          keyMasked: isApiKey ? maskApiKey(rawKey) : (isOAuth ? 'OAuth authorized' : ''),
           baseUrl: prov?.baseUrl || getDefaultBaseUrl(pName) || '',
           authType: isOAuth ? 'oauth' : 'apikey',
           models: (prov?.models || []).map(m => m.id || m),
@@ -6164,17 +6164,17 @@ app.get('/api/ai/config', async (req, res) => {
       }
     }
 
-    // 同时检查旧格式顶级条目和 models.json 中有 key 但 profiles 中没有的 provider
+    // Also check legacy top-level entries and providers with keys in models.json but not in profiles
     for (const pName of providers) {
       const prov = models.providers[pName];
       const rawKey = prov?.apiKey || '';
       const hasKey = !!rawKey && rawKey !== 'YOUR_API_KEY';
 
-      // 检查是否已被 profiles 覆盖
+      // Check if already overridden by profiles
       const alreadyHasProfile = configuredKeys.some(k => k.provider === pName);
       if (alreadyHasProfile) continue;
 
-      // 检查旧格式 auth-profiles 顶级条目
+      // Check legacy auth-profiles top-level entries
       const topLevelProfile = authProfiles[pName];
       const isTopOAuth = topLevelProfile?.mode === 'oauth' || topLevelProfile?.mode === 'device' || topLevelProfile?.mode === 'token';
       const signature = buildConfiguredKeySignature(pName, isTopOAuth ? 'oauth' : 'apikey', getAuthProfileIdentity(topLevelProfile));
@@ -6183,7 +6183,7 @@ app.get('/api/ai/config', async (req, res) => {
         configuredKeys.push({
           id: pName,
           provider: pName,
-          keyMasked: hasKey ? maskApiKey(rawKey) : (isTopOAuth ? 'OAuth 已授权' : ''),
+          keyMasked: hasKey ? maskApiKey(rawKey) : (isTopOAuth ? 'OAuth authorized' : ''),
           baseUrl: prov?.baseUrl || getDefaultBaseUrl(pName) || '',
           authType: isTopOAuth ? 'oauth' : 'apikey',
           models: (prov?.models || []).map(m => m.id || m),
@@ -6193,7 +6193,7 @@ app.get('/api/ai/config', async (req, res) => {
       }
     }
 
-    // --- 自动清理孤立模型引用（provider 无有效 key 时清除对应模型配置） ---
+    // --- Auto-clean orphaned model references (clear model config when provider has no valid key) ---
     const validProviders = new Set(configuredKeys.map(k => k.provider));
     const isOrphan = (modelStr) => {
       if (!modelStr) return false;
@@ -6204,14 +6204,14 @@ app.get('/api/ai/config', async (req, res) => {
     let configDirty = false;
     const defaults = config?.agents?.defaults || {};
 
-    // 清理 primary model
+    // Clean primary model
     if (defaults.model?.primary && isOrphan(defaults.model.primary)) {
       console.log(`[ai/config] Auto-clean orphaned primary model: ${defaults.model.primary}`);
       defaults.model.primary = '';
       configDirty = true;
     }
 
-    // 清理 primary fallbacks
+    // Clean primary fallbacks
     if (Array.isArray(defaults.model?.fallbacks)) {
       const before = defaults.model.fallbacks.length;
       defaults.model.fallbacks = defaults.model.fallbacks.filter(m => !isOrphan(m));
@@ -6221,7 +6221,7 @@ app.get('/api/ai/config', async (req, res) => {
       }
     }
 
-    // 清理非法的 subModel/subModelFallbacks 键（openclaw schema 不支持）
+    // Clean illegal subModel/subModelFallbacks keys (not in openclaw schema)
     if ('subModel' in defaults) {
       console.log(`[ai/config] Removing invalid key agents.defaults.subModel: ${defaults.subModel}`);
       delete defaults.subModel;
@@ -6233,7 +6233,7 @@ app.get('/api/ai/config', async (req, res) => {
       configDirty = true;
     }
 
-    // 清理 subagents.model（正确路径）
+    // Clean subagents.model (correct path)
     const subagentModel = defaults.subagents?.model;
     if (subagentModel) {
       const subModelStr = typeof subagentModel === 'string' ? subagentModel : subagentModel?.primary;
@@ -6244,7 +6244,7 @@ app.get('/api/ai/config', async (req, res) => {
       }
     }
 
-    // 写回清理后的配置（自动清理非法 key）
+    // Write back cleaned config (auto-clean invalid keys)
     if (configDirty) {
       try {
         writeOpenClawConfig(config);
@@ -6254,13 +6254,13 @@ app.get('/api/ai/config', async (req, res) => {
       }
     }
 
-    // 解析默认模型（清理后的值）
+    // Parse default model (cleaned values)
     const primaryModel = defaults.model?.primary || '';
     const provider = primaryModel.split('/')[0] || (validProviders.size > 0 ? [...validProviders][0] : 'anthropic');
 
-    // 解析 fallbacks（清理后的值）
+    // Parse fallbacks (cleaned values)
     const modelFallbacks = defaults.model?.fallbacks || [];
-    // 解析 subagents.model fallbacks
+    // Parse subagents.model fallbacks
     const rawSubModel = defaults.subagents?.model;
     const subFallbacks = (rawSubModel && typeof rawSubModel === 'object' && Array.isArray(rawSubModel.fallbacks))
       ? rawSubModel.fallbacks : [];
@@ -6269,7 +6269,7 @@ app.get('/api/ai/config', async (req, res) => {
       sub: subFallbacks
     };
 
-    // 解析 subagents.model（正确路径）
+    // Parse subagents.model (correct path)
     const subModel = typeof rawSubModel === 'string' ? rawSubModel : (rawSubModel?.primary || '');
 
     res.json({
@@ -6283,21 +6283,21 @@ app.get('/api/ai/config', async (req, res) => {
     });
   } catch (err) {
     console.error('[ai/config] Error reading config:', err);
-    res.status(500).json({ error: '读取配置失败: ' + (err?.message || '未知错误') });
+    res.status(500).json({ error: 'Failed to read config: ' + (err?.message || 'Unknown error') });
   }
 });
 
-// 保存 AI 模型配置（仅模型相关，API Key 通过 /api/ai/keys 管理）
+// Save AI model config (models only; API keys via /api/ai/keys)
 app.post('/api/ai/config', async (req, res) => {
   try {
     const { primaryModel, fallbacks, subModel } = req.body || {};
 
     if (!primaryModel) {
-      return res.status(400).json({ error: '主模型不能为空' });
+      return res.status(400).json({ error: 'Primary model cannot be empty' });
     }
 
     if (!primaryModel.includes('/')) {
-      return res.status(400).json({ error: '模型名称格式应为 provider/model-id' });
+      return res.status(400).json({ error: 'Model name format should be provider/model-id' });
     }
 
     const configPath = '/root/.openclaw/openclaw.json';
@@ -6314,12 +6314,12 @@ app.post('/api/ai/config', async (req, res) => {
       models = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
     } catch { models = { providers: {} }; }
 
-    // ---- 验证: 检查每个模型的 provider 是否有有效的 API Key / 授权 ----
+    // ---- Validation: check if each model provider has a valid API Key / auth ----
     const authProfilesPath = '/root/.openclaw/agents/main/agent/auth-profiles.json';
     let authProfiles = {};
     try { authProfiles = JSON.parse(fs.readFileSync(authProfilesPath, 'utf8')); } catch { authProfiles = {}; }
 
-    // 收集所有有有效 key 的 provider
+    // Collect all providers with valid keys
     const validProviders = new Set();
     const profiles = authProfiles.profiles || {};
     for (const [, profile] of Object.entries(profiles)) {
@@ -6329,18 +6329,18 @@ app.post('/api/ai/config', async (req, res) => {
       const isOAuth = profile.mode === 'oauth' || profile.mode === 'device' || profile.mode === 'token' || profile.type === 'token';
       if (hasKey || isOAuth) validProviders.add(profile.provider);
     }
-    // 同时检查 models.json 中直接配置了有效 key 的 provider
+    // Also check providers with valid keys directly configured in models.json
     for (const [pName, prov] of Object.entries(models.providers || {})) {
       const rawKey = prov?.apiKey || '';
       if (rawKey && rawKey !== 'YOUR_API_KEY') validProviders.add(pName);
-      // 检查旧格式顶级 auth-profiles
+      // Check legacy top-level auth-profiles
       const topProfile = authProfiles[pName];
       if (topProfile?.mode === 'oauth' || topProfile?.mode === 'device' || topProfile?.mode === 'token') {
         validProviders.add(pName);
       }
     }
 
-    // 收集当前已存在于配置中的模型（这些跳过验证）
+    // Collect models already existing in config (skip validation for these)
     const existingModels = new Set();
     const curDefaults = config?.agents?.defaults || {};
     if (curDefaults.model?.primary) existingModels.add(curDefaults.model.primary);
@@ -6350,7 +6350,7 @@ app.post('/api/ai/config', async (req, res) => {
     if (curSub?.primary) existingModels.add(curSub.primary);
     if (Array.isArray(curSub?.fallbacks)) curSub.fallbacks.forEach(m => m && existingModels.add(m));
 
-    // 收集本次要保存的所有模型
+    // Collect all models to save this time
     const allModelsToSave = new Map();
     const addModelToSave = (model, role) => {
       if (!model) return;
@@ -6359,22 +6359,22 @@ app.post('/api/ai/config', async (req, res) => {
       }
       allModelsToSave.get(model).roles.add(role);
     };
-    if (primaryModel) addModelToSave(primaryModel, '主模型');
-    if (subModel) addModelToSave(subModel, '子代理模型');
+    if (primaryModel) addModelToSave(primaryModel, 'Primary model');
+    if (subModel) addModelToSave(subModel, 'Sub-agent model');
     if (fallbacks) {
       const addFb = (arr, label) => {
         if (!Array.isArray(arr)) return;
         arr.filter(Boolean).forEach(m => addModelToSave(m, label));
       };
       if (Array.isArray(fallbacks)) {
-        addFb(fallbacks, '主代理 Fallback');
+        addFb(fallbacks, 'Primary Fallback');
       } else if (typeof fallbacks === 'object') {
-        addFb(fallbacks.primary, '主代理 Fallback');
-        addFb(fallbacks.sub, '子代理 Fallback');
+        addFb(fallbacks.primary, 'Primary Fallback');
+        addFb(fallbacks.sub, 'Sub-agent Fallback');
       }
     }
 
-    // 验证每个模型
+    // Validate each model
     const errors = [];
     const deferredValidationJobs = [];
     const deferredValidationModels = new Set();
@@ -6400,28 +6400,28 @@ app.post('/api/ai/config', async (req, res) => {
     for (const { model, roles } of allModelsToSave.values()) {
       if (!model || !model.includes('/')) continue;
       const role = Array.from(roles).join(' / ');
-      // 已存在于当前配置中的模型跳过验证
+      // Models already in current config skip validation
       if (existingModels.has(model)) continue;
       const [prov] = model.split('/');
-      // 检查 provider 是否有有效 key
+      // Check if provider has a valid key
       if (!validProviders.has(prov)) {
-        errors.push(`${role} "${model}" 的 provider "${prov}" 没有配置有效的 API Key 或授权，请先添加`);
+        errors.push(`${role} "${model}" provider "${prov}" has no valid API Key configured or authorized, please add first`);
       }
-      // 检查模型是否在目录中被支持
+      // Check if model is supported in catalog
       const [provName, modId] = model.split('/');
       const catalogHit = getCachedCatalogHit(provName, modId);
 
       if (!catalogHit) {
-        // 完全未找到 - 可能是全新模型或拼写错误
-        errors.push(`${role} "${model}" 未在 OpenClaw 模型目录中找到，请确认模型名称是否正确`);
+        // Not found at all - may be a new model or typo
+        errors.push(`${role} "${model}" Not found in OpenClaw model catalog, verify model name`);
       } else if (catalogHit._catalogUnavailable) {
-        // 模型目录未加载（外部 catalog 不可用）- 跳过严格验证，允许保存
-        console.log(`[ai/config] ${model} 模型目录未加载，跳过目录验证`);
+        // Model catalog not loaded (external catalog unavailable) - skip strict validation, allow save
+        console.log(`[ai/config] ${model} Model catalog not loaded, skipping catalog validation`);
       } else if (catalogHit._inferred) {
-        console.log(`[ai/config] ${model} 家族匹配成功 (${catalogHit._matchedFamily})，先保存配置，稍后进行后台运行时验证...`);
+        console.log(`[ai/config] ${model} Family match succeeded (${catalogHit._matchedFamily})，saving config first, deferred runtime validation later...`);
         const { apiKey: modelApiKey } = getModelValidationCredentials(provName, authProfiles);
         if (!modelApiKey || modelApiKey === 'YOUR_API_KEY') {
-          errors.push(`${role} "${model}" 需要进行运行时验证，但 ${provName} 没有配置有效的 API Key`);
+          errors.push(`${role} "${model}" requires runtime validation, but ${provName} has no valid API Key configured`);
         } else {
           deferredValidationJobs.push({
             model,
@@ -6432,13 +6432,13 @@ app.post('/api/ai/config', async (req, res) => {
           deferredValidationModels.add(model);
         }
       }
-      // 精确匹配成功 (catalogHit && !catalogHit._inferred) - 无需额外验证
+      // Exact match succeeded - no extra validation needed
     }
     if (errors.length > 0) {
       return res.status(400).json({ error: errors.join('；') });
     }
 
-    // ---- 更新 openclaw.json ----
+    // ---- Update openclaw.json ----
     if (!config.agents) config.agents = {};
     if (!config.agents.defaults) config.agents.defaults = {};
 
@@ -6457,10 +6457,10 @@ app.post('/api/ai/config', async (req, res) => {
     }
     config.agents.defaults.model = modelObj;
 
-    // subagents.model（正确路径：agents.defaults.subagents.model）
+    // subagents.model (correct path: agents.defaults.subagents.model)
     if (subModel) {
       if (!config.agents.defaults.subagents) config.agents.defaults.subagents = {};
-      // 支持 fallbacks：如果有子代理 fallback，写成 { primary, fallbacks } 对象
+      // Support fallbacks: if sub-agent fallback exists, write as { primary, fallbacks } object
       const subFbArray = (fallbacks && Array.isArray(fallbacks.sub)) ? fallbacks.sub.filter(Boolean) : [];
       if (subFbArray.length > 0) {
         config.agents.defaults.subagents.model = { primary: subModel, fallbacks: subFbArray };
@@ -6468,12 +6468,12 @@ app.post('/api/ai/config', async (req, res) => {
         config.agents.defaults.subagents.model = subModel;
       }
     }
-    // 清理非法的顶级 subModel/subModelFallbacks
+    // Clean illegal top-level subModel/subModelFallbacks
     if (config.agents?.defaults?.subModel) delete config.agents.defaults.subModel;
     if (config.agents?.defaults?.subModelFallbacks) delete config.agents.defaults.subModelFallbacks;
 
-    // 辅助：确保 provider 的 models 数组中包含指定 model 条目
-    // 使用 OpenClaw 内置模型目录自动探测能力
+    // Helper: ensure provider models array contains specified model entry
+    // Use OpenClaw built-in model catalog to auto-detect capabilities
     const ensureModelEntry = (target, provName, modId) => {
       const cacheKey = `${provName}/${modId}`;
       const deferred = deferredValidationModels.has(cacheKey);
@@ -6484,7 +6484,7 @@ app.post('/api/ai/config', async (req, res) => {
       });
     };
 
-    // 确保主模型的 provider 在 models.json 中存在
+    // Ensure primary model provider exists in models.json
     const [providerName, modelId] = primaryModel.split('/');
     if (!models.providers) models.providers = {};
     if (!models.providers[providerName]) {
@@ -6497,7 +6497,7 @@ app.post('/api/ai/config', async (req, res) => {
     }
     ensureModelEntry(models.providers, providerName, modelId);
 
-    // 同样处理 subModel
+    // Also handle subModel
     if (subModel && subModel.includes('/')) {
       const [subProvider, subModelId] = subModel.split('/');
       if (!models.providers[subProvider]) {
@@ -6511,16 +6511,16 @@ app.post('/api/ai/config', async (req, res) => {
       ensureModelEntry(models.providers, subProvider, subModelId);
     }
 
-    // 同时写入 openclaw.json 的 models.providers（确保 gateway 重启后不丢失）
+    // Also write to openclaw.json models.providers (ensure persistence after gateway restart)
     if (!config.models) config.models = {};
     if (!config.models.providers) config.models.providers = {};
 
-    // 辅助：确保 config.models.providers 中存在指定 provider
-    // 从 models.json 复制 provider 基本信息（不含 apiKey）
+    // Helper: ensure specified provider exists in config.models.providers
+    // Copy provider basic info from models.json (without apiKey)
     const ensureConfigProvider = (provName) => {
       if (!config.models.providers[provName]) {
         ensureProviderShell(config.models.providers, models.providers, provName);
-        console.log(`[ai/config] 在 openclaw.json 中创建 provider: ${provName}`);
+        console.log(`[ai/config] Created provider in openclaw.json: ${provName}`);
       }
     };
 
@@ -6531,7 +6531,7 @@ app.post('/api/ai/config', async (req, res) => {
       ensureConfigProvider(subProv);
       ensureModelEntry(config.models.providers, subProv, subModel.split('/')[1]);
     }
-    // 处理 fallback 模型（写入 models.json 和 openclaw.json）
+    // Handle fallback models (write to models.json and openclaw.json)
     const allFbModels = [];
     if (fallbacks) {
       if (Array.isArray(fallbacks)) {
@@ -6549,28 +6549,28 @@ app.post('/api/ai/config', async (req, res) => {
       ensureModelEntry(config.models.providers, fbProv, fbModel);
     }
 
-    // 写入文件（自动清理非法 key）
+    // Write files (auto-clean invalid keys)
     writeOpenClawConfig(config);
     fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2), { encoding: 'utf8', mode: 0o600 });
 
     const opState = getOpenClawOperationState();
-    let message = '模型配置已保存';
+    let message = 'Model config saved';
     let nextOperationState = opState;
 
     if (opState.type === 'idle') {
       nextOperationState = queueGatewayRestart('ai-config-save');
-      message = '模型配置已保存，已提交 Gateway 重载请求';
-      console.log('[ai/config] 模型配置已保存，已提交 Gateway 重载请求');
+      message = 'Model config saved，Gateway reload requested';
+      console.log('[ai/config] Model config saved，Gateway reload requested');
     } else if (opState.type === 'restarting_gateway') {
-      message = '模型配置已保存，Gateway 重载已在进行中';
-      console.log('[ai/config] 模型配置已保存，Gateway 重载已在进行中');
+      message = 'Model config saved, Gateway reload already in progress';
+      console.log('[ai/config] Model config saved, Gateway reload already in progress');
     } else {
-      message = `模型配置已保存，当前存在进行中的操作（${opState.type}），请在操作完成后重载 Gateway 以应用配置`;
-      console.log(`[ai/config] 模型配置已保存，但当前操作 ${opState.type} 正在进行，暂不额外触发 Gateway 重载`);
+      message = `Model config saved，current operation in progress (${opState.type}), please reload Gateway after operation completes to apply config`;
+      console.log(`[ai/config] Model config saved，but current operation ${opState.type} is in progress, not triggering extra Gateway reload`);
     }
 
     if (deferredValidationJobs.length > 0) {
-      message += `；${deferredValidationJobs.length} 个家族匹配模型正在后台验证`;
+      message += `；${deferredValidationJobs.length} family-matched model(s) being verified in background`;
       for (const job of deferredValidationJobs) {
         queueInferredModelValidation(job);
       }
@@ -6579,21 +6579,21 @@ app.post('/api/ai/config', async (req, res) => {
     res.json({ success: true, message, operationState: nextOperationState });
   } catch (err) {
     console.error('[ai/config] Error saving config:', err);
-    res.status(500).json({ error: '保存配置失败: ' + (err?.message || '未知错误') });
+    res.status(500).json({ error: 'Save config failed: ' + (err?.message || 'Unknown error') });
   }
 });
 
-// 验证 API Key 有效性
+// Validate API Key
 app.post('/api/ai/keys/validate', async (req, res) => {
   try {
     const { provider, apiKey, baseUrl } = req.body || {};
-    if (!provider) return res.status(400).json({ error: 'provider 不能为空' });
-    if (!apiKey) return res.status(400).json({ error: 'API Key 不能为空' });
+    if (!provider) return res.status(400).json({ error: 'Provider cannot be empty' });
+    if (!apiKey) return res.status(400).json({ error: 'API Key cannot be empty' });
 
     const endpoint = baseUrl || getDefaultBaseUrl(provider);
-    if (!endpoint) return res.json({ valid: false, error: '无法确定 API 端点' });
+    if (!endpoint) return res.json({ valid: false, error: 'Unable to determine API endpoint' });
 
-    // 尝试调用 /models 端点来验证 key 可用性
+    // Try calling /models endpoint to validate key
     let modelsUrl;
     if (provider === 'ollama') {
       modelsUrl = `${endpoint}/api/tags`;
@@ -6626,7 +6626,7 @@ app.post('/api/ai/keys/validate', async (req, res) => {
       return res.json({ valid: true });
     }
 
-    // 某些 provider 返回 401/403 表示 key 无效
+    // Some providers return 401/403 for invalid keys
     const status = response.status;
     let errMsg = `HTTP ${status}`;
     try {
@@ -6635,48 +6635,48 @@ app.post('/api/ai/keys/validate', async (req, res) => {
     } catch {}
 
     if (status === 401 || status === 403) {
-      return res.json({ valid: false, error: `API Key 无效: ${errMsg}` });
+      return res.json({ valid: false, error: `API Key invalid: ${errMsg}` });
     }
 
-    // 其他状态码（如 429 rate limit）认为 key 本身有效
+    // Other status codes (e.g. 429 rate limit) consider key itself valid
     if (status === 429 || status === 200 || status === 201) {
       return res.json({ valid: true });
     }
 
-    // 404 表示该 provider 可能没有 /models 端点，不代表 key 无效
+    // 404 means provider may not have /models endpoint, does not mean key is invalid
     if (status === 404) {
-      return res.json({ valid: true, warning: `${provider} 不支持 /models 端点验证，已跳过` });
+      return res.json({ valid: true, warning: `${provider} does not support /models endpoint validation, skipped` });
     }
 
     return res.json({ valid: false, error: errMsg });
   } catch (err) {
     console.error('[ai/keys/validate] Error:', err);
-    // 网络超时等错误 — 不确定 key 是否有效，允许继续
-    return res.json({ valid: true, warning: '无法连接到 API 验证: ' + (err?.message || '未知错误') });
+    // Network timeout etc. — key validity uncertain, allowing to proceed
+    return res.json({ valid: true, warning: 'Unable to connect for API validation: ' + (err?.message || 'Unknown error') });
   }
 });
 
-// ============ OpenClaw 内置模型目录查询 API ============
+// ============ OpenClaw Built-in model catalog query API ============
 
-// 获取内置 provider 列表
+// Get built-in provider list
 app.get('/api/ai/catalog/providers', (req, res) => {
   const providers = getOpenClawBuiltinProviders();
   res.json({ providers });
 });
 
-// 获取指定 provider 的内置模型列表
+// Get built-in model list for specified provider
 app.get('/api/ai/catalog/models/:provider', (req, res) => {
   const { provider } = req.params;
   const models = getOpenClawProviderModels(provider);
   res.json({ provider, models });
 });
 
-// 查询单个模型的能力
+// Query single model capabilities
 app.get('/api/ai/catalog/lookup/:provider/:modelId', (req, res) => {
   const { provider, modelId } = req.params;
   const caps = lookupModelCapabilities(provider, modelId);
   if (!caps) {
-    return res.json({ found: false, provider, modelId, message: '模型未在内置目录中找到，将使用安全默认值' });
+    return res.json({ found: false, provider, modelId, message: 'Model not found in catalog, using safe defaults' });
   }
   res.json({
     found: true,
@@ -6687,13 +6687,13 @@ app.get('/api/ai/catalog/lookup/:provider/:modelId', (req, res) => {
   });
 });
 
-// 添加 API Key
+// Add API Key
 app.post('/api/ai/keys', async (req, res) => {
   try {
     const { provider, apiKey, baseUrl } = req.body || {};
 
     if (!provider) {
-      return res.status(400).json({ error: 'provider 不能为空' });
+      return res.status(400).json({ error: 'Provider cannot be empty' });
     }
 
     let models = readAiModels();
@@ -6716,24 +6716,24 @@ app.post('/api/ai/keys', async (req, res) => {
     }
 
     if (apiKey) {
-      // 设置为当前活跃 key
+      // Set as currently active key
       models.providers[provider].apiKey = apiKey;
       console.log(`[ai/keys] API key for ${provider} saved (active)`);
     }
 
-    // 同步 auth-profiles.json（支持多 key：每个 key 用唯一 profileId）
+    // Sync auth-profiles.json (multi-key: each key uses unique profileId)
     let authProfiles = readAiAuthProfiles();
 
     if (apiKey) {
-      // 检查是否已有相同 apiKey 的 profile（避免重复）
+      // Check if profile with same apiKey exists (avoid duplicates)
       const existingProfileId = Object.keys(authProfiles.profiles || {}).find(pid => {
         const p = authProfiles.profiles[pid];
         return p?.provider === provider && p?.apiKey === apiKey;
       });
 
       if (!existingProfileId) {
-        // 生成新 profileId
-        // 第一个 key 用 provider 名，后续加 :N 后缀
+        // Generate new profileId
+        // First key uses provider name, subsequent add :N suffix
         let profileId = provider;
         if (authProfiles.profiles[provider]) {
           let n = 2;
@@ -6752,7 +6752,7 @@ app.post('/api/ai/keys', async (req, res) => {
       } else {
         console.log(`[ai/keys] Key already exists as profile: ${existingProfileId}`);
       }
-      // 同时更新旧格式顶级条目（兼容）
+      // Also update legacy top-level entries (compat)
       authProfiles[provider] = {
         provider,
         mode: 'api_key',
@@ -6764,7 +6764,7 @@ app.post('/api/ai/keys', async (req, res) => {
 
     writeAiAuthProfiles(authProfiles);
 
-    // 同步 openclaw.json 中的 models.providers
+    // Sync models.providers in openclaw.json
     const configPath = '/root/.openclaw/openclaw.json';
     let config = {};
     try {
@@ -6786,28 +6786,28 @@ app.post('/api/ai/keys', async (req, res) => {
     writeOpenClawConfig(config);
     writeAiModels(models);
 
-    res.json({ success: true, message: `${provider} API Key 已保存` });
+    res.json({ success: true, message: `${provider} API Key saved` });
   } catch (err) {
     console.error('[ai/keys] Error adding key:', err);
-    res.status(500).json({ error: '添加失败: ' + (err?.message || '未知错误') });
+    res.status(500).json({ error: 'Add failed: ' + (err?.message || 'Unknown error') });
   }
 });
 
-// 删除 API Key
+// Delete API Key
 app.delete('/api/ai/keys', async (req, res) => {
   try {
     const { provider, keyId } = req.body || {};
 
     if (!provider) {
-      return res.status(400).json({ error: 'provider 不能为空' });
+      return res.status(400).json({ error: 'Provider cannot be empty' });
     }
 
     const configPath = '/root/.openclaw/openclaw.json';
 
-    // 读取 auth-profiles
+    // Read auth-profiles
     let authProfiles = readAiAuthProfiles();
 
-    // 删除指定的 profile（keyId 是 profileId）
+    // Delete specified profile (keyId is profileId)
     const profileId = keyId || provider;
     const removedProfile = authProfiles.profiles?.[profileId];
     const removedSecret = getAuthProfileSecret(removedProfile);
@@ -6822,38 +6822,38 @@ app.delete('/api/ai/keys', async (req, res) => {
       removeDuplicateProfilesBySecret(authProfiles, removedProfile.provider, removedSecret);
     }
 
-    // 检查该 provider 是否还有其他 key
+    // Check if provider has other keys
     const remainingKeys = Object.entries(authProfiles.profiles || {}).filter(([pid, p]) => p?.provider === provider);
     const hasRemainingKeys = remainingKeys.length > 0;
 
-    // 从 models.json 中处理
+    // Handle in models.json
     let models = readAiModels();
 
     if (!hasRemainingKeys) {
-      // 没有剩余 key，移除 provider
+      // No remaining keys, removing provider
       if (models.providers?.[provider]) {
         delete models.providers[provider];
         console.log(`[ai/keys] Removed provider ${provider} from models.json (no remaining keys)`);
       }
-      // 清除旧格式顶级条目
+      // Clear legacy top-level entries
       if (authProfiles[provider]) {
         delete authProfiles[provider];
       }
     } else {
-      // 还有剩余 key，激活第一个
+      // Remaining keys exist, activating first one
       const [nextPid, nextProfile] = remainingKeys[0];
       const nextKey = getAuthProfileSecret(nextProfile);
       if (nextKey && models.providers?.[provider]) {
         models.providers[provider].apiKey = nextKey;
         console.log(`[ai/keys] Activated next key for ${provider}: profile ${nextPid}`);
       }
-      // 更新旧格式顶级条目
+      // Update legacy top-level entries
       if (nextProfile) {
         authProfiles[provider] = { ...nextProfile };
       }
     }
 
-    // 从 openclaw.json 中处理
+    // Handle in openclaw.json
     let config = {};
     try {
       config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -6864,7 +6864,7 @@ app.delete('/api/ai/keys', async (req, res) => {
         delete config.models.providers[provider];
       }
 
-      // 清除引用了该 provider 的模型配置
+      // Clear model config referencing this provider
       const defaults = config?.agents?.defaults || {};
       const clearIfProvider = (modelStr) => {
         const p = String(modelStr || '').split('/')[0];
@@ -6888,30 +6888,30 @@ app.delete('/api/ai/keys', async (req, res) => {
         }
       }
     }
-    // 写回所有文件（自动清理非法 key）
+    // Write back all files (auto-clean invalid keys)
     writeAiModels(models);
     writeAiAuthProfiles(authProfiles);
     writeOpenClawConfig(config);
 
-    res.json({ success: true, message: `${provider} 已删除` });
+    res.json({ success: true, message: `${provider} deleted` });
   } catch (err) {
     console.error('[ai/keys] Error deleting key:', err);
-    res.status(500).json({ error: '删除失败: ' + (err?.message || '未知错误') });
+    res.status(500).json({ error: 'Delete failed: ' + (err?.message || 'Unknown error') });
   }
 });
 
-// 获取可用模型列表
+// Get available model list
 app.post('/api/ai/models', async (req, res) => {
   try {
     const { provider, apiKey, baseUrl } = req.body || {};
 
     if (!provider) {
-      return res.status(400).json({ error: 'provider 不能为空' });
+      return res.status(400).json({ error: 'Provider cannot be empty' });
     }
 
-    // 对于某些 provider，返回内置模型列表
+    // For some providers, return built-in model list
     const builtInModels = {
-      // 常用
+      // Common
       'anthropic': [
         { id: 'anthropic/claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
         { id: 'anthropic/claude-opus-4-20250514', name: 'Claude Opus 4' },
@@ -6945,7 +6945,7 @@ app.post('/api/ai/models', async (req, res) => {
         { id: 'deepseek/deepseek-coder', name: 'DeepSeek Coder' },
         { id: 'deepseek/deepseek-reasoner', name: 'DeepSeek Reasoner' }
       ],
-      // 国际
+      // International
       'mistral': [
         { id: 'mistral/mistral-large-latest', name: 'Mistral Large' },
         { id: 'mistral/mistral-medium-latest', name: 'Mistral Medium' },
@@ -6988,7 +6988,7 @@ app.post('/api/ai/models', async (req, res) => {
         { id: 'venice/llama-3.3-70b', name: 'Llama 3.3 70B' },
         { id: 'venice/deepseek-r1-671b', name: 'DeepSeek R1 671B' }
       ],
-      // 中国
+      // China
       'bailian': [
         { id: 'bailian/qwen3.5-plus', name: 'Qwen 3.5 Plus' },
         { id: 'bailian/qwen3-max-2026-01-23', name: 'Qwen 3 Max' },
@@ -7028,7 +7028,7 @@ app.post('/api/ai/models', async (req, res) => {
       'byteplus': [
         { id: 'byteplus/ark-code-latest', name: 'Ark Code Latest' }
       ],
-      // 网关
+      // Gateway
       'litellm': [
         { id: 'litellm/claude-opus-4-6', name: 'Claude Opus 4.6' },
         { id: 'litellm/gpt-4o', name: 'GPT-4o' }
@@ -7042,18 +7042,18 @@ app.post('/api/ai/models', async (req, res) => {
       ]
     };
 
-    // github-copilot: 先交换 Copilot API Token，再获取模型
+    // github-copilot: exchange Copilot API Token first, then get models
     if (provider === 'github-copilot') {
       try {
         const authProfiles = readAiAuthProfiles();
-        // 兼容 openclaw 格式 (profiles sub-key) 和旧格式 (直接 top-level)
+        // openclaw format compatible (profiles sub-key) and legacy format (direct top-level)
         const copilotAuth = authProfiles?.profiles?.['github-copilot:github']
           || authProfiles?.profiles?.['github-copilot']
           || authProfiles['github-copilot'];
         const githubToken = copilotAuth?.token || copilotAuth?.apiKey || '';
         if (githubToken) {
           console.log(`[ai/models] Exchanging GitHub token ${githubToken.substring(0, 8)}... for Copilot API token`);
-          // Step 1: 将 GitHub ghu_ token 交换为 Copilot API token
+          // Step 1: Exchange GitHub ghu_ token for Copilot API token
           const COPILOT_TOKEN_URL = 'https://api.github.com/copilot_internal/v2/token';
           const tokenRes = await fetch(COPILOT_TOKEN_URL, {
             headers: {
@@ -7072,21 +7072,21 @@ app.post('/api/ai/models', async (req, res) => {
               if (copilotErrorDetail) copilotErrorMsg += ` — ${copilotErrorDetail}`;
             } catch {}
             console.log(`[ai/models] ${copilotErrorMsg}`);
-            // 返回内置列表但同时携带错误信息
+            // Return built-in list with error info
             return res.json({ success: true, models: builtInModels['github-copilot'], source: 'builtin', error: copilotErrorDetail || `HTTP ${tokenRes.status}` });
           } else {
             const tokenData = await tokenRes.json();
             const copilotApiToken = tokenData.token;
             if (copilotApiToken) {
               console.log(`[ai/models] Copilot API token obtained, expires_at: ${tokenData.expires_at}`);
-              // 从 token 中提取实际 API base URL (proxy-ep 字段)
+              // Extract actual API base URL from token (proxy-ep field)
               let apiBaseUrl = 'https://api.individual.githubcopilot.com';
               const epMatch = copilotApiToken.match(/(?:^|;)\s*proxy-ep=([^;\s]+)/i);
               if (epMatch) {
                 apiBaseUrl = 'https://' + epMatch[1].replace(/^proxy\./, 'api.');
                 console.log(`[ai/models] Using extracted API base: ${apiBaseUrl}`);
               }
-              // Step 2: 用 Copilot API token 获取模型列表
+              // Step 2: Get model list with Copilot API token
               const modelsUrl = `${apiBaseUrl}/models`;
               const modelsRes = await fetch(modelsUrl, {
                 headers: {
@@ -7117,12 +7117,12 @@ app.post('/api/ai/models', async (req, res) => {
       } catch (e) {
         console.log(`[ai/models] Copilot API fetch failed: ${e.message}`);
       }
-      // fallback 到内置列表
+      // Fallback to built-in list
       console.log(`[ai/models] Using builtin copilot model list`);
       return res.json({ success: true, models: builtInModels['github-copilot'], source: 'builtin' });
     }
 
-    // 尝试从存储中获取 API key（如果请求中没有提供）
+    // Try to get API key from storage (if not provided in request)
     let effectiveApiKey = apiKey;
     if (!effectiveApiKey) {
       try {
@@ -7132,7 +7132,7 @@ app.post('/api/ai/models', async (req, res) => {
       } catch {}
     }
 
-    // 对于支持 /models 端点的 provider，尝试动态获取模型列表
+    // For providers supporting /models endpoint, try dynamic model list fetch
     const dynamicProviders = new Set([
       'openrouter', 'custom', 'ollama', 'lmstudio', 'vllm', 'litellm',
       'groq', 'together', 'nvidia', 'cerebras', 'perplexity', 'mistral',
@@ -7144,11 +7144,11 @@ app.post('/api/ai/models', async (req, res) => {
       const endpoint = baseUrl || getDefaultBaseUrl(provider);
       if (endpoint) {
         try {
-          // ollama 使用不同的 API 路径
+          // ollama uses a different API path
           const modelsUrl = provider === 'ollama'
             ? `${endpoint}/api/tags`
             : provider === 'anthropic'
-              ? null  // Anthropic 不支持 /models 端点
+              ? null  // Anthropic does not support /models endpoint
               : `${endpoint}/models`;
 
           if (modelsUrl) {
@@ -7184,7 +7184,7 @@ app.post('/api/ai/models', async (req, res) => {
                   name: m.name || m.id
                 }));
               }
-              // 确保所有模型 ID 都有 provider/ 前缀
+              // Ensure all model IDs have provider/ prefix
               models = models.map(m => {
                 const prefix = provider + '/';
                 if (!m.id.startsWith(prefix)) {
@@ -7203,30 +7203,30 @@ app.post('/api/ai/models', async (req, res) => {
       }
     }
 
-    // fallback 到内置列表
+    // Fallback to built-in list
     if (builtInModels[provider]) {
       return res.json({ success: true, models: builtInModels[provider], source: 'builtin' });
     }
 
-    // 默认返回空列表
+    // Return empty list by default
     res.json({ success: true, models: [] });
   } catch (err) {
     console.error('[ai/models] Error:', err);
-    res.status(500).json({ error: '获取模型列表失败: ' + (err?.message || '未知错误') });
+    res.status(500).json({ error: 'Failed to fetch model list: ' + (err?.message || 'Unknown error') });
   }
 });
 
-// 辅助函数：获取默认 baseUrl
+// Helper function: get default baseUrl
 function getDefaultBaseUrl(provider) {
   const urls = {
-    // 常用
+    // Common
     'anthropic': 'https://api.anthropic.com/v1',
     'openai': 'https://api.openai.com/v1',
     'github-copilot': DEFAULT_COPILOT_API_BASE_URL,
     'gemini': 'https://generativelanguage.googleapis.com/v1beta',
     'openrouter': 'https://openrouter.ai/api/v1',
     'deepseek': 'https://api.deepseek.com/v1',
-    // 国际
+    // International
     'mistral': 'https://api.mistral.ai/v1',
     'xai': 'https://api.x.ai/v1',
     'groq': 'https://api.groq.com/openai/v1',
@@ -7236,7 +7236,7 @@ function getDefaultBaseUrl(provider) {
     'nvidia': 'https://integrate.api.nvidia.com/v1',
     'cerebras': 'https://api.cerebras.ai/v1',
     'venice': 'https://api.venice.ai/api/v1',
-    // 中国
+    // China
     'bailian': 'https://coding.dashscope.aliyuncs.com/v1',
     'zai': 'https://open.bigmodel.cn/api/paas/v4',
     'moonshot': 'https://api.moonshot.ai/v1',
@@ -7246,11 +7246,11 @@ function getDefaultBaseUrl(provider) {
     'qianfan': 'https://qianfan.baidubce.com/v2',
     'volcengine': 'https://ark.cn-beijing.volces.com/api/v3',
     'byteplus': 'https://ark.ap-southeast.bytepluses.com/api/v3',
-    // 网关
+    // Gateway
     'litellm': 'http://localhost:4000',
     'opencode': 'https://opencode.ai/v1',
     'kilocode': 'https://api.kilo.ai/api/gateway/',
-    // 本地
+    // Local
     'ollama': 'http://localhost:11434',
     'lmstudio': 'http://127.0.0.1:1234/v1',
     'vllm': 'http://localhost:8000/v1'
@@ -7268,21 +7268,21 @@ app.post('/api/restart', (req, res) => {
     if (opState.type === 'restarting_gateway') {
       return res.json({
         success: true,
-        message: 'Gateway 重启已在进行中，请稍候',
+        message: 'Gateway restart already in progress, please wait',
         operationState: opState
       });
     }
 
     if (opState.type !== 'idle') {
-      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+      return res.status(409).json({ success: false, error: `Operation in progress: ${opState.type}`, operationState: opState });
     }
 
-    // 写入 operation.lock，让 watchdog 来执行重启
+    // Write operation.lock, let watchdog perform restart
     queueGatewayRestart('api-restart');
 
     res.json({
       success: true,
-      message: '重启请求已提交，watchdog 将在 10 秒内执行',
+      message: 'Restart request submitted, watchdog will execute within 10 seconds',
       operationState: { ...openClawOperationState }
     });
   } catch (e) {
@@ -7331,7 +7331,7 @@ function appendInstallLog(task, chunk) {
     const isErrorLike = (
       /^\[openclaw\]\[(error|fatal)\]/i.test(normalized)
       || /^(npm ERR!|npm WARN|pnpm:|curl:|tar:|unzip:|fatal:|Error:)/i.test(normalized)
-      || /(timeout|超时|failed|失败|exit=\d+|not found|EAI_AGAIN|ETIMEDOUT|ECONN|EADDRINUSE)/i.test(normalized)
+      || /(timeout|timeout|failed|failed|exit=\d+|not found|EAI_AGAIN|ETIMEDOUT|ECONN|EADDRINUSE)/i.test(normalized)
     );
     const isStage = /^\[openclaw\]|^\[gateway\]|^\[progress\]/i.test(normalized);
     const important = isBoundary || isStage || isErrorLike;
@@ -7453,19 +7453,19 @@ function runOpenClawRepairTask() {
   (async () => {
     const cleanedProviders = repairOpenClawConfigProviders();
     if (cleanedProviders) {
-      appendRepairLog(task, '[repair] 已预清理无效 key: providers\n');
+      appendRepairLog(task, '[repair] Pre-cleaned invalid keys: providers\n');
     }
-    appendRepairLog(task, '[repair] 正在执行 openclaw doctor --fix ...\n');
+    appendRepairLog(task, '[repair] Running openclaw doctor --fix ...\n');
 
     let doctorOutput = '';
     if (runCommandOk('command -v openclaw >/dev/null 2>&1 || test -x /root/.npm-global/bin/openclaw || test -x /usr/local/bin/openclaw || test -f /root/.openclaw/openclaw-source/openclaw.mjs', 1000)) {
       const doctor = await runOpenClawCli('OPENCLAW_BIN="$(command -v openclaw 2>/dev/null || true)"; if [ -z "$OPENCLAW_BIN" ]; then for p in /root/.npm-global/bin/openclaw /usr/local/bin/openclaw /root/.openclaw/openclaw-source/openclaw.mjs; do if [ -x "$p" ] || [ -f "$p" ]; then OPENCLAW_BIN="$p"; break; fi; done; fi; if [ -z "$OPENCLAW_BIN" ]; then echo "openclaw not found"; exit 127; fi; "$OPENCLAW_BIN" doctor --fix 2>&1', 120000);
       doctorOutput = compactOutput(doctor.output || '');
-      if (doctorOutput) appendRepairLog(task, `[repair] doctor 输出: ${doctorOutput}\n`);
-      if (doctor.ok) appendRepairLog(task, '[repair] doctor --fix 执行完成。\n');
-      else appendRepairLog(task, '[repair] doctor --fix 返回非0，继续执行兜底修复。\n');
+      if (doctorOutput) appendRepairLog(task, `[repair] doctor output: ${doctorOutput}\n`);
+      if (doctor.ok) appendRepairLog(task, '[repair] doctor --fix completed.\n');
+      else appendRepairLog(task, '[repair] doctor --fix returned non-zero, continuing with fallback repair.\n');
     } else {
-      appendRepairLog(task, '[repair] openclaw 命令不可用，跳过 doctor，直接执行兜底修复。\n');
+      appendRepairLog(task, '[repair] openclaw command not available, skipping doctor, running fallback repair.\n');
     }
 
     const gatewayLog = readGatewayLogTail(500);
@@ -7477,27 +7477,27 @@ function runOpenClawRepairTask() {
     task.detected = detected;
 
     const repair = repairOpenClawConfigInvalidKeys(detected);
-    appendRepairLog(task, `[repair] 检测到潜在无效 key: ${detected.length ? detected.join(', ') : '无'}\n`);
+    appendRepairLog(task, `[repair] Detected potentially invalid keys: ${detected.length ? detected.join(', ') : 'none'}\n`);
 
     if (!repair.changed) {
-      appendRepairLog(task, '[repair] 未发现可删除项（可能已被 doctor 修复）。\n');
-      appendRepairLog(task, '[repair] 请点击“重启 Gateway”验证配置是否恢复。\n');
+      appendRepairLog(task, '[repair] No deletable items found (may have been fixed by doctor).\n');
+      appendRepairLog(task, '[repair] Please click "Restart Gateway" to verify config recovery.\n');
       task.changed = false;
       task.removed = [];
       task.status = 'success';
     } else {
-      appendRepairLog(task, `[repair] 已移除无效 key: ${repair.removed.join(', ')}\n`);
-      if (repair.backupPath) appendRepairLog(task, `[repair] 已备份原配置: ${repair.backupPath}\n`);
-      appendRepairLog(task, '[repair] 修复完成，请点击“重启 Gateway”使配置重新加载。\n');
+      appendRepairLog(task, `[repair] Removed invalid keys: ${repair.removed.join(', ')}\n`);
+      if (repair.backupPath) appendRepairLog(task, `[repair] Original config backed up to: ${repair.backupPath}\n`);
+      appendRepairLog(task, '[repair] Repair complete, please click "Restart Gateway" to reload config.\n');
       task.changed = true;
       task.removed = repair.removed || [];
       task.backupPath = repair.backupPath || '';
       task.status = 'success';
     }
   })().catch((e) => {
-    const detail = e?.message || String(e || '配置恢复失败');
+    const detail = e?.message || String(e || 'Config recovery failed');
     console.error('[openclaw][repair] failed:', detail);
-    appendRepairLog(task, `[repair] 失败: ${detail}\n`);
+    appendRepairLog(task, `[repair] failed: ${detail}\n`);
     task.status = 'failed';
     task.error = detail;
   }).finally(() => {
@@ -7557,7 +7557,7 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
   appendInstallLog(task, `[openclaw] log file: ${task.logFile || OPENCLAW_INSTALL_LOG_FILE}\n`);
   appendInstallLog(task, `[openclaw] ${title}\n`);
   appendInstallLog(task, `[openclaw] command prepared (length=${String(command || '').length})\n`);
-  appendInstallLog(task, '[openclaw] 安装脚本开始执行，以下为实时输出...\n\n');
+  appendInstallLog(task, '[openclaw] Install script starting, real-time output below...\n\n');
 
   const escaped = String(command).replace(/'/g, `'"'"'`);
   const child = exec(`bash --noprofile --norc -lc '${escaped}'`, {
@@ -7566,7 +7566,7 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
     env: { ...process.env, TERM: 'dumb' }
   });
   task.pid = Number(child.pid || 0) || 0;
-  // C7: 持久化子进程 PID 以便重启后检测孤儿进程 (DFMEA T2)
+  // C7: Persist subprocess PID for post-restart orphan detection (DFMEA T2)
   try {
     fs.mkdirSync(path.dirname(OPENCLAW_TASK_PID_FILE), { recursive: true });
     fs.writeFileSync(OPENCLAW_TASK_PID_FILE, JSON.stringify({ pid: task.pid, taskId, operationType, startedAt: task.startedAt }), { mode: 0o600 });
@@ -7578,10 +7578,10 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
   }, 30000);
   child.on('error', (err) => {
     clearInterval(heartbeatTimer);
-    appendInstallLog(task, `[openclaw] 任务启动失败: ${err.message}\n`);
+    appendInstallLog(task, `[openclaw] Task startup failed: ${err.message}\n`);
     task.status = 'failed';
     task.exitCode = -1;
-    task.error = `任务启动失败: ${err.message}`;
+    task.error = `Task startup failed: ${err.message}`;
     clearOpenClawOperationState(operationType);
   });
   child.stdout.on('data', d => appendInstallLog(task, d));
@@ -7589,7 +7589,7 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
   child.on('close', (code, signal) => {
     clearInterval(heartbeatTimer);
     if (signal) {
-      appendInstallLog(task, `[openclaw] 任务被中断（signal=${signal}），可能超时或被外部终止。\n`);
+      appendInstallLog(task, `[openclaw] Task interrupted (signal=${signal}），possibly timed out or terminated externally.\n`);
     }
     task.status = code === 0 ? 'success' : 'failed';
     task.exitCode = code;
@@ -7600,22 +7600,22 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
     if (task.status === 'success' && (operationType === 'installing' || operationType === 'updating')) {
       openClawRuntimeRecoveryState.suppressUntil = 0;
       openClawRuntimeRecoveryState.suppressReason = '';
-      const opLabel = operationType === 'updating' ? '更新' : '安装';
+      const opLabel = operationType === 'updating' ? 'Update' : 'Install';
       const metadataSync = syncOpenClawPostInstallMetadata({ operationType, release: task.release || null });
       task.metadataSync = metadataSync;
       if (metadataSync?.error) {
-        appendInstallLog(task, `[openclaw][warn] ${opLabel}后元数据同步失败: ${metadataSync.error}\n`);
+        appendInstallLog(task, `[openclaw][warn] ${opLabel}post-metadata sync failed: ${metadataSync.error}\n`);
       } else if (metadataSync?.configChanged || metadataSync?.updateCheckChanged) {
-        appendInstallLog(task, `[openclaw] ${opLabel}后已同步元数据：version=${metadataSync.version}${metadataSync.tag ? ` tag=${metadataSync.tag}` : ''}\n`);
+        appendInstallLog(task, `[openclaw] ${opLabel}post-metadata synced: version=${metadataSync.version}${metadataSync.tag ? ` tag=${metadataSync.tag}` : ''}\n`);
       }
-      // A/B swap 已在安装脚本内完成 Gateway 停止→启动→健康检查，无需额外重启
-      // 仅确保 watchdog 存活以便后续监控
+      // A/B swap already completed Gateway stop→start→health check in install script, no extra restart needed
+      // Only ensure watchdog is alive for subsequent monitoring
       ensureGatewayWatchdog((wdErr) => {
         if (wdErr) {
-          appendInstallLog(task, `[openclaw][warn] ensureGatewayWatchdog 失败: ${wdErr.message}\n`);
+          appendInstallLog(task, `[openclaw][warn] ensureGatewayWatchdog failed: ${wdErr.message}\n`);
         }
       });
-      appendInstallLog(task, `[openclaw] ${opLabel}完成（A/B 切换已启动并验证新 Gateway）。\n`);
+      appendInstallLog(task, `[openclaw] ${opLabel}completed (A/B swap started and verified new Gateway).\n`);
     }
     if (task.status === 'failed') {
       const lines = String(task.log || '')
@@ -7629,12 +7629,12 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
           reason = line;
           break;
         }
-        if (/(exit\s*=\s*\d+|超时|failed|失败|not found|ENOENT|ECONN|EAI_AGAIN|ETIMEDOUT)/i.test(line)) {
+        if (/(exit\s*=\s*\d+|timeout|failed|failed|not found|ENOENT|ECONN|EAI_AGAIN|ETIMEDOUT)/i.test(line)) {
           reason = line;
           break;
         }
       }
-      task.error = reason || `安装失败（exit=${code ?? 'unknown'}${signal ? `, signal=${signal}` : ''}）`;
+      task.error = reason || `Install failed (exit=${code ?? 'unknown'}${signal ? `, signal=${signal}` : ''}）`;
       appendInstallLog(task, `[openclaw][error] ${task.error}\n`);
     }
     const durationSec = Math.max(0, Math.floor((Date.now() - Number(task.startedAt || Date.now())) / 1000));
@@ -7643,7 +7643,7 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
     appendInstallLog(task, `\n===== [${new Date().toISOString()}] task ${taskId} end status=${task.status} exitCode=${code ?? 'null'} signal=${signal || 'none'} =====\n`);
     if (activeInstallTaskId === taskId) activeInstallTaskId = '';
     clearOpenClawOperationState(operationType);
-    // C7: 清理 PID 文件
+    // C7: Clean up PID file
     try { fs.unlinkSync(OPENCLAW_TASK_PID_FILE); } catch {}
     const keys = Object.keys(installLogs).sort();
     while (keys.length > 5) delete installLogs[keys.shift()];
@@ -7652,7 +7652,7 @@ function runOpenClawTask(command, title, operationType = 'installing', options =
   return taskId;
 }
 
-// C7: 服务重启时检测并清理孤儿安装进程 (DFMEA T2)
+// C7: Detect and clean orphan install processes on service restart (DFMEA T2)
 function checkOrphanInstallTask() {
   try {
     if (!fs.existsSync(OPENCLAW_TASK_PID_FILE)) return;
@@ -7664,27 +7664,27 @@ function checkOrphanInstallTask() {
     try { process.kill(pid, 0); alive = true; } catch { alive = false; }
     if (alive) {
       const ageSec = Math.floor((Date.now() - Number(info.startedAt || 0)) / 1000);
-      console.log(`[openclaw][orphan] 检测到孤儿安装进程 PID=${pid} task=${info.taskId} age=${ageSec}s，尝试终止...`);
+      console.log(`[openclaw][orphan] Detected orphan install process PID=${pid} task=${info.taskId} age=${ageSec}s，attempting to terminate...`);
       try { process.kill(pid, 'SIGTERM'); } catch {}
       setTimeout(() => {
         try { process.kill(pid, 0); process.kill(pid, 'SIGKILL'); } catch {}
       }, 5000);
     } else {
-      console.log(`[openclaw][orphan] PID=${pid} 已不存在，清理過期 PID 文件`);
+      console.log(`[openclaw][orphan] PID=${pid} no longer exists, cleaning up stale PID file`);
     }
     try { fs.unlinkSync(OPENCLAW_TASK_PID_FILE); } catch {}
-    // 同时清理可能过期的 operation.lock
+    // Also clean possibly stale operation.lock
     clearOpenClawOperationState(info.operationType || 'installing');
   } catch (e) {
-    console.log(`[openclaw][orphan] 检查孤儿进程失败: ${e.message}`);
+    console.log(`[openclaw][orphan] Orphan process check failed: ${e.message}`);
   }
 }
 
 function buildOpenClawUninstallCommand() {
   return [
     'set -euo pipefail',
-    'trap \'echo "[openclaw][error] 脚本异常退出 line=$LINENO exit=$?" >&2\' ERR',
-    'echo "[openclaw] 开始卸载 OpenClaw..."',
+    'trap \'echo "[openclaw][error] Script exited abnormally line=$LINENO exit=$?" >&2\' ERR',
+    'echo "[openclaw] Starting OpenClaw uninstall..."',
     'NPM_PREFIX="$(npm config get prefix 2>/dev/null || echo /usr/local)"',
     'OPENCLAW_STATE_ROOT="/root/.openclaw"',
     'echo "[openclaw] npm prefix: ${NPM_PREFIX}"',
@@ -7693,7 +7693,7 @@ function buildOpenClawUninstallCommand() {
     'rm -rf "${NPM_PREFIX}/lib/node_modules/openclaw" >/dev/null 2>&1 || true',
     'rm -rf "${OPENCLAW_STATE_ROOT}/openclaw" "${OPENCLAW_STATE_ROOT}/openclaw-source" >/dev/null 2>&1 || true',
     'rm -f "${OPENCLAW_STATE_ROOT}/openclaw-source-install.json" >/dev/null 2>&1 || true',
-    'echo "[openclaw] 卸载完成（npm 全局包和本地源码目录已移除）"'
+    'echo "[openclaw] Uninstall complete (npm global package and local source directory removed)"'
   ].join('\n');
 }
 
@@ -7703,7 +7703,7 @@ function listOpenClawConfigBackups() {
     const entries = fs.readdirSync(OPENCLAW_CONFIG_BACKUP_DIR);
     const result = [];
 
-    // 新格式: snapshot-YYYYMMDD-HHMMSS 目录
+    // New format: snapshot-YYYYMMDD-HHMMSS directory
     for (const name of entries) {
       if (!name.startsWith('snapshot-')) continue;
       const dirPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
@@ -7732,7 +7732,7 @@ function listOpenClawConfigBackups() {
       });
     }
 
-    // 旧格式: openclaw-YYYYMMDD-HHMMSS.json 单文件
+    // Old format: openclaw-YYYYMMDD-HHMMSS.json single file
     for (const name of entries) {
       if (!name.endsWith('.json') || name.startsWith('.')) continue;
       const fullPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
@@ -7791,7 +7791,7 @@ function sanitizeAllConfigBackups() {
 function sanitizeBackupFileName(input) {
   const value = String(input || '').trim();
   if (!value) return '';
-  // 支持旧格式 JSON 文件名和新的 snapshot 目录名
+  // Support old format JSON filename and new snapshot directory name
   if (/^snapshot-[0-9-]+$/.test(value)) return value;
   if (!/^[A-Za-z0-9._-]+\.json$/.test(value)) return '';
   return value;
@@ -7895,7 +7895,7 @@ function readOperationLockFromFile() {
             pid
           };
         }
-        // 对于安装/更新类型，检查子进程（task.pid）是否仍存活，避免误删锁
+        // For install/update types, check if subprocess (task.pid) is still alive to avoid deleting lock prematurely
         if (type === 'installing' || type === 'updating') {
           try {
             if (fs.existsSync(OPENCLAW_TASK_PID_FILE)) {
@@ -7904,7 +7904,7 @@ function readOperationLockFromFile() {
               if (taskPid > 1) {
                 try {
                   process.kill(taskPid, 0);
-                  // 子进程仍存活，保留锁
+                  // Subprocess still alive, keeping lock
                   return {
                     type,
                     taskId: String(parsed?.taskId || ''),
@@ -7939,8 +7939,8 @@ function writeOperationLock(state) {
       if (fs.existsSync(OPENCLAW_OPERATION_LOCK_FILE)) fs.unlinkSync(OPENCLAW_OPERATION_LOCK_FILE);
       return;
     }
-    // C6: 使用原子写入防止竞态读到半写数据 (DFMEA O2)
-    // C9: 使用紧凑 JSON，因为 watchdog 的 grep 模式不匹配美化格式
+    // C6: Use atomic write to prevent reading half-written data from race conditions (DFMEA O2)
+    // C9: Use compact JSON because watchdog grep patterns do not match pretty format
     const lockDir = path.dirname(OPENCLAW_OPERATION_LOCK_FILE);
     fs.mkdirSync(lockDir, { recursive: true });
     const tmpPath = `${OPENCLAW_OPERATION_LOCK_FILE}.${process.pid}.${Date.now()}.tmp`;
@@ -8079,16 +8079,16 @@ function buildOpenClawOperationProgress(state) {
     remainingSec,
     display: {
       label: type === 'installing'
-        ? '安装中'
+        ? 'Installing'
         : type === 'updating'
-          ? '更新中'
+          ? 'Updating'
           : type === 'uninstalling'
-            ? '卸载中'
+            ? 'Uninstalling'
           : type === 'restarting_gateway'
-            ? 'Gateway 启动中'
+            ? 'Gateway starting'
             : type === 'repairing_config'
-              ? '配置恢复中'
-              : '处理中'
+              ? 'Restoring config'
+              : 'Processing'
     }
   };
 }
@@ -8152,11 +8152,11 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
   const safeRepo = parseGitHubRepo(repo) || OPENCLAW_SOURCE_REPO_DEFAULT;
   const safeTag = String(tag || '').trim();
   const safeTarball = String(tarballUrl || '').trim();
-  if (!safeTag || !safeTarball) throw new Error('release 信息不完整，无法构建安装命令');
+  if (!safeTag || !safeTarball) throw new Error('Release info incomplete, cannot build install command');
 
   return [
     'set -euo pipefail',
-    'trap \'echo "[openclaw][error] 脚本异常退出 line=$LINENO exit=$?" >&2\' ERR',
+    'trap \'echo "[openclaw][error] Script exited abnormally line=$LINENO exit=$?" >&2\' ERR',
     `OPENCLAW_REPO="${safeRepo}"`,
     `OPENCLAW_TAG="${safeTag.replace(/"/g, '')}"`,
     `OPENCLAW_TARBALL_URL="${safeTarball.replace(/"/g, '')}"`,
@@ -8171,9 +8171,9 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     'EXTRACT_DIR=""',
     'mkdir -p "$WORK_BASE" "$TMP_BASE" "$CACHE_BASE"',
     'rm -rf "$SRC_TMP" "$TMP_BASE/openclaw.tar.gz"',
-    'echo "[openclaw] 下载 release 源码: $OPENCLAW_REPO @ $OPENCLAW_TAG"',
+    'echo "[openclaw] Downloading release source code: $OPENCLAW_REPO @ $OPENCLAW_TAG"',
     'if [ -s "$CACHE_TARBALL" ] && tar -tzf "$CACHE_TARBALL" >/dev/null 2>&1; then',
-    '  echo "[openclaw] 使用本地缓存 tarball: $CACHE_TARBALL"',
+    '  echo "[openclaw] Using locally cached tarball: $CACHE_TARBALL"',
     '  cp -f "$CACHE_TARBALL" "$TMP_BASE/openclaw.tar.gz"',
     'fi',
     'download_tarball() {',
@@ -8182,14 +8182,14 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  local tmp="$out.part"',
     '  local i=1',
     '  while [ "$i" -le 12 ]; do',
-    '    echo "[openclaw] 下载尝试 $i/12: $url"',
+    '    echo "[openclaw] Download attempt $i/12: $url"',
     '    rm -f "$tmp"',
     '    if curl -fL --http1.1 --connect-timeout 10 --max-time 1800 -o "$tmp" "$url"; then',
     '      if tar -tzf "$tmp" >/dev/null 2>&1; then',
     '        mv -f "$tmp" "$out"',
     '        return 0',
     '      fi',
-    '      echo "[openclaw] tarball 校验失败，重试..."',
+    '      echo "[openclaw] tarball verification failed, retrying..."',
     '    fi',
     '    rm -f "$tmp"',
     '    sleep 2',
@@ -8198,7 +8198,7 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  return 1',
     '}',
     'if [ -s "$TMP_BASE/openclaw.tar.gz" ] && tar -tzf "$TMP_BASE/openclaw.tar.gz" >/dev/null 2>&1; then',
-    '  echo "[openclaw] 使用已准备好的 tarball"',
+    '  echo "[openclaw] Using pre-prepared tarball"',
     '  mkdir -p "$SRC_TMP"',
     '  tar -xzf "$TMP_BASE/openclaw.tar.gz" -C "$SRC_TMP"',
     '  EXTRACT_DIR="$(find "$SRC_TMP" -mindepth 1 -maxdepth 1 -type d | head -1)"',
@@ -8213,9 +8213,9 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  tar -xzf "$TMP_BASE/openclaw.tar.gz" -C "$SRC_TMP"',
     '  EXTRACT_DIR="$(find "$SRC_TMP" -mindepth 1 -maxdepth 1 -type d | head -1)"',
     'else',
-    '  echo "[openclaw] tarball 下载失败，回退 git clone tag..."',
+    '  echo "[openclaw] tarball download failed, falling back to git clone tag..."',
     '  if ! command -v git >/dev/null 2>&1; then',
-    '    echo "[openclaw] 缺少镜像内依赖: git（请重新构建镜像，不在运行时安装系统依赖）"',
+    '    echo "[openclaw] Missing image dependency: git (please rebuild image, do not install system deps at runtime)"',
     '    exit 11',
     '  fi',
     '  CLONE_DIR="$SRC_TMP/repo-src"',
@@ -8224,17 +8224,17 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  i=1',
     '  while [ "$i" -le 6 ]; do',
     '    git clone --depth 1 --branch "$OPENCLAW_TAG" "https://github.com/$OPENCLAW_REPO.git" "$CLONE_DIR" && break',
-    '    echo "[openclaw] git clone 失败(attempt=$i)，重试..."',
+    '    echo "[openclaw] git clone failed (attempt=$i), retrying..."',
     '    rm -rf "$CLONE_DIR"',
     '    sleep 3',
     '    i=$((i + 1))',
     '  done',
     '  EXTRACT_DIR="$CLONE_DIR"',
     'fi',
-    'if [ -z "$EXTRACT_DIR" ] || [ ! -d "$EXTRACT_DIR" ]; then echo "[openclaw] 未获取到源码目录"; exit 2; fi',
+    'if [ -z "$EXTRACT_DIR" ] || [ ! -d "$EXTRACT_DIR" ]; then echo "[openclaw] Failed to obtain source directory"; exit 2; fi',
     'for bin in node npm git curl tar gzip; do',
     '  if ! command -v "$bin" >/dev/null 2>&1; then',
-    '    echo "[openclaw] 缺少镜像内依赖: $bin（请重新构建镜像，不在运行时安装系统依赖）"',
+    '    echo "[openclaw] Missing image dependency: $bin (please rebuild image, do not install system deps at runtime)"',
     '    exit 11',
     '  fi',
     'done',
@@ -8244,7 +8244,7 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     'export npm_config_production=false',
     'export NPM_CONFIG_INCLUDE=dev',
     'export npm_config_include=dev',
-    'echo "[openclaw] source 构建阶段使用 dev 依赖模式 (NPM_CONFIG_PRODUCTION=false)"',
+    'echo "[openclaw] source build stage using dev dependency mode (NPM_CONFIG_PRODUCTION=false)"',
     'npm config set fetch-retries 5',
     'npm config set fetch-retry-mintimeout 2000',
     'npm config set fetch-retry-maxtimeout 15000',
@@ -8258,7 +8258,7 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '    else',
     '      npm install --include=dev --no-audit --no-fund && return 0',
     '    fi',
-    '    echo "[openclaw] npm 依赖安装失败(registry=$reg, attempt=$i)，重试..."',
+    '    echo "[openclaw] npm dependency install failed (registry=$reg, attempt=$i), retrying..."',
     '    npm cache verify >/dev/null 2>&1 || true',
     '    sleep 3',
     '    i=$((i + 1))',
@@ -8266,7 +8266,7 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  return 1',
     '}',
     'if ! install_with_registry https://registry.npmjs.org; then',
-    '  echo "[openclaw] npmjs 源失败，回退到 npmmirror"',
+    '  echo "[openclaw] npmjs registry failed, falling back to npmmirror"',
     '  install_with_registry https://registry.npmmirror.com',
     'fi',
     'PNPM_CMD="pnpm"',
@@ -8276,28 +8276,28 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  corepack prepare pnpm@10.23.0 --activate >/dev/null 2>&1 || true',
     '  if corepack pnpm -v >/dev/null 2>&1; then',
     '    PNPM_CMD="corepack pnpm"',
-    '    echo "[openclaw] 未检测到 pnpm 可执行文件，使用 corepack pnpm 兜底"',
+    '    echo "[openclaw] pnpm executable not detected, falling back to corepack pnpm"',
     '  else',
-    '    echo "[openclaw] 缺少镜像内依赖: pnpm（corepack 兜底不可用）"',
+    '    echo "[openclaw] Missing image dependency: pnpm (corepack fallback not available)"',
     '    exit 11',
     '  fi',
     'else',
-    '  echo "[openclaw] 缺少镜像内依赖: pnpm（请重新构建镜像，不在运行时安装系统依赖）"',
+    '  echo "[openclaw] Missing image dependency: pnpm (please rebuild image, do not install system deps at runtime)"',
     '  exit 11',
     'fi',
     'PNPM_BIN_DIR="$(npm prefix -g 2>/dev/null)/bin"',
     'export PATH="$PNPM_BIN_DIR:/root/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"',
     'if [ -x "$PNPM_BIN_DIR/pnpm" ]; then ln -sf "$PNPM_BIN_DIR/pnpm" /usr/local/bin/pnpm 2>/dev/null || true; fi',
-    'if ! command -v pnpm >/dev/null 2>&1 && ! { command -v corepack >/dev/null 2>&1 && corepack pnpm -v >/dev/null 2>&1; }; then echo "[openclaw] pnpm 不可用，安装失败"; exit 5; fi',
-    'if npm run | grep -qE "(^| )build( |$)"; then npm run build; elif npm run | grep -qE "(^| )compile( |$)"; then npm run compile; else echo "[openclaw] 未找到 build/compile 脚本"; exit 3; fi',
+    'if ! command -v pnpm >/dev/null 2>&1 && ! { command -v corepack >/dev/null 2>&1 && corepack pnpm -v >/dev/null 2>&1; }; then echo "[openclaw] pnpm not available, install failed"; exit 5; fi',
+    'if npm run | grep -qE "(^| )build( |$)"; then npm run build; elif npm run | grep -qE "(^| )compile( |$)"; then npm run compile; else echo "[openclaw] build/compile script not found"; exit 3; fi',
     'if [ ! -f dist/control-ui/index.html ]; then',
-    '  echo "[openclaw] 检测到 control-ui 产物缺失，尝试执行 ui:build"',
+    '  echo "[openclaw] control-ui assets missing, attempting ui:build"',
     '  if npm run | grep -qE "(^| )ui:build( |$)"; then',
     '    $PNPM_CMD ui:build || npm run ui:build || true',
     '  fi',
     'fi',
     'if [ ! -f dist/control-ui/index.html ] && [ -d control-ui ] && [ -f control-ui/package.json ]; then',
-    '  echo "[openclaw] 尝试在 control-ui 子目录执行构建"',
+    '  echo "[openclaw] Attempting build in control-ui subdirectory"',
     '  cd control-ui',
     '  $PNPM_CMD install --prefer-offline --no-frozen-lockfile >/dev/null 2>&1 || npm install --no-audit --no-fund >/dev/null 2>&1 || true',
     '  $PNPM_CMD build >/dev/null 2>&1 || npm run build >/dev/null 2>&1 || true',
@@ -8308,47 +8308,47 @@ function buildOpenClawSourceInstallCommand({ repo, tag, tarballUrl }) {
     '  fi',
     'fi',
     'if [ ! -f dist/control-ui/index.html ] && [ -f "$PERSIST_SRC_DIR/dist/control-ui/index.html" ]; then',
-    '  echo "[openclaw] 使用现有安装中的 control-ui 产物回填"',
+    '  echo "[openclaw] Using existing installed control-ui assets as fallback"',
     '  mkdir -p dist/control-ui',
     '  cp -a "$PERSIST_SRC_DIR/dist/control-ui/." dist/control-ui/ || true',
     'fi',
     'if [ ! -f dist/control-ui/index.html ] && command -v npm >/dev/null 2>&1; then',
     '  NPM_GLOBAL_ROOT="$(npm root -g 2>/dev/null || true)"',
     '  if [ -n "$NPM_GLOBAL_ROOT" ] && [ -f "$NPM_GLOBAL_ROOT/openclaw/dist/control-ui/index.html" ]; then',
-    '    echo "[openclaw] 使用 npm 全局 openclaw 的 control-ui 产物回填"',
+    '    echo "[openclaw] Using npm global openclaw control-ui assets as fallback"',
     '    mkdir -p dist/control-ui',
     '    cp -a "$NPM_GLOBAL_ROOT/openclaw/dist/control-ui/." dist/control-ui/ || true',
     '  fi',
     'fi',
     'if [ ! -f dist/control-ui/index.html ]; then',
-    '  # C5: 增强 control-ui 缺失的诊断信息 (DFMEA S1)',
-    '  echo "[openclaw][error] control-ui 产物缺失，无法保证 Gateway /health 可用"',
+    '  # C5: Enhanced control-ui missing diagnostics (DFMEA S1)',
+    '  echo "[openclaw][error] control-ui assets missing, Gateway /health may not work"',
     '  echo "[openclaw][diag] ls -la dist/ :"',
-    '  ls -la dist/ 2>/dev/null || echo "  (dist/ 目录不存在)"',
+    '  ls -la dist/ 2>/dev/null || echo "  (dist/ directory does not exist)"',
     '  echo "[openclaw][diag] ls -la dist/control-ui/ :"',
-    '  ls -la dist/control-ui/ 2>/dev/null || echo "  (dist/control-ui/ 目录不存在)"',
+    '  ls -la dist/control-ui/ 2>/dev/null || echo "  (dist/control-ui/ directory does not exist)"',
     '  echo "[openclaw][diag] find . -name index.html:"',
-    '  find . -name index.html -type f 2>/dev/null | head -10 || echo "  (未找到任何 index.html)"',
+    '  find . -name index.html -type f 2>/dev/null | head -10 || echo "  (no index.html found)"',
     '  echo "[openclaw][diag] npm run scripts:"',
-    '  npm run 2>/dev/null | grep -E "ui:|build" || echo "  (无匹配)"',
+    '  npm run 2>/dev/null | grep -E "ui:|build" || echo "  (no match)"',
     '  exit 4',
     'fi',
     'STAGE_SRC_DIR="$WORK_BASE/openclaw-source.stage.$$"',
     'rm -rf "$STAGE_SRC_DIR"',
     'mkdir -p /root/.openclaw "$WORK_BASE"',
     'cp -a "$EXTRACT_DIR" "$STAGE_SRC_DIR"',
-    '# A/B 模式: 安装到 staging 目录 (Gateway 不中断)',
+    '# A/B mode: install to staging directory (Gateway uninterrupted)',
     'NEXT_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source-next"',
     'rm -rf "$NEXT_SRC_DIR" 2>/dev/null || true',
     'mv -Tf "$STAGE_SRC_DIR" "$NEXT_SRC_DIR"',
     'if [ ! -f "$NEXT_SRC_DIR/openclaw.mjs" ] && [ -f "$NEXT_SRC_DIR/dist/openclaw.mjs" ]; then ln -sf "$NEXT_SRC_DIR/dist/openclaw.mjs" "$NEXT_SRC_DIR/openclaw.mjs"; fi',
-    'if [ ! -f "$NEXT_SRC_DIR/openclaw.mjs" ]; then echo "[openclaw] 编译产物缺失: $NEXT_SRC_DIR/openclaw.mjs"; exit 4; fi',
+    'if [ ! -f "$NEXT_SRC_DIR/openclaw.mjs" ]; then echo "[openclaw] Build artifact missing: $NEXT_SRC_DIR/openclaw.mjs"; exit 4; fi',
     'if [ ! -f "$NEXT_SRC_DIR/dist/entry.js" ] && [ -f "$NEXT_SRC_DIR/dist/index.js" ]; then ln -sfn index.js "$NEXT_SRC_DIR/dist/entry.js"; fi',
     'if [ ! -f "$NEXT_SRC_DIR/dist/entry.mjs" ] && [ -f "$NEXT_SRC_DIR/dist/index.mjs" ]; then ln -sfn index.mjs "$NEXT_SRC_DIR/dist/entry.mjs"; fi',
-    'if [ ! -f "$NEXT_SRC_DIR/dist/entry.js" ] && [ ! -f "$NEXT_SRC_DIR/dist/entry.mjs" ] && [ ! -f "$NEXT_SRC_DIR/dist/index.js" ] && [ ! -f "$NEXT_SRC_DIR/dist/index.mjs" ]; then echo "[openclaw] 编译产物缺失: $NEXT_SRC_DIR/dist/entry|index.(m)js"; exit 4; fi',
+    'if [ ! -f "$NEXT_SRC_DIR/dist/entry.js" ] && [ ! -f "$NEXT_SRC_DIR/dist/entry.mjs" ] && [ ! -f "$NEXT_SRC_DIR/dist/index.js" ] && [ ! -f "$NEXT_SRC_DIR/dist/index.mjs" ]; then echo "[openclaw] Build artifact missing: $NEXT_SRC_DIR/dist/entry|index.(m)js"; exit 4; fi',
     'mkdir -p /root/.openclaw',
     'printf "{\\n  \\\"repo\\\": \\\"%s\\\",\\n  \\\"tag\\\": \\\"%s\\\",\\n  \\\"tarballUrl\\\": \\\"%s\\\",\\n  \\\"installedAt\\\": \\\"%s\\\"\\n}\\n" "$OPENCLAW_REPO" "$OPENCLAW_TAG" "$OPENCLAW_TARBALL_URL" "$(date -Iseconds)" > /root/.openclaw/openclaw-source-install.json',
-    'echo "[openclaw] source build staging 完成: $OPENCLAW_REPO@$OPENCLAW_TAG"',
+    'echo "[openclaw] source build staging complete: $OPENCLAW_REPO@$OPENCLAW_TAG"',
     'node "$NEXT_SRC_DIR/openclaw.mjs" --version 2>/dev/null || node "$NEXT_SRC_DIR/openclaw.mjs" -v 2>/dev/null || true'
   ].join('\n');
 }
@@ -8362,7 +8362,7 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
   const safeTag = String(tag || '').trim();
   return [
     'set -euo pipefail',
-    'trap \'echo "[openclaw][error] 脚本异常退出 line=$LINENO exit=$?" >&2\' ERR',
+    'trap \'echo "[openclaw][error] Script exited abnormally line=$LINENO exit=$?" >&2\' ERR',
     `OPENCLAW_REPO="${safeRepo.replace(/"/g, '')}"`,
     `OPENCLAW_TAG="${safeTag.replace(/"/g, '')}"`,
     `OPENCLAW_ASSET_NAME="${assetName.replace(/"/g, '')}"`,
@@ -8379,8 +8379,8 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     'mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$TMP_BASE" "$SESSION_DIR" "$EXTRACT_DIR"',
     'find "$TMP_BASE" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf {} + >/dev/null 2>&1 || true',
     'trap "rm -rf \"$SESSION_DIR\" >/dev/null 2>&1 || true" EXIT',
-    'echo "[openclaw] 尝试 release 编译包: $OPENCLAW_ASSET_NAME (source=$OPENCLAW_ASSET_SOURCE)"',
-    'echo "[openclaw] 资产直链: $OPENCLAW_ASSET_URL"',
+    'echo "[openclaw] Trying release prebuilt package: $OPENCLAW_ASSET_NAME (source=$OPENCLAW_ASSET_SOURCE)"',
+    'echo "[openclaw] Asset direct URL: $OPENCLAW_ASSET_URL"',
     'ASSET_URL_1="$OPENCLAW_ASSET_URL"',
     'ASSET_URL_2="$OPENCLAW_ASSET_URL"',
     'ASSET_URL_3="$OPENCLAW_ASSET_URL"',
@@ -8402,72 +8402,72 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     '  while [ "$i" -le "$max_retry" ]; do',
     '    local source_idx=$(( ((i - 1) % 3) + 1 ))',
     '    local url="$(pick_asset_url "$source_idx")"',
-    '    echo "[openclaw] 下载编译包尝试 $i/$max_retry (source=$source_idx): $url"',
+    '    echo "[openclaw] Downloading prebuilt package attempt $i/$max_retry (source=$source_idx): $url"',
     '    rm -f "$tmp"',
     '    http_code="$(curl -fL --http1.1 --connect-timeout 12 --max-time 1200 --retry 2 --retry-delay 2 --retry-all-errors -o "$tmp" -w "%{http_code}" "$url" 2>/dev/null || true)"',
     '    if [ -s "$tmp" ] && { [ "$http_code" = "200" ] || [ "$http_code" = "206" ]; }; then',
-    '      echo "[openclaw] 下载成功(source=$source_idx, http=$http_code, bytes=$(wc -c < \"$tmp\" 2>/dev/null || echo 0))"',
+    '      echo "[openclaw] Download succeeded(source=$source_idx, http=$http_code, bytes=$(wc -c < \"$tmp\" 2>/dev/null || echo 0))"',
     '      mv -f "$tmp" "$ARCHIVE_PATH"',
     '      return 0',
     '    fi',
-    '    echo "[openclaw] 下载失败(source=$source_idx, http=${http_code:-000})，准备重试..."',
+    '    echo "[openclaw] Download failed(source=$source_idx, http=${http_code:-000})，preparing to retry..."',
     '    rm -f "$tmp"',
     '    sleep $(( i < 5 ? 2 : 4 ))',
     '    i=$((i + 1))',
     '  done',
-    '  echo "[openclaw][error] release 资产下载失败：多源重试耗尽（$max_retry 次）"',
+    '  echo "[openclaw][error] Release asset download failed: all sources exhausted ($max_retry attempts)"',
     '  return 21',
     '}',
     'download_asset',
-    'echo "[openclaw] 编译包下载完成: $ARCHIVE_PATH"',
+    'echo "[openclaw] Prebuilt package download complete: $ARCHIVE_PATH"',
     'case "$OPENCLAW_ASSET_NAME" in',
     '  *.tar.gz|*.tgz)',
-    '    echo "[openclaw] 解压 tar.gz 编译包..."',
+    '    echo "[openclaw] Extracting tar.gz prebuilt package..."',
     '    tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"',
     '    ;;',
     '  *.zip)',
     '    if ! command -v unzip >/dev/null 2>&1; then',
-    '      echo "[openclaw][error] 编译包为 zip，但镜像缺少 unzip"',
+    '      echo "[openclaw][error] Prebuilt package is zip, but image lacks unzip"',
     '      exit 12',
     '    fi',
-    '    echo "[openclaw] 解压 zip 编译包..."',
+    '    echo "[openclaw] Extracting zip prebuilt package..."',
     '    unzip -q "$ARCHIVE_PATH" -d "$EXTRACT_DIR"',
     '    ;;',
     '  *)',
-    '    echo "[openclaw][error] 不支持的编译包格式: $OPENCLAW_ASSET_NAME"',
+    '    echo "[openclaw][error] Unsupported prebuilt package format: $OPENCLAW_ASSET_NAME"',
     '    exit 12',
     '    ;;',
     'esac',
-    'echo "[openclaw] 查找 openclaw.mjs 入口..."',
+    'echo "[openclaw] Locating openclaw.mjs entry point..."',
     'ASSET_ROOT="$(find "$EXTRACT_DIR" -type f -name openclaw.mjs | head -1 | xargs -I{} dirname "{}")"',
     'if [ -z "$ASSET_ROOT" ] || [ ! -f "$ASSET_ROOT/openclaw.mjs" ]; then',
-    '  echo "[openclaw][error] 编译包缺少 openclaw.mjs"',
+    '  echo "[openclaw][error] Prebuilt package missing openclaw.mjs"',
     '  exit 13',
     'fi',
-    'echo "[openclaw] 编译包根目录: $ASSET_ROOT"',
-    '# C4: node --check 语法验证 (DFMEA R1)',
+    'echo "[openclaw] Prebuilt package root directory: $ASSET_ROOT"',
+    '# C4: node --check syntax validation (DFMEA R1)',
     'if command -v node >/dev/null 2>&1; then',
     '  if ! node --check "$ASSET_ROOT/openclaw.mjs" 2>/dev/null; then',
-    '    echo "[openclaw][error] openclaw.mjs 语法校验失败(node --check)，编译包可能损坏"',
+    '    echo "[openclaw][error] openclaw.mjs syntax check failed (node --check), prebuilt package may be corrupted"',
     '    exit 14',
     '  fi',
-    '  echo "[openclaw] openclaw.mjs node --check 语法校验通过"',
+    '  echo "[openclaw] openclaw.mjs node --check syntax check passed"',
     'fi',
     'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ -f "$ASSET_ROOT/dist/index.js" ]; then ln -sfn index.js "$ASSET_ROOT/dist/entry.js"; fi',
     'if [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ -f "$ASSET_ROOT/dist/index.mjs" ]; then ln -sfn index.mjs "$ASSET_ROOT/dist/entry.mjs"; fi',
     'if [ ! -f "$ASSET_ROOT/dist/entry.js" ] && [ ! -f "$ASSET_ROOT/dist/entry.mjs" ] && [ ! -f "$ASSET_ROOT/dist/index.js" ] && [ ! -f "$ASSET_ROOT/dist/index.mjs" ]; then',
-    '  echo "[openclaw][error] 编译包缺少 dist/entry|index.(m)js"',
+    '  echo "[openclaw][error] Prebuilt package missing dist/entry|index.(m)js"',
     '  exit 13',
     'fi',
     'if [ ! -f "$ASSET_ROOT/dist/control-ui/index.html" ]; then',
-    '  echo "[openclaw] WARN: 编译包缺少 control-ui 产物"',
+    '  echo "[openclaw] WARN: Prebuilt package missing control-ui assets"',
     'fi',
     'if [ "$OPENCLAW_ASSET_SOURCE" = "npm-dist-tarball" ]; then',
     '  if ! command -v npm >/dev/null 2>&1; then',
-    '    echo "[openclaw][error] npm-dist 资产缺少 npm，无法安装运行依赖"',
+    '    echo "[openclaw][error] npm-dist asset lacks npm, cannot install runtime dependencies"',
     '    exit 11',
     '  fi',
-    '  echo "[openclaw] npm-dist 资产：安装运行时依赖(node_modules)..."',
+    '  echo "[openclaw] npm-dist asset: installing runtime dependencies (node_modules)..."',
     '  npm config set fetch-retries 5 >/dev/null 2>&1 || true',
     '  npm config set fetch-retry-mintimeout 2000 >/dev/null 2>&1 || true',
     '  npm config set fetch-retry-maxtimeout 15000 >/dev/null 2>&1 || true',
@@ -8479,23 +8479,23 @@ function buildOpenClawReleaseAssetInstallCommand({ repo, tag, binaryAsset }) {
     '      if (cd "$ASSET_ROOT" && if [ -f package-lock.json ]; then npm ci --omit=dev --no-audit --no-fund; else npm install --omit=dev --no-audit --no-fund; fi); then',
     '        return 0',
     '      fi',
-    '      echo "[openclaw] npm-dist 依赖安装失败(registry=$reg, attempt=$i)，重试..."',
+    '      echo "[openclaw] npm-dist dependency install failed (registry=$reg, attempt=$i), retrying..."',
     '      sleep 3',
     '      i=$((i + 1))',
     '    done',
     '    return 1',
     '  }',
     '  if ! install_asset_deps https://registry.npmmirror.com; then',
-    '    echo "[openclaw] npm-dist 依赖安装回退 npmjs registry..."',
+    '    echo "[openclaw] npm-dist dependency install falling back to npmjs registry..."',
     '    install_asset_deps https://registry.npmjs.org',
     '  fi',
     'fi',
-    'echo "[openclaw] 安装编译包到 staging 目录 (A/B 模式，Gateway 不中断)..."',
+    'echo "[openclaw] Installing prebuilt package to staging directory (A/B mode, Gateway uninterrupted)..."',
     'NEXT_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source-next"',
     'rm -rf "$NEXT_SRC_DIR" 2>/dev/null || true',
     'mv -Tf "$ASSET_ROOT" "$NEXT_SRC_DIR"',
     'printf "{\\n  \\\"repo\\\": \\\"%s\\\",\\n  \\\"tag\\\": \\\"%s\\\",\\n  \\\"assetName\\\": \\\"%s\\\",\\n  \\\"assetUrl\\\": \\\"%s\\\",\\n  \\\"installedAt\\\": \\\"%s\\\"\\n}\\n" "$OPENCLAW_REPO" "$OPENCLAW_TAG" "$OPENCLAW_ASSET_NAME" "$OPENCLAW_ASSET_URL" "$(date -Iseconds)" > /root/.openclaw/openclaw-source-install.json',
-    'echo "[openclaw] release 资产 staging 完成: $OPENCLAW_ASSET_NAME"',
+    'echo "[openclaw] Release asset staging complete: $OPENCLAW_ASSET_NAME"',
     'node "$NEXT_SRC_DIR/openclaw.mjs" --version 2>/dev/null || node "$NEXT_SRC_DIR/openclaw.mjs" -v 2>/dev/null || true'
   ].join('\n');
 }
@@ -8514,37 +8514,37 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '); then',
     '  rm -f /root/.openclaw/openclaw-source-install.json >/dev/null 2>&1 || true',
     '  if runtime_ready_and_latest; then',
-    '    echo "[openclaw] npm 模式安装完成并校验通过。"',
+    '    echo "[openclaw] npm mode install completed and verified."',
     '  else',
-    '    echo "[openclaw][error] npm 模式安装后版本或入口校验失败。"',
+    '    echo "[openclaw][error] npm mode post-install version or entry verification failed."',
     '    exit 43',
     '  fi',
     'else',
     '  rc=$?',
-    '  echo "[openclaw][error] npm 模式安装失败(exit=${rc})"',
+    '  echo "[openclaw][error] npm mode install failed (exit=${rc})"',
     '  exit "$rc"',
     'fi'
   ].join('\n');
 
   const autoModeBlock = [
     'if current_already_at_target; then',
-    '  echo "[openclaw] 当前运行版本已满足目标版本，跳过安装。"',
+    '  echo "[openclaw] Current running version satisfies target version, skipping install."',
     '  exit 0',
     'fi',
-    'echo "[openclaw] 自动模式：执行官方 npm 安装..."',
+    'echo "[openclaw] Auto mode: running official npm install..."',
     'if (',
     npmCmd,
     '); then',
     '  rm -f /root/.openclaw/openclaw-source-install.json >/dev/null 2>&1 || true',
     '  if runtime_ready_and_latest; then',
-    '    echo "[openclaw] npm 路径成功。"',
+    '    echo "[openclaw] npm path succeeded."',
     '  else',
-    '    echo "[openclaw][error] npm 路径后校验未通过。"',
+    '    echo "[openclaw][error] npm path post-verification failed."',
     '    exit 43',
     '  fi',
     'else',
     '  rc=$?',
-    '  echo "[openclaw][error] npm 路径失败(exit=${rc})。"',
+    '  echo "[openclaw][error] npm path failed (exit=${rc})."',
     '  exit "$rc"',
     'fi'
   ].join('\n');
@@ -8553,7 +8553,7 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
 
   return [
     'set -euo pipefail',
-    'trap \'echo "[openclaw][error] 脚本异常退出 line=$LINENO exit=$?" >&2\' ERR',
+    'trap \'echo "[openclaw][error] Script exited abnormally line=$LINENO exit=$?" >&2\' ERR',
     `INSTALL_MODE="${safeMode}"`,
     `TARGET_TAG="${safeTag}"`,
     'TARGET_VERSION="${TARGET_TAG#v}"',
@@ -8565,7 +8565,7 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     'PERSIST_SRC_DIR="/root/.openclaw/openclaw-source"',
     'WORK_SRC_DIR="/root/.openclaw/openclaw"',
     'OPENCLAW_RUNTIME_TMP_ROOT="${OPENCLAW_RUNTIME_TMP_ROOT:-/tmp/openclaw-runtime}"',
-    '# 清理残留 staging 目录',
+    '# Clean up leftover staging directory',
     'rm -rf "$NEXT_SRC_DIR" 2>/dev/null || true',
     'detect_mount_fstype() {',
     '  local target="$1"',
@@ -8640,7 +8640,7 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '    fi',
     '    return 0',
     '  fi',
-    '  # 仅当检查当前运行目录(PERSIST_SRC_DIR)时才 fallback 到全局命令',
+    '  # Only fallback to global command when checking current run directory (PERSIST_SRC_DIR)',
     '  if [ "$check_dir" = "$PERSIST_SRC_DIR" ]; then',
     '    if command -v openclaw >/dev/null 2>&1 || [ -x /root/.npm-global/bin/openclaw ] || [ -x /usr/local/bin/openclaw ]; then',
     '      return 0',
@@ -8659,7 +8659,7 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '      raw="$(node -e "try{const p=require(\\"$check_dir/package.json\\");console.log(p.version||\\"\\")}catch(e){}" 2>/dev/null || true)"',
     '    fi',
     '  fi',
-    '  # 仅当检查当前运行目录时才 fallback 到全局命令',
+    '  # Only fallback to global command when checking current run directory',
     '  if [ -z "$raw" ] && [ "$check_dir" = "$PERSIST_SRC_DIR" ]; then',
     '    if command -v openclaw >/dev/null 2>&1; then',
     '      raw="$(openclaw --version 2>/dev/null || openclaw -v 2>/dev/null || true)"',
@@ -8680,35 +8680,35 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '  local current',
     '  current="$(current_openclaw_version "$check_dir")"',
     '  if [ -z "$current" ]; then',
-    '    echo "[openclaw] WARN: 未读取到当前版本，按入口可用继续"',
+    '    echo "[openclaw] WARN: Current version not detected, continuing as entry point is available"',
     '    return 0',
     '  fi',
     '  if [ "$current" = "$TARGET_VERSION" ]; then',
-    '    echo "[openclaw] 版本校验通过: ${current}"',
+    '    echo "[openclaw] Version check passed: ${current}"',
     '    return 0',
     '  fi',
-    '  echo "[openclaw] 版本校验未通过: current=${current} target=${TARGET_VERSION}"',
+    '  echo "[openclaw] Version check failed: current=${current} target=${TARGET_VERSION}"',
     '  return 1',
     '}',
-    '# 对 staging NEXT_SRC_DIR 验证',
+    '# Validate staging NEXT_SRC_DIR',
     'runtime_ready_and_latest() { verify_runtime_entry "$NEXT_SRC_DIR" && version_matches_target "$NEXT_SRC_DIR"; }',
-    '# 对当前运行版本（PERSIST_SRC_DIR）验证',
+    '# Validate current running version (PERSIST_SRC_DIR)',
     'current_already_at_target() { verify_runtime_entry "$PERSIST_SRC_DIR" && version_matches_target "$PERSIST_SRC_DIR"; }',
     modeBlock,
     '',
-    '# ===== A/B 切换: 停止 Gateway → 替换 → 启动 Gateway → 验证 → 回退 =====',
-    'echo "[openclaw][A/B] 安装成功，开始执行版本切换..."',
+    '# ===== A/B swap: Stop Gateway → Replace → Start Gateway → Verify → Rollback =====',
+    'echo "[openclaw][A/B] Install succeeded, starting version swap..."',
     'if [ ! -d "$NEXT_SRC_DIR" ]; then',
-    '  echo "[openclaw][error] staging 目录丢失: $NEXT_SRC_DIR"',
+    '  echo "[openclaw][error] staging directory missing: $NEXT_SRC_DIR"',
     '  exit 50',
     'fi',
-    '# 步骤 1: 停止 Gateway 进程',
-    'echo "[openclaw][A/B] 步骤 1/4: 停止 Gateway..."',
+    '# Step 1: Stop Gateway process',
+    'echo "[openclaw][A/B] Step 1/4: Stopping Gateway..."',
     'AB_GW_PID="$(pgrep -x openclaw-gateway 2>/dev/null || pgrep -x openclaw-gatewa 2>/dev/null || true)"',
     'AB_HAD_GATEWAY=0',
     'if [ -n "$AB_GW_PID" ]; then',
     '  AB_HAD_GATEWAY=1',
-    '  echo "[openclaw][A/B] 发现 Gateway PID=$AB_GW_PID，正在停止..."',
+    '  echo "[openclaw][A/B] Found Gateway PID=$AB_GW_PID, stopping..."',
     '  kill -TERM "$AB_GW_PID" 2>/dev/null || true',
     '  pkill -TERM -P "$AB_GW_PID" 2>/dev/null || true',
     '  _ab_waited=0',
@@ -8719,26 +8719,26 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     'fi',
     'pkill -9 -x "openclaw-gateway" 2>/dev/null || true',
     'pkill -9 -x "openclaw-gatewa" 2>/dev/null || true',
-    '# 用 pgrep + grep -v 排除自身及父进程，防止 pkill -f 匹配脚本自身命令行',
+    '# Use pgrep + grep -v to exclude self and parent, prevent pkill -f matching script command line',
     '_SELF_PIDS="^($$|$PPID)\\$"',
     'pgrep -f "openclaw.mjs gateway" 2>/dev/null | grep -vE "$_SELF_PIDS" | xargs -r kill -9 2>/dev/null || true',
     'pgrep -f "openclaw.*gateway run" 2>/dev/null | grep -vE "$_SELF_PIDS" | xargs -r kill -9 2>/dev/null || true',
     'sleep 1',
-    'echo "[openclaw][A/B] Gateway 已停止"',
+    'echo "[openclaw][A/B] Gateway stopped"',
     '',
-    '# 步骤 2: 原子切换目录',
-    'echo "[openclaw][A/B] 步骤 2/4: 执行版本目录切换..."',
+    '# Step 2: Atomic directory swap',
+    'echo "[openclaw][A/B] Step 2/4: Performing version directory swap..."',
     'rm -rf "$PREV_SRC_DIR" 2>/dev/null || true',
     'if [ -d "$PERSIST_SRC_DIR" ] || [ -L "$PERSIST_SRC_DIR" ]; then',
     '  mv -f "$PERSIST_SRC_DIR" "$PREV_SRC_DIR" 2>/dev/null || true',
-    '  echo "[openclaw][A/B] 旧版本已暂存到 $PREV_SRC_DIR"',
+    '  echo "[openclaw][A/B] Old version stashed to $PREV_SRC_DIR"',
     'fi',
     'mv -Tf "$NEXT_SRC_DIR" "$PERSIST_SRC_DIR"',
     'ln -sfn "$PERSIST_SRC_DIR" "$WORK_SRC_DIR"',
-    'echo "[openclaw][A/B] 版本目录切换完成: openclaw-source → 新版本"',
+    'echo "[openclaw][A/B] Version directory swap complete: openclaw-source → new version"',
     '',
-    '# 步骤 3: 启动 Gateway 并验证',
-    'echo "[openclaw][A/B] 步骤 3/4: 启动 Gateway 并验证..."',
+    '# Step 3: Start Gateway and verify',
+    'echo "[openclaw][A/B] Step 3/4: Starting Gateway and verifying..."',
     'AB_GATEWAY_OK=0',
     'AB_LAUNCH_CMD=""',
     'prepare_ab_gateway_source_root "$PERSIST_SRC_DIR"',
@@ -8754,10 +8754,10 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '  mkdir -p "$(dirname "$GATEWAY_LOG")" 2>/dev/null || true',
     '  echo "" >> "$GATEWAY_LOG"',
     '  echo "===== [$(date -u +%FT%T.%3NZ)] A/B swap: starting new Gateway =====" >> "$GATEWAY_LOG"',
-    '  echo "[openclaw][A/B] 启动源路径: ${AB_GATEWAY_SOURCE_ROOT}"',
+    '  echo "[openclaw][A/B] Startup source path: ${AB_GATEWAY_SOURCE_ROOT}"',
     '  nohup bash --noprofile --norc -lc "$AB_LAUNCH_CMD" >> "$GATEWAY_LOG" 2>&1 &',
     '  AB_GW_NEW_PID=$!',
-    '  echo "[openclaw][A/B] Gateway 已启动 PID=$AB_GW_NEW_PID，等待健康检查..."',
+    '  echo "[openclaw][A/B] Gateway started PID=$AB_GW_NEW_PID, waiting for health check..."',
     '  AB_HEALTH_WAIT=0',
     '  AB_HEALTH_TIMEOUT=300',
     '  AB_GW_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"',
@@ -8767,54 +8767,54 @@ function buildOpenClawPreferredInstallCommand(release, options = {}) {
     '      break',
     '    fi',
     '    if ! kill -0 "$AB_GW_NEW_PID" 2>/dev/null; then',
-    '      echo "[openclaw][A/B] Gateway 进程意外退出"',
+    '      echo "[openclaw][A/B] Gateway process exited unexpectedly"',
     '      break',
     '    fi',
     '    sleep 3',
     '    AB_HEALTH_WAIT=$((AB_HEALTH_WAIT + 3))',
     '    if [ "$((AB_HEALTH_WAIT % 15))" -eq 0 ]; then',
-    '      echo "[openclaw][A/B] 等待 Gateway 健康检查... ${AB_HEALTH_WAIT}s/${AB_HEALTH_TIMEOUT}s"',
+    '      echo "[openclaw][A/B] Waiting for Gateway health check... ${AB_HEALTH_WAIT}s/${AB_HEALTH_TIMEOUT}s"',
     '    fi',
     '  done',
     'else',
-    '  echo "[openclaw][A/B] 未找到 Gateway 启动命令，跳过健康检查"',
+    '  echo "[openclaw][A/B] Gateway start command not found, skipping health check"',
     '  AB_GATEWAY_OK=1',
     'fi',
     '',
-    '# 步骤 4: 验证结果, 失败则回退',
+    '# Step 4: Verify result, rollback if failed',
     'if [ "$AB_GATEWAY_OK" = "1" ]; then',
-    '  echo "[openclaw][A/B] ✅ Gateway 健康检查通过，版本切换成功!"',
+    '  echo "[openclaw][A/B] ✅ Gateway health check passed, version swap succeeded!"',
     '  rm -rf "$PREV_SRC_DIR" 2>/dev/null || true',
     '  FINAL_VER="$(current_openclaw_version "$PERSIST_SRC_DIR")"',
-    '  echo "[openclaw][A/B] 当前版本: ${FINAL_VER:-unknown}"',
+    '  echo "[openclaw][A/B] Current version: ${FINAL_VER:-unknown}"',
     'else',
-    '  echo "[openclaw][A/B] ❌ Gateway 健康检查失败，执行版本回退..."',
-    '  # 停止新 Gateway',
+    '  echo "[openclaw][A/B] ❌ Gateway health check failed, performing version rollback..."',
+    '  # Stop new Gateway',
     '  pkill -9 -x "openclaw-gateway" 2>/dev/null || true',
     '  pkill -9 -x "openclaw-gatewa" 2>/dev/null || true',
     '  pgrep -f "openclaw.mjs gateway" 2>/dev/null | grep -vE "$_SELF_PIDS" | xargs -r kill -9 2>/dev/null || true',
     '  pgrep -f "openclaw.*gateway run" 2>/dev/null | grep -vE "$_SELF_PIDS" | xargs -r kill -9 2>/dev/null || true',
     '  sleep 1',
-    '  # 回退目录',
+    '  # Rollback directory',
     '  if [ -d "$PREV_SRC_DIR" ] || [ -L "$PREV_SRC_DIR" ]; then',
     '    rm -rf "$PERSIST_SRC_DIR" 2>/dev/null || true',
     '    mv -f "$PREV_SRC_DIR" "$PERSIST_SRC_DIR"',
     '    ln -sfn "$PERSIST_SRC_DIR" "$WORK_SRC_DIR"',
-    '    echo "[openclaw][A/B] 已回退到旧版本"',
-    '    # 重启旧版本 Gateway',
+    '    echo "[openclaw][A/B] Rolled back to old version"',
+    '    # Restart old version Gateway',
     '    if [ "$AB_HAD_GATEWAY" = "1" ] && [ -f "$PERSIST_SRC_DIR/openclaw.mjs" ]; then',
     '      prepare_ab_gateway_source_root "$PERSIST_SRC_DIR"',
     '      ROLLBACK_CMD="node --experimental-sqlite $AB_GATEWAY_SOURCE_ROOT/openclaw.mjs gateway run --force --allow-unconfigured"',
     '      echo "" >> "$GATEWAY_LOG"',
     '      echo "===== [$(date -u +%FT%T.%3NZ)] A/B rollback: restarting old Gateway =====" >> "$GATEWAY_LOG"',
-      '      echo "[openclaw][A/B] 回滚启动源路径: ${AB_GATEWAY_SOURCE_ROOT}"',
+      '      echo "[openclaw][A/B] Rollback startup source path: ${AB_GATEWAY_SOURCE_ROOT}"',
     '      nohup bash --noprofile --norc -lc "$ROLLBACK_CMD" >> "$GATEWAY_LOG" 2>&1 &',
-    '      echo "[openclaw][A/B] 旧版本 Gateway 已重启 PID=$!"',
+    '      echo "[openclaw][A/B] Old version Gateway restarted PID=$!"',
     '    fi',
     '  else',
-    '    echo "[openclaw][A/B][warn] 无旧版本可回退"',
+    '    echo "[openclaw][A/B][warn] No old version to roll back to"',
     '  fi',
-    '  echo "[openclaw][A/B] ❌ 更新失败且已回退，Gateway 健康检查超时"',
+    '  echo "[openclaw][A/B] ❌ Update failed and rolled back, Gateway health check timed out"',
     '  exit 51',
     'fi'
   ].join('\n');
@@ -8923,10 +8923,10 @@ app.get('/api/openclaw', async (req, res) => {
       const taskLastOutputAt = Number(activeInstallTask.lastOutputAt || activeInstallTask.startedAt || Date.now());
       const silentSec = Math.max(0, Math.floor((Date.now() - taskLastOutputAt) / 1000));
       if (taskPid > 1 && !pidAlive && silentSec > 25) {
-        appendInstallLog(activeInstallTask, `[openclaw] 检测到安装子进程已退出（pid=${taskPid}）且 ${silentSec}s 无输出，自动结束任务。\n`);
+        appendInstallLog(activeInstallTask, `[openclaw] Detected install subprocess has exited (pid=${taskPid}）and  ${silentSec}s no output, auto-ending task.\n`);
         activeInstallTask.status = 'failed';
         activeInstallTask.exitCode = Number.isFinite(activeInstallTask.exitCode) ? activeInstallTask.exitCode : -3;
-        activeInstallTask.error = activeInstallTask.error || '安装子进程异常退出';
+        activeInstallTask.error = activeInstallTask.error || 'Install subprocess exited abnormally';
         installTaskRunning = false;
         activeInstallTaskId = '';
         activeInstallTask = null;
@@ -8943,7 +8943,7 @@ app.get('/api/openclaw', async (req, res) => {
     if (installTaskRunning && operationState.type === 'idle' && installed && version) {
       const ageSec = Math.max(0, Math.floor((Date.now() - Number(activeInstallTask?.startedAt || Date.now())) / 1000));
       if (ageSec > 90) {
-        appendInstallLog(activeInstallTask, `[openclaw] 检测到任务状态与操作锁不一致，已自动结束该任务（age=${ageSec}s）。\n`);
+        appendInstallLog(activeInstallTask, `[openclaw] Detected task state inconsistent with operation lock, auto-ended task (age=${ageSec}s）。\n`);
         activeInstallTask.status = 'failed';
         activeInstallTask.exitCode = Number.isFinite(activeInstallTask.exitCode) ? activeInstallTask.exitCode : -2;
         installTaskRunning = false;
@@ -8953,8 +8953,8 @@ app.get('/api/openclaw', async (req, res) => {
     }
 
     if (!runtimeReady && operationState.type === 'idle' && !installTaskRunning) {
-      // 检测到外部安装进程（如用户直接运行 install-imageonly.sh 或 npm install -g openclaw），
-      // 跳过自动恢复，避免发起重复安装，同时让前端显示"安装中"而非"未安装"
+      // Detected external install process (e.g. user directly ran install-imageonly.sh or npm install -g openclaw),
+      // skipping auto-recovery to avoid duplicate install, letting frontend show "Installing" instead of "Not Installed"
       if (externalInstallProcessDetected) {
         operationState = { type: 'installing', taskId: '', startedAt: 0, pid: 0, external: true };
         installTaskRunning = true;
@@ -9036,7 +9036,7 @@ app.get('/api/openclaw', async (req, res) => {
       lastRollbackAt
     });
   } catch (e) {
-    const detail = e?.message || String(e || '状态读取失败');
+    const detail = e?.message || String(e || 'Status read failed');
     console.error('[openclaw][status] failed:', detail);
     res.status(500).json({ error: detail });
   }
@@ -9052,7 +9052,7 @@ app.get('/api/openclaw/gateway-link', (req, res) => {
     const accessPatch = ensureGatewayControlUiAccessForRequest(req);
     if (accessPatch?.changed) {
       console.log(`[openclaw][gateway-link] patched controlUi/trustedProxies for host=${accessPatch.host || 'unknown'}`);
-      // 触发 watchdog 重启 gateway
+      // Trigger watchdog to restart gateway
       const opState = getOpenClawOperationState();
       if (opState.type === 'idle') {
         queueGatewayRestart('gateway-link-patch');
@@ -9093,14 +9093,14 @@ app.get('/api/openclaw/gateway-link', (req, res) => {
     const opState = getOpenClawOperationState();
     const gatewayBusy = opState.type === 'restarting_gateway' || opState.type === 'installing' || opState.type === 'updating';
     if (gatewayBusy) {
-      hint = 'Gateway 正在启动中，请稍候片刻后再打开控制台。';
+      hint = 'Gateway starting, please wait a moment before opening the console.';
     } else if (authMode === 'token' && !rawToken) {
-      hint = 'Gateway 为 token 模式但未读取到 token，已回退到代理地址。';
+      hint = 'Gateway is in Token mode but no token found, falling back to proxy address.';
     } else if (authMode !== 'token' && authMode !== 'none') {
-      hint = `Gateway 当前认证模式为 ${authMode}，可能需要在控制台中手动输入凭据。`;
+      hint = `Gateway Current auth mode is ${authMode}，you may need to manually enter credentials in the console.`;
     }
 
-    // 检查 gateway 健康状态
+    // Check gateway health status
     let gatewayReady = false;
     try {
       const healthText = runCommandText(LOCAL_GATEWAY_HEALTH_CHECK_CMD, 3000);
@@ -9121,7 +9121,7 @@ app.get('/api/openclaw/gateway-link', (req, res) => {
       gatewayBusy
     });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || 'gateway link 生成失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Gateway link generation failed' });
   }
 });
 
@@ -9129,23 +9129,23 @@ app.post('/api/openclaw/config/repair', (req, res) => {
   try {
     const opState = getOpenClawOperationState();
     if (opState.type !== 'idle' && opState.type !== 'repairing_config') {
-      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+      return res.status(409).json({ success: false, error: `Operation in progress: ${opState.type}`, operationState: opState });
     }
     if (opState.type === 'repairing_config' && opState.taskId) {
-      return res.json({ success: true, taskId: opState.taskId, reused: true, message: '修复任务进行中，请勿重复触发' });
+      return res.json({ success: true, taskId: opState.taskId, reused: true, message: 'Repair task in progress, please do not trigger again' });
     }
     if (isRepairLockActive()) {
       const runningTaskId = isTaskRunning(repairLogs, activeRepairTaskId) ? activeRepairTaskId : '';
-      return res.json({ success: true, taskId: runningTaskId, reused: true, message: '修复任务进行中，请勿重复触发' });
+      return res.json({ success: true, taskId: runningTaskId, reused: true, message: 'Repair task in progress, please do not trigger again' });
     }
     if (isTaskRunning(repairLogs, activeRepairTaskId)) {
       return res.json({ success: true, taskId: activeRepairTaskId, reused: true });
     }
     const taskId = runOpenClawRepairTask();
-    if (!taskId) return res.status(409).json({ success: false, error: '修复任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
+    if (!taskId) return res.status(409).json({ success: false, error: 'Repair task creation failed: concurrent operation in progress', operationState: getOpenClawOperationState() });
     res.json({ success: true, taskId });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '修复任务创建失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Repair task creation failed' });
   }
 });
 
@@ -9218,7 +9218,7 @@ app.get('/api/openclaw/migration/export', async (req, res) => {
     }
     if (included.length === 0) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
-      return res.status(404).json({ error: '没有可导出的数据文件' });
+      return res.status(404).json({ error: 'No exportable data files' });
     }
     fs.writeFileSync(path.join(tmpDir, '_migration-meta.json'), JSON.stringify({
       exportTime: new Date().toISOString(),
@@ -9241,8 +9241,8 @@ app.get('/api/openclaw/migration/export', async (req, res) => {
     stream.pipe(res);
     res.on('close', () => { try { fs.unlinkSync(tgzPath); } catch {} });
   } catch (e) {
-    console.error(`[migration-export] 导出失败: ${e?.message}`);
-    if (!res.headersSent) res.status(500).json({ error: e?.message || '迁移导出失败' });
+    console.error(`[migration-export] Export failed: ${e?.message}`);
+    if (!res.headersSent) res.status(500).json({ error: e?.message || 'Migration export failed' });
   }
 });
 
@@ -9251,15 +9251,15 @@ app.post('/api/openclaw/migration/import', (req, res) => {
   try {
     const contentType = req.headers['content-type'] || '';
     if (!contentType.includes('application/gzip') && !contentType.includes('application/octet-stream') && !contentType.includes('application/x-gzip') && !contentType.includes('application/x-tar')) {
-      return res.status(400).json({ error: '请上传 .tar.gz 迁移包' });
+      return res.status(400).json({ error: 'Please upload a .tar.gz migration package' });
     }
     const chunks = [];
     req.on('data', chunk => chunks.push(chunk));
     req.on('end', () => {
       try {
         const buf = Buffer.concat(chunks);
-        if (buf.length < 20) return res.status(400).json({ error: '文件太小，无效的压缩包' });
-        if (buf.length > 50 * 1024 * 1024) return res.status(400).json({ error: '文件太大（最大 50MB）' });
+        if (buf.length < 20) return res.status(400).json({ error: 'File too small, invalid archive' });
+        if (buf.length > 50 * 1024 * 1024) return res.status(400).json({ error: 'File too large (max 50MB)' });
         const tmpTgz = `/tmp/openclaw-migration-import-${Date.now()}.tar.gz`;
         const tmpDir = `/tmp/openclaw-migration-import-${Date.now()}`;
         fs.writeFileSync(tmpTgz, buf);
@@ -9271,7 +9271,7 @@ app.post('/api/openclaw/migration/import', (req, res) => {
         const metaPath = path.join(tmpDir, '_migration-meta.json');
         if (!fs.existsSync(metaPath)) {
           fs.rmSync(tmpDir, { recursive: true, force: true });
-          return res.status(400).json({ error: '无效的迁移包（缺少 _migration-meta.json）' });
+          return res.status(400).json({ error: 'Invalid migration package (missing _migration-meta.json)' });
         }
         const OPENCLAW_BASE = path.dirname(CONFIG_PATH);
         // Backup current state before overwrite
@@ -9315,16 +9315,16 @@ app.post('/api/openclaw/migration/import', (req, res) => {
         }
         normalizePairedDevicesScopes();
         fs.rmSync(tmpDir, { recursive: true, force: true });
-        console.log(`[migration-import] 迁移导入完成: ${restoredFiles.join(', ')}, 预备份: ${preImportBackup}`);
+        console.log(`[migration-import] Migration import complete: ${restoredFiles.join(', ')}, pre-backup: ${preImportBackup}`);
         res.json({ success: true, restoredFiles, preImportBackup, needRestart: true });
       } catch (e) {
-        console.error(`[migration-import] 导入失败: ${e?.message}`);
-        res.status(500).json({ error: e?.message || '迁移导入失败' });
+        console.error(`[migration-import] Import failed: ${e?.message}`);
+        res.status(500).json({ error: e?.message || 'Migration import failed' });
       }
     });
   } catch (e) {
-    console.error(`[migration-import] 导入失败: ${e?.message}`);
-    res.status(500).json({ error: e?.message || '迁移导入失败' });
+    console.error(`[migration-import] Import failed: ${e?.message}`);
+    res.status(500).json({ error: e?.message || 'Migration import failed' });
   }
 });
 
@@ -9469,34 +9469,34 @@ app.post('/api/openclaw/config/import', (req, res) => {
 app.get('/api/openclaw/config/backups', (req, res) => {
   try {
     const backups = listOpenClawConfigBackups();
-    console.log(`[config-backup] 查询备份列表: ${backups.length} 个备份`);
+    console.log(`[config-backup] Querying backup list: ${backups.length} backup(s)`);
     res.json({ success: true, backups });
   } catch (e) {
-    console.error(`[config-backup] 读取备份列表失败: ${e?.message}`);
-    res.status(500).json({ success: false, error: e?.message || '读取备份列表失败' });
+    console.error(`[config-backup] Failed to read backup list: ${e?.message}`);
+    res.status(500).json({ success: false, error: e?.message || 'Failed to read backup list' });
   }
 });
 
 app.post('/api/openclaw/config/restore', (req, res) => {
   try {
     const name = sanitizeBackupFileName(req.body?.name);
-    if (!name) return res.status(400).json({ success: false, error: '备份名无效' });
+    if (!name) return res.status(400).json({ success: false, error: 'Invalid backup name' });
 
-    console.log(`[config-restore] 开始恢复配置, 备份: ${name}, 请求文件: ${JSON.stringify(req.body?.files || '全部')}`);
+    console.log(`[config-restore] Starting config restore, backup: ${name}, requested files: ${JSON.stringify(req.body?.files || 'all')}`);
 
     const backupPath = path.join(OPENCLAW_CONFIG_BACKUP_DIR, name);
     if (!backupPath.startsWith(`${OPENCLAW_CONFIG_BACKUP_DIR}/`) || !fs.existsSync(backupPath)) {
-      console.warn(`[config-restore] 备份不存在: ${name}`);
-      return res.status(404).json({ success: false, error: '备份不存在' });
+      console.warn(`[config-restore] Backup not found: ${name}`);
+      return res.status(404).json({ success: false, error: 'Backup not found' });
     }
 
-    // 要恢复的特定文件列表（空=全部）
+    // Specific file list to restore (empty=all)
     const requestedFiles = Array.isArray(req.body?.files) ? req.body.files : [];
     const restoredFiles = [];
 
     const stat = fs.statSync(backupPath);
     if (stat.isDirectory()) {
-      // snapshot 目录：恢复选定的文件
+      // snapshot directory: restore selected files
       const availableFiles = fs.readdirSync(backupPath).filter(f => f.endsWith('.json'));
       const filesToRestore = requestedFiles.length > 0
         ? availableFiles.filter(f => requestedFiles.includes(f))
@@ -9515,7 +9515,7 @@ app.post('/api/openclaw/config/restore', (req, res) => {
         const targetPath = FILE_TARGETS[fileName];
         if (!targetPath || !fs.existsSync(srcFile)) continue;
 
-        // 备份当前文件
+        // Backup current files
         if (fs.existsSync(targetPath)) {
           try {
             fs.copyFileSync(targetPath, `${targetPath}.before-restore.${Date.now()}.bak`);
@@ -9528,11 +9528,11 @@ app.post('/api/openclaw/config/restore', (req, res) => {
       }
 
       if (restoredFiles.length === 0) {
-        console.warn(`[config-restore] 备份 ${name} 中没有可恢复的文件`);
-        return res.status(400).json({ success: false, error: '没有可恢复的文件' });
+        console.warn(`[config-restore] Backup ${name} has no restorable files`);
+        return res.status(400).json({ success: false, error: 'No files to restore' });
       }
     } else {
-      // 旧格式：单个 JSON 文件恢复到 openclaw.json
+      // Old format: single JSON file restored to openclaw.json
       if (fs.existsSync(CONFIG_PATH)) {
         try {
           fs.copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.before-restore.${Date.now()}.bak`);
@@ -9543,11 +9543,11 @@ app.post('/api/openclaw/config/restore', (req, res) => {
       restoredFiles.push(name);
     }
 
-    console.log(`[config-restore] 恢复完成: ${name}, 已恢复文件: [${restoredFiles.join(', ')}]`);
+    console.log(`[config-restore] Restore complete: ${name}, restored files: [${restoredFiles.join(', ')}]`);
     res.json({ success: true, restored: name, restoredFiles });
   } catch (e) {
-    console.error(`[config-restore] 恢复失败: ${e?.message}`);
-    res.status(500).json({ success: false, error: e?.message || '配置恢复失败' });
+    console.error(`[config-restore] Restore failed: ${e?.message}`);
+    res.status(500).json({ success: false, error: e?.message || 'Config recovery failed' });
   }
 });
 
@@ -9561,7 +9561,7 @@ app.post('/api/openclaw/install', async (req, res) => {
       if ((opState.type === 'installing' || opState.type === 'updating') && isTaskRunning(installLogs, activeInstallTaskId)) {
         return res.json({ success: true, taskId: activeInstallTaskId, reused: true, operationState: opState, logFile: installLogs[activeInstallTaskId]?.logFile || OPENCLAW_INSTALL_LOG_FILE });
       }
-      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+      return res.status(409).json({ success: false, error: `Operation in progress: ${opState.type}`, operationState: opState });
     }
 
     const mode = resolveOpenClawInstallMode(req);
@@ -9570,16 +9570,16 @@ app.post('/api/openclaw/install', async (req, res) => {
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
     const taskId = runOpenClawTask(
       command,
-      `安装 OpenClaw（mode=${mode}，仅 npm）(${release.tag})`,
+      `Install OpenClaw (mode=${mode}，npm only）(${release.tag})`,
       'installing',
       { release }
     );
     if (!taskId) {
-      return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
+      return res.status(409).json({ success: false, error: 'Task creation failed: concurrent operation in progress', operationState: getOpenClawOperationState() });
     }
     res.json({ success: true, taskId, mode, release: { repo: release.repo, tag: release.tag }, logFile: installLogs[taskId]?.logFile || OPENCLAW_INSTALL_LOG_FILE });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '安装任务创建失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Install task creation failed' });
   }
 });
 
@@ -9604,15 +9604,15 @@ app.post('/api/openclaw/uninstall', (req, res) => {
     }
     const opState = getOpenClawOperationState();
     if (opState.type !== 'idle') {
-      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+      return res.status(409).json({ success: false, error: `Operation in progress: ${opState.type}`, operationState: opState });
     }
-    const taskId = runOpenClawTask(buildOpenClawUninstallCommand(), '卸载 OpenClaw（移除 npm 全局包与本地源码目录）', 'uninstalling');
+    const taskId = runOpenClawTask(buildOpenClawUninstallCommand(), 'Uninstall OpenClaw (remove npm global package and local source directory)', 'uninstalling');
     if (!taskId) {
-      return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
+      return res.status(409).json({ success: false, error: 'Task creation failed: concurrent operation in progress', operationState: getOpenClawOperationState() });
     }
     res.json({ success: true, taskId, logFile: installLogs[taskId]?.logFile || OPENCLAW_INSTALL_LOG_FILE });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '卸载任务创建失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Uninstall task creation failed' });
   }
 });
 
@@ -9621,11 +9621,11 @@ function buildOpenClawNpmInstallCommand(targetVersion) {
   const pkg = safeVersion === 'latest' ? 'openclaw@latest' : `openclaw@${safeVersion}`;
   return [
     'set -euo pipefail',
-    'trap \'echo "[openclaw][error] 脚本异常退出 line=$LINENO exit=$?" >&2\' ERR',
-    'echo "[openclaw][npm] A/B 隔离安装模式（Gateway 不中断）"',
+    'trap \'echo "[openclaw][error] Script exited abnormally line=$LINENO exit=$?" >&2\' ERR',
+    'echo "[openclaw][npm] A/B Isolated install mode (Gateway uninterrupted)"',
     'for bin in node npm; do',
     '  if ! command -v "$bin" >/dev/null 2>&1; then',
-    '    echo "[openclaw] 缺少镜像内依赖: $bin（请重新构建镜像，不在运行时安装系统依赖）"',
+    '    echo "[openclaw] Missing image dependency: $bin (please rebuild image, do not install system deps at runtime)"',
     '    exit 11',
     '  fi',
     'done',
@@ -9636,19 +9636,19 @@ function buildOpenClawNpmInstallCommand(targetVersion) {
     'NEXT_SRC_DIR="$OPENCLAW_STATE_ROOT/openclaw-source-next"',
     'STAGING_PREFIX="$OPENCLAW_STATE_ROOT/npm-staging"',
     'mkdir -p "$OPENCLAW_STATE_ROOT" "$OPENCLAW_STATE_ROOT/logs" "$OPENCLAW_STATE_ROOT/cache/openclaw" "$OPENCLAW_STATE_ROOT/locks"',
-    '# 清理上次可能残留的 staging 目录',
+    '# Clean up possibly leftover staging directory from last run',
     'rm -rf "$NEXT_SRC_DIR" "$STAGING_PREFIX" 2>/dev/null || true',
     'mkdir -p "$STAGING_PREFIX"',
-    '# 选择 registry',
+    '# Choose registry',
     'MIRROR_LATEST="$(npm view openclaw version --registry=https://registry.npmmirror.com 2>/dev/null || true)"',
     'NPMJS_LATEST="$(npm view openclaw version --registry=https://registry.npmjs.org 2>/dev/null || true)"',
     'INSTALL_REGISTRY="https://registry.npmmirror.com"',
     'if [ -n "$NPMJS_LATEST" ] && [ "$MIRROR_LATEST" != "$NPMJS_LATEST" ]; then',
-    '  echo "[openclaw] 镜像最新(${MIRROR_LATEST:-unknown})落后于 npmjs(${NPMJS_LATEST})，直接使用 npmjs 源安装..."',
+    '  echo "[openclaw] Mirror latest(${MIRROR_LATEST:-unknown})behind npmjs(${NPMJS_LATEST})，installing directly from npmjs..."',
     '  INSTALL_REGISTRY="https://registry.npmjs.org"',
     'fi',
     'npm cache verify >/dev/null 2>&1 || true',
-    '# --- npm install 到隔离 prefix (不影响运行中 Gateway) ---',
+    '# --- npm install to isolated prefix (does not affect running Gateway) ---',
     'OPENCLAW_NPM_LAST_ERROR=""',
     'run_npm_staging_install() {',
     '  local label="$1"',
@@ -9669,22 +9669,22 @@ function buildOpenClawNpmInstallCommand(targetVersion) {
     '  set -e',
     '  if [ "$rc" -ne 0 ]; then',
     '    if [ "$rc" -eq 124 ]; then',
-    `      OPENCLAW_NPM_LAST_ERROR="[openclaw][error] npm install 超时(900s): ${pkg}"`,
+    `      OPENCLAW_NPM_LAST_ERROR="[openclaw][error] npm install timeout(900s): ${pkg}"`,
     '    else',
     '      tail_msg="$(tail -n 1 "$tmp_log" 2>/dev/null || true)"',
     '      [ -z "$tail_msg" ] && tail_msg="npm install exit=${rc}"',
-    '      OPENCLAW_NPM_LAST_ERROR="[openclaw][error] npm install 失败(exit=${rc}): ${tail_msg}"',
+    '      OPENCLAW_NPM_LAST_ERROR="[openclaw][error] npm install failed(exit=${rc}): ${tail_msg}"',
     '    fi',
     '    echo "$OPENCLAW_NPM_LAST_ERROR"',
-    '    echo "[openclaw] npm 失败日志: $tmp_log"',
+    '    echo "[openclaw] npm failure log: $tmp_log"',
     '    tail -n 80 "$tmp_log" 2>/dev/null || true',
     '    return "$rc"',
     '  fi',
-    '  echo "[openclaw] ${label}: 安装成功"',
+    '  echo "[openclaw] ${label}: Install succeeded"',
     '  return 0',
     '}',
     'if ! run_npm_staging_install "first_install" "$INSTALL_REGISTRY"; then',
-    '  echo "[openclaw] npm install 首次失败，尝试清理并重试(npmjs)..."',
+    '  echo "[openclaw] npm install first attempt failed, cleaning and retrying (npmjs)..."',
     '  npm cache verify >/dev/null 2>&1 || true',
     '  rm -rf "$STAGING_PREFIX" 2>/dev/null || true',
     '  mkdir -p "$STAGING_PREFIX"',
@@ -9694,34 +9694,34 @@ function buildOpenClawNpmInstallCommand(targetVersion) {
     '    exit 31',
     '  fi',
     'fi',
-    '# 验证 staging prefix 安装结果',
+    '# Verify staging prefix install result',
     'STAGING_LIB_DIR="$STAGING_PREFIX/lib/node_modules/openclaw"',
     'if [ ! -f "$STAGING_LIB_DIR/package.json" ]; then',
-    '  echo "[openclaw][error] staging prefix 安装后 package.json 缺失"',
+    '  echo "[openclaw][error] package.json missing after staging prefix install"',
     '  rm -rf "$STAGING_PREFIX" 2>/dev/null || true',
     '  exit 31',
     'fi',
-    '# 将 staging 目录移动到 NEXT_SRC_DIR 供 A/B swap 使用',
+    '# Move staging directory to NEXT_SRC_DIR for A/B swap',
     'rm -rf "$NEXT_SRC_DIR" 2>/dev/null || true',
     'mv -f "$STAGING_LIB_DIR" "$NEXT_SRC_DIR"',
-    '# 确保入口文件和兼容 symlink',
+    '# Ensure entry file and compat symlink',
     'if [ ! -f "$NEXT_SRC_DIR/openclaw.mjs" ] && [ -f "$NEXT_SRC_DIR/dist/openclaw.mjs" ]; then',
     '  ln -sfn "$NEXT_SRC_DIR/dist/openclaw.mjs" "$NEXT_SRC_DIR/openclaw.mjs"',
     'fi',
     'if [ ! -f "$NEXT_SRC_DIR/dist/entry.js" ] && [ -f "$NEXT_SRC_DIR/dist/index.js" ]; then ln -sfn index.js "$NEXT_SRC_DIR/dist/entry.js"; fi',
     'if [ ! -f "$NEXT_SRC_DIR/dist/entry.mjs" ] && [ -f "$NEXT_SRC_DIR/dist/index.mjs" ]; then ln -sfn index.mjs "$NEXT_SRC_DIR/dist/entry.mjs"; fi',
-    '# 语法验证',
+    '# Syntax validation',
     'if [ -f "$NEXT_SRC_DIR/openclaw.mjs" ] && command -v node >/dev/null 2>&1; then',
     '  if ! node --check "$NEXT_SRC_DIR/openclaw.mjs" 2>/dev/null; then',
-    '    echo "[openclaw][error] openclaw.mjs 语法检查失败"',
+    '    echo "[openclaw][error] openclaw.mjs syntax check failed"',
     '    rm -rf "$NEXT_SRC_DIR" "$STAGING_PREFIX" 2>/dev/null || true',
     '    exit 31',
     '  fi',
     'fi',
-    '# 版本读取验证',
+    '# Version read verification',
     'STAGED_VER="$(node -e "try{console.log(require(\\"/root/.openclaw/openclaw-source-next/package.json\\").version||\\"\\")}catch(e){}" 2>/dev/null || true)"',
-    'echo "[openclaw] npm staging 安装完成: version=${STAGED_VER:-unknown}"',
-    '# 清理 staging prefix',
+    'echo "[openclaw] npm staging install complete: version=${STAGED_VER:-unknown}"',
+    '# Clean up staging prefix',
     'rm -rf "$STAGING_PREFIX" 2>/dev/null || true'
   ].join('\n');
 }
@@ -9736,7 +9736,7 @@ app.post('/api/openclaw/update', async (req, res) => {
       if ((opState.type === 'installing' || opState.type === 'updating') && isTaskRunning(installLogs, activeInstallTaskId)) {
         return res.json({ success: true, taskId: activeInstallTaskId, reused: true, operationState: opState, logFile: installLogs[activeInstallTaskId]?.logFile || OPENCLAW_INSTALL_LOG_FILE });
       }
-      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+      return res.status(409).json({ success: false, error: `Operation in progress: ${opState.type}`, operationState: opState });
     }
 
     const mode = resolveOpenClawInstallMode(req);
@@ -9745,16 +9745,16 @@ app.post('/api/openclaw/update', async (req, res) => {
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
     const taskId = runOpenClawTask(
       command,
-      `更新 OpenClaw（mode=${mode}，仅 npm）(${release.tag})`,
+      `Update OpenClaw (mode=${mode}，npm only）(${release.tag})`,
       'updating',
       { release }
     );
     if (!taskId) {
-      return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用', operationState: getOpenClawOperationState() });
+      return res.status(409).json({ success: false, error: 'Task creation failed: concurrent operation in progress', operationState: getOpenClawOperationState() });
     }
     res.json({ success: true, taskId, mode, release: { repo: release.repo, tag: release.tag }, logFile: installLogs[taskId]?.logFile || OPENCLAW_INSTALL_LOG_FILE });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '更新任务创建失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Update task creation failed' });
   }
 });
 
@@ -9764,11 +9764,11 @@ app.get('/api/openclaw/dependencies', (req, res) => {
     const audit = auditOpenClawImageDependencies();
     res.json({ success: true, ...audit });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '依赖审计失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Dependency audit failed' });
   }
 });
 
-// --- 版本列表 API: 获取 npm 已发布版本供用户选择历史版本安装 ---
+// --- Version list API: fetch npm published versions for user to select historical version ---
 app.get('/api/openclaw/versions', async (_req, res) => {
   try {
     const registries = ['https://registry.npmjs.org', 'https://registry.npmmirror.com'];
@@ -9786,34 +9786,34 @@ app.get('/api/openclaw/versions', async (_req, res) => {
       }
     }
     if (!versions.length) {
-      return res.json({ success: true, versions: [], error: '无法获取版本列表' });
+      return res.json({ success: true, versions: [], error: 'Unable to fetch version list' });
     }
-    // 逆序 (最新在前)
+    // Reverse order (newest first)
     versions.reverse();
     const installed = getInstalledOpenClawVersion();
     res.json({ success: true, versions, installedVersion: installed || '' });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '获取版本列表失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Failed to fetch version list' });
   }
 });
 
-// --- 安装指定版本 API ---
+// --- Install specified version API ---
 app.post('/api/openclaw/install-version', async (req, res) => {
   try {
     const version = String(req.body?.version || '').trim();
     if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
-      return res.status(400).json({ success: false, error: '版本号格式无效' });
+      return res.status(400).json({ success: false, error: 'Invalid version format' });
     }
     if (isTaskRunning(installLogs, activeInstallTaskId)) {
       return res.json({ success: true, taskId: activeInstallTaskId, reused: true });
     }
     const opState = getOpenClawOperationState();
     if (opState.type !== 'idle') {
-      return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+      return res.status(409).json({ success: false, error: `Operation in progress: ${opState.type}`, operationState: opState });
     }
 
     const repo = resolveOpenClawSourceRepo(true);
-    // 构造 release 对象 (指定版本使用 npm 源)
+    // Construct release object (specified version uses npm registry)
     const tag = `v${version}`;
     const binaryAsset = resolveOpenClawNpmDistTarballAsset(tag);
     const release = {
@@ -9829,16 +9829,16 @@ app.post('/api/openclaw/install-version', async (req, res) => {
     const command = buildOpenClawPreferredInstallCommand(release, { mode });
     const taskId = runOpenClawTask(
       command,
-      `安装 OpenClaw v${version}（指定版本）`,
+      `Install OpenClaw v${version}（specified version）`,
       'installing',
       { release }
     );
     if (!taskId) {
-      return res.status(409).json({ success: false, error: '任务创建失败：存在并发操作占用' });
+      return res.status(409).json({ success: false, error: 'Task creation failed: concurrent operation in progress' });
     }
     res.json({ success: true, taskId, version, release: { repo, tag } });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '安装任务创建失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Install task creation failed' });
   }
 });
 
@@ -9850,22 +9850,22 @@ app.post('/api/openclaw/start', (req, res) => {
     console.log('[openclaw][start] restart already in progress');
     return res.json({
       success: true,
-      message: 'Gateway 重启已在进行中，请稍候',
+      message: 'Gateway restart already in progress, please wait',
       operationState: opState
     });
   }
 
   if (opState.type !== 'idle') {
     console.log(`[openclaw][start] blocked by operation state: ${opState.type}`);
-    return res.status(409).json({ success: false, error: `操作进行中: ${opState.type}`, operationState: opState });
+    return res.status(409).json({ success: false, error: `Operation in progress: ${opState.type}`, operationState: opState });
   }
 
-  // 写入 operation.lock，让 watchdog 来执行重启
+  // Write operation.lock, let watchdog perform restart
   queueGatewayRestart('openclaw-start');
 
   res.json({
     success: true,
-    message: '重启请求已提交，watchdog 将在 10 秒内执行',
+    message: 'Restart request submitted, watchdog will execute within 10 seconds',
     operationState: { ...openClawOperationState }
   });
 });
@@ -9882,18 +9882,18 @@ app.get('/api/openclaw/pairing/list', async (_req, res) => {
       .sort((a, b) => (b.approvedAtMs || 0) - (a.approvedAtMs || 0));
     res.json({ success: true, pending: pendingList, paired: pairedList });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '读取配对状态失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Failed to read pairing status' });
   }
 });
 
 app.post('/api/openclaw/pairing/approve', async (req, res) => {
   const { requestId } = req.body || {};
-  if (!requestId || typeof requestId !== 'string') return res.status(400).json({ success: false, error: '缺少 requestId' });
-  if (!/^[0-9a-fA-F-]{8,64}$/.test(requestId)) return res.status(400).json({ success: false, error: 'requestId 格式无效' });
+  if (!requestId || typeof requestId !== 'string') return res.status(400).json({ success: false, error: 'Missing requestId' });
+  if (!/^[0-9a-fA-F-]{8,64}$/.test(requestId)) return res.status(400).json({ success: false, error: 'Invalid requestId format' });
   try {
     const pending = readJson(DEVICE_PAIRING_PENDING_PATH, {});
     const entry = pending[requestId];
-    if (!entry) return res.status(404).json({ success: false, error: '未找到该配对请求（可能已过期）' });
+    if (!entry) return res.status(404).json({ success: false, error: 'Pairing request not found (may have expired)' });
 
     const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
     const deviceId = entry.deviceId;
@@ -9947,14 +9947,14 @@ app.post('/api/openclaw/pairing/approve', async (req, res) => {
     res.json({ success: true, deviceId, role });
   } catch (e) {
     console.error(`[pairing][approve] error:`, e);
-    res.status(500).json({ success: false, error: e?.message || '审批失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Approval failed' });
   }
 });
 
 app.post('/api/openclaw/pairing/approve-discord', async (req, res) => {
   const rawCode = String(req.body?.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (!rawCode) return res.status(400).json({ success: false, error: '缺少配对码' });
-  if (!/^[A-Z0-9]{6,32}$/.test(rawCode)) return res.status(400).json({ success: false, error: '配对码格式无效' });
+  if (!rawCode) return res.status(400).json({ success: false, error: 'Missing pairing code' });
+  if (!/^[A-Z0-9]{6,32}$/.test(rawCode)) return res.status(400).json({ success: false, error: 'Invalid pairing code format' });
 
   try {
     const command = [
@@ -9980,15 +9980,15 @@ app.post('/api/openclaw/pairing/approve-discord', async (req, res) => {
     const output = keepLastLines(String(result.output || '').trim(), 20).trim();
     if (!result.ok) {
       const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      const errorText = lines[lines.length - 1] || 'Discord 配对审批失败';
+      const errorText = lines[lines.length - 1] || 'Discord pairing approval failed';
       return res.status(500).json({ success: false, error: errorText, output });
     }
 
     const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    const message = lines[lines.length - 1] || `Discord 配对码 ${rawCode} 已批准`;
+    const message = lines[lines.length - 1] || `Discord pairing code ${rawCode} approved`;
     res.json({ success: true, code: rawCode, message, output });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || 'Discord 配对审批失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Discord pairing approval failed' });
   }
 });
 
@@ -9998,7 +9998,7 @@ app.get('/api/openclaw/gateway/logs', (req, res) => {
     const logs = readOpenClawGatewayLogs(lines, { includeWatchdog: true, includeInstall: true });
     res.json({ success: true, logs });
   } catch (e) {
-    res.status(500).json({ success: false, error: e?.message || '读取 Gateway 日志失败' });
+    res.status(500).json({ success: false, error: e?.message || 'Failed to read Gateway logs' });
   }
 });
 
@@ -10007,7 +10007,7 @@ app.get('/api/openclaw/gateway/logs', (req, res) => {
 // ============================================================
 function sanitizeLogLine(line) {
   if (typeof line !== 'string') return null;
-  if (/让我获取 GitHub .*数据(?:并整理所有数据)?[:：]?/.test(line)) {
+  if (/let me get GitHub .*data(?:and organize all data)?[:：]?/.test(line)) {
     return null;
   }
   if (/\[node\]\s+(?:control-ui\s+)?WS (?:connect failed|error):\s+connect ECONNREFUSED 127\.0\.0\.1:\d+/i.test(line)) {
@@ -10022,30 +10022,30 @@ function sanitizeLogLine(line) {
   if (/\[ws\]\s+⇄\s+res\s+✗\s+node\.invoke\b.*invalid node\.invoke params: must have required property 'idempotencyKey'/i.test(line)) {
     return null;
   }
-  // 过滤掉频繁的 webchat connected/disconnected 日志
+  // Filter out frequent webchat connected/disconnected logs
   if (/\[ws\]\s+webchat\s+(connected|disconnected)/i.test(line)) {
     return null;
   }
-  // 过滤掉高频 ws 消息日志（device.pair.list, node.list, chat.history, config.get 等）
+  // Filter out high-frequency ws message logs (device.pair.list, node.list, chat.history, config.get etc.)
   if (/\[ws\]\s+⇄\s+res\s+✓\s+(device\.pair\.list|node\.list|chat\.history|device\.list|config\.get)\b/.test(line)) {
     return null;
   }
-  // 过滤掉高频成功 RPC 响应（节点探测 / skills 扫描会持续刷屏）
+  // Filter out high-frequency successful RPC responses (node probe / skills scan cause persistent log spam)
   if (/\[ws\]\s+⇄\s+res\s+✓\s+(skills\.bins|node\.invoke)\b/.test(line)) {
     return null;
   }
-  // 过滤掉重复的 Discord 重连/TLS 错误日志（网络问题时极其频繁）
+  // Filter out duplicate Discord reconnection/TLS error logs (extremely frequent during network issues)
   if (/\[discord\]\s+gateway:\s+(WebSocket connection closed|Attempting resume with backoff)/i.test(line)) {
     return null;
   }
   if (/\[discord\]\s+gateway\s+error:\s+Error:\s+Client network socket disconnected/i.test(line)) {
     return null;
   }
-  // 过滤掉 config reload 的重复 invalid config 行（已在 invalidConfigKeys 中检测）
+  // Filter out duplicate invalid config lines from config reload (already handled in invalidConfigKeys detection)
   if (/\[reload\]\s+config reload skipped\s+\(invalid config\)/i.test(line)) {
     return null;
   }
-  // 过滤掉飞书/Discord 等通道的收发消息日志（对话内容不应泄露到运维日志面板）
+  // Filter out Feishu/Discord channel message logs (conversation content should not leak to ops log panel)
   if (/\[(feishu|discord|telegram|signal|whatsapp)\].*(?:received message from|DM from|dispatching to agent|group message from)/i.test(line)) {
     return null;
   }
@@ -10141,7 +10141,7 @@ app.get('/api/logs', (req, res) => {
           const t = String(line || '').trim();
           if (!t) return false;
           if (!/\[install\]/i.test(t)) return true;
-          if (/\[install\].*(npm ERR!|npm WARN|\[openclaw\]\[(error|fatal)\]|failed|失败|timeout|超时|end status=failed)/i.test(t)) return true;
+          if (/\[install\].*(npm ERR!|npm WARN|\[openclaw\]\[(error|fatal)\]|failed|failed|timeout|timeout|end status=failed)/i.test(t)) return true;
           if (/\[install\].*=====\s*task\s+/i.test(t)) return true;
           return false;
         })
@@ -10155,7 +10155,7 @@ app.get('/api/logs', (req, res) => {
 
     if (!mergedBlocks.length) {
       const hints = [
-        '[logs] 当前尚未产生可展示日志。',
+        '[logs] No displayable logs generated yet.',
         `[logs] checked: ${GATEWAY_RUNTIME_LOG_FILE}`,
         `[logs] checked: ${GATEWAY_LEGACY_LOG_FILE}`,
         `[logs] checked: ${GATEWAY_WATCHDOG_LOG}`,
@@ -10429,21 +10429,21 @@ function validateSkillSecurity(skillDir) {
 
   // 1. SKILL.md must exist
   if (!fs.existsSync(skillMdPath)) {
-    errors.push('缺少 SKILL.md 文件');
+    errors.push('Missing SKILL.md file');
     return { valid: false, errors, warnings };
   }
 
   // 2. Check SKILL.md is valid markdown
   const parsed = parseSkillMd(skillMdPath);
   if (!parsed) {
-    errors.push('SKILL.md 文件无法解析');
+    errors.push('SKILL.md file cannot be parsed');
     return { valid: false, errors, warnings };
   }
 
   // 3. Check SKILL.md content for dangerous patterns
   for (const pat of SKILL_DANGEROUS_PATTERNS) {
     if (pat.test(parsed.content)) {
-      warnings.push(`SKILL.md 包含可疑模式: ${pat.source}`);
+      warnings.push(`SKILL.md contains suspicious pattern: ${pat.source}`);
     }
   }
 
@@ -10463,7 +10463,7 @@ function validateSkillSecurity(skillDir) {
     collectFiles(skillDir, 0);
 
     if (allFiles.length > SKILL_DIR_MAX_FILES) {
-      warnings.push(`目录包含过多文件 (>${SKILL_DIR_MAX_FILES})`);
+      warnings.push(`Directory contains too many files (>${SKILL_DIR_MAX_FILES})`);
     }
 
     // Check for suspicious file types
@@ -10471,13 +10471,13 @@ function validateSkillSecurity(skillDir) {
     for (const f of allFiles) {
       const ext = path.extname(f.name).toLowerCase();
       if (suspiciousExts.includes(ext)) {
-        warnings.push(`包含脚本文件: ${f.name}`);
+        warnings.push(`Contains script files: ${f.name}`);
       }
       // Check for large binary files
       try {
         const fstat = fs.statSync(f.path);
         if (fstat.size > 5 * 1024 * 1024) {
-          warnings.push(`大文件 (>${Math.round(fstat.size / 1024 / 1024)}MB): ${f.name}`);
+          warnings.push(`Large file (>${Math.round(fstat.size / 1024 / 1024)}MB): ${f.name}`);
         }
       } catch {}
     }
@@ -10490,14 +10490,14 @@ function validateSkillSecurity(skillDir) {
         const content = fs.readFileSync(f.path, 'utf8').slice(0, 50000);
         for (const pat of SKILL_DANGEROUS_PATTERNS) {
           if (pat.test(content)) {
-            warnings.push(`${f.name} 包含可疑模式: ${pat.source}`);
+            warnings.push(`${f.name} contains suspicious pattern: ${pat.source}`);
             break;
           }
         }
       } catch {}
     }
   } catch (e) {
-    warnings.push(`目录扫描异常: ${e.message}`);
+    warnings.push(`Directory scan error: ${e.message}`);
   }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -10589,12 +10589,12 @@ app.get('/api/plugins/list', async (req, res) => {
 app.post('/api/plugins/skill/scan', async (req, res) => {
   const { source, localPath } = req.body || {};
   if (!source || typeof source !== 'string') {
-    return res.status(400).json({ error: '请提供 GitHub URL 或本地目录路径' });
+    return res.status(400).json({ error: 'Provide a GitHub URL or local directory path' });
   }
 
   const sanitized = source.trim();
   if (sanitized.length > 1000) {
-    return res.status(400).json({ error: '输入过长' });
+    return res.status(400).json({ error: 'Input too long' });
   }
 
   try {
@@ -10607,17 +10607,17 @@ app.post('/api/plugins/skill/scan', async (req, res) => {
     if (isGitUrl) {
       // Validate URL to prevent SSRF
       if (/[;&|`$(){}]/.test(sanitized)) {
-        return res.status(400).json({ error: '无效的 URL' });
+        return res.status(400).json({ error: 'Invalid URL' });
       }
       // Only allow github.com, gitlab.com, gitee.com
       try {
         const parsed = new URL(sanitized);
         const allowedHosts = ['github.com', 'gitlab.com', 'gitee.com', 'bitbucket.org'];
         if (!allowedHosts.some(h => parsed.hostname === h || parsed.hostname.endsWith('.' + h))) {
-          return res.status(400).json({ error: `不支持的 Git 主机: ${parsed.hostname}。仅支持 GitHub/GitLab/Gitee/Bitbucket` });
+          return res.status(400).json({ error: `Unsupported Git host: ${parsed.hostname}。Only GitHub/GitLab/Gitee/Bitbucket are supported` });
         }
       } catch {
-        return res.status(400).json({ error: '无效的 URL 格式' });
+        return res.status(400).json({ error: 'Invalid URL format' });
       }
 
       // Clone to temp dir
@@ -10635,19 +10635,19 @@ app.post('/api/plugins/skill/scan', async (req, res) => {
       const dirPath = (localPath || sanitized).trim();
       // Prevent path traversal - must be absolute path
       if (!path.isAbsolute(dirPath)) {
-        return res.status(400).json({ error: '请提供绝对路径' });
+        return res.status(400).json({ error: 'Please provide an absolute path' });
       }
       // Block sensitive directories
       const blocked = ['/etc', '/proc', '/sys', '/dev', '/boot', '/root/.ssh', '/root/.gnupg'];
       if (blocked.some(b => dirPath === b || dirPath.startsWith(b + '/'))) {
-        return res.status(400).json({ error: '该目录不可扫描' });
+        return res.status(400).json({ error: 'This directory cannot be scanned' });
       }
       if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-        return res.status(400).json({ error: '目录不存在或不是一个目录' });
+        return res.status(400).json({ error: 'Directory does not exist or is not a directory' });
       }
       scanDir = dirPath;
     } else {
-      return res.status(400).json({ error: '请提供有效的 GitHub URL 或本地目录路径' });
+      return res.status(400).json({ error: 'Please provide a valid GitHub URL or local directory path' });
     }
 
     // Scan for skills
@@ -10683,7 +10683,7 @@ app.post('/api/plugins/skill/scan', async (req, res) => {
     });
   } catch (e) {
     cleanScanTmp();
-    res.status(500).json({ error: `扫描失败: ${e.message}` });
+    res.status(500).json({ error: `Scan failed: ${e.message}` });
   }
 });
 
@@ -10691,7 +10691,7 @@ app.post('/api/plugins/skill/scan', async (req, res) => {
 app.post('/api/plugins/skill/install-selected', async (req, res) => {
   const { skills, source } = req.body || {};
   if (!Array.isArray(skills) || skills.length === 0) {
-    return res.status(400).json({ error: '请选择要安装的 Skills' });
+    return res.status(400).json({ error: 'Please select Skills to install' });
   }
 
   // Ensure skills dir exists
@@ -10703,14 +10703,14 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
   for (const skill of skills) {
     const { dirName, relPath, absPath } = skill;
     if (!dirName || typeof dirName !== 'string') {
-      results.push({ name: dirName, success: false, error: '无效的 skill 名称' });
+      results.push({ name: dirName, success: false, error: 'Invalid skill name' });
       continue;
     }
 
     // Safe name
     const safeName = path.basename(dirName);
     if (safeName !== dirName || dirName.includes('..')) {
-      results.push({ name: dirName, success: false, error: '名称包含非法字符' });
+      results.push({ name: dirName, success: false, error: 'Name contains illegal characters' });
       continue;
     }
 
@@ -10724,7 +10724,7 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
       if (relPath && fs.existsSync(path.join(SKILL_SCAN_TMP, relPath))) {
         srcPath = path.join(SKILL_SCAN_TMP, relPath);
       } else {
-        results.push({ name: safeName, success: false, error: '源目录不存在' });
+        results.push({ name: safeName, success: false, error: 'Source directory does not exist' });
         continue;
       }
     }
@@ -10732,7 +10732,7 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
     // Final security check
     const check = validateSkillSecurity(srcPath);
     if (!check.valid) {
-      results.push({ name: safeName, success: false, error: `安全检查失败: ${check.errors.join('; ')}` });
+      results.push({ name: safeName, success: false, error: `Security check failed: ${check.errors.join('; ')}` });
       continue;
     }
 
@@ -10770,10 +10770,10 @@ app.post('/api/plugins/skill/install-selected', async (req, res) => {
 app.post('/api/plugins/skill/upload-install', (req, res) => {
   const { skills } = req.body || {};
   if (!Array.isArray(skills) || skills.length === 0) {
-    return res.status(400).json({ error: '请选择要安装的 Skills' });
+    return res.status(400).json({ error: 'Please select Skills to install' });
   }
   if (skills.length > 50) {
-    return res.status(400).json({ error: '单次最多安装 50 个 Skills' });
+    return res.status(400).json({ error: 'Maximum 50 Skills per install' });
   }
 
   if (!fs.existsSync(OPENCLAW_SKILLS_DIR)) {
@@ -10784,20 +10784,20 @@ app.post('/api/plugins/skill/upload-install', (req, res) => {
   for (const skill of skills) {
     const { dirName, files } = skill;
     if (!dirName || typeof dirName !== 'string') {
-      results.push({ name: dirName || '?', success: false, error: '无效的 skill 名称' });
+      results.push({ name: dirName || '?', success: false, error: 'Invalid skill name' });
       continue;
     }
     const safeName = path.basename(dirName);
     if (safeName !== dirName || /[.]{2}/.test(dirName)) {
-      results.push({ name: dirName, success: false, error: '名称包含非法字符' });
+      results.push({ name: dirName, success: false, error: 'Name contains illegal characters' });
       continue;
     }
     if (!Array.isArray(files) || files.length === 0) {
-      results.push({ name: safeName, success: false, error: '无文件内容' });
+      results.push({ name: safeName, success: false, error: 'No file content' });
       continue;
     }
     if (!files.some(f => f.path === 'SKILL.md')) {
-      results.push({ name: safeName, success: false, error: '缺少 SKILL.md 文件' });
+      results.push({ name: safeName, success: false, error: 'Missing SKILL.md file' });
       continue;
     }
 
@@ -10846,7 +10846,7 @@ app.post('/api/plugins/skill/install', async (req, res) => {
   // Validate: must look like a git URL or simple name
   const sanitized = url.trim();
   if (sanitized.length > 500 || /[;&|`$(){}]/.test(sanitized)) {
-    return res.status(400).json({ error: '无效的 URL' });
+    return res.status(400).json({ error: 'Invalid URL' });
   }
 
   try {
@@ -10860,7 +10860,7 @@ app.post('/api/plugins/skill/install', async (req, res) => {
     const dest = path.join(OPENCLAW_SKILLS_DIR, skillName);
 
     if (fs.existsSync(dest)) {
-      return res.status(409).json({ error: `Skill "${skillName}" 已存在，请先移除再安装` });
+      return res.status(409).json({ error: `Skill "${skillName}" already exists, please remove before installing` });
     }
 
     const output = await runCommandTextAsync(
@@ -10871,7 +10871,7 @@ app.post('/api/plugins/skill/install', async (req, res) => {
     const hasSkillMd = fs.existsSync(path.join(dest, 'SKILL.md'));
     res.json({
       success: true,
-      output: output + (hasSkillMd ? '' : '\n⚠️ 注意: 该仓库中未找到 SKILL.md 文件')
+      output: output + (hasSkillMd ? '' : '\n⚠️ Note: SKILL.md file not found in this repository')
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -10886,7 +10886,7 @@ app.post('/api/plugins/skill/remove', async (req, res) => {
   // Prevent path traversal
   const safeName = path.basename(name);
   if (safeName !== name || name.includes('..')) {
-    return res.status(400).json({ error: '无效的名称' });
+    return res.status(400).json({ error: 'Invalid name' });
   }
 
   // Search all skill dirs for this skill
@@ -10905,7 +10905,7 @@ app.post('/api/plugins/skill/remove', async (req, res) => {
 
   const dir = candidates.find(d => fs.existsSync(d));
   if (!dir) {
-    return res.status(404).json({ error: `Skill "${safeName}" 不存在` });
+    return res.status(404).json({ error: `Skill "${safeName}" does not exist` });
   }
 
   try {
@@ -10923,14 +10923,14 @@ app.post('/api/plugins/extension/install', async (req, res) => {
   const sanitized = pkg.trim();
   // Validate: npm package name, scoped name, github:user/repo, or https URL
   if (sanitized.length > 500 || /[;&|`$(){}\\]/.test(sanitized)) {
-    return res.status(400).json({ error: '无效的包名或 URL' });
+    return res.status(400).json({ error: 'Invalid package name or URL' });
   }
   // Must be a recognized format
   const isNpmPkg = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(@[^\s]*)?$/.test(sanitized);
   const isGithubShort = /^github:[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(#.*)?$/.test(sanitized);
   const isGitUrl = /^https?:\/\/(github\.com|gitlab\.com|gitee\.com)\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\.git)?(\/?#.*)?$/.test(sanitized);
   if (!isNpmPkg && !isGithubShort && !isGitUrl) {
-    return res.status(400).json({ error: '请输入 npm 包名（如 @anthropic/extension）、github:user/repo 或 GitHub URL' });
+    return res.status(400).json({ error: 'Please enter npm package name (e.g. @anthropic/extension), github:user/repo or GitHub URL' });
   }
 
   try {
@@ -10950,7 +10950,7 @@ app.post('/api/plugins/extension/remove', async (req, res) => {
 
   const sanitized = name.trim();
   if (sanitized.length > 200 || /[;&|`$(){}]/.test(sanitized)) {
-    return res.status(400).json({ error: '无效的名称' });
+    return res.status(400).json({ error: 'Invalid name' });
   }
 
   try {
@@ -11148,21 +11148,21 @@ if (WebSocketServer) {
     };
 
     if (mode !== 'pty') {
-      sendOutput('OpenClaw Terminal connected (fallback shell). 输入命令并回车执行。\n');
-      sendOutput('[terminal] 当前环境未检测到 script，已使用兼容模式。\n');
+      sendOutput('OpenClaw Terminal connected (fallback shell). Enter a command and press Enter to execute.\n');
+      sendOutput('[terminal] script not detected in current environment, using compatibility mode.\n');
     }
 
-    // 捕获 stdin 错误避免崩溃
+    // Catch stdin errors to prevent crash
     shell.stdin.on('error', (err) => {
-      // 忽略 EPIPE
+      // Ignore EPIPE
     });
 
     shell.stdout.on('data', (chunk) => sendOutput(chunk.toString('utf8')));
-    shell.stdout.on('error', () => {}); // 防崩溃
+    shell.stdout.on('error', () => {}); // Prevent crash
     
     if (mode !== 'pty' && shell.stderr) {
       shell.stderr.on('data', (chunk) => sendOutput(chunk.toString('utf8')));
-      shell.stderr.on('error', () => {}); // 防崩溃
+      shell.stderr.on('error', () => {}); // Prevent crash
     }
 
     shell.on('close', (code) => {
@@ -11302,17 +11302,17 @@ server.listen(PORT, '0.0.0.0', () => {
   repairOpenClawConfigProviders();
   normalizePairedDevicesScopes();
   sanitizeAllConfigBackups();
-  checkOrphanInstallTask(); // C7: 启动时检测孤儿安装进程 (DFMEA T2)
-  console.log(`[web] OpenClaw Web 管理面板启动: http://0.0.0.0:${PORT}`);
+  checkOrphanInstallTask(); // C7: Detect orphan install processes on startup (DFMEA T2)
+  console.log(`[web] OpenClaw Web Panel started: http://0.0.0.0:${PORT}`);
 
-  // Browser Bridge 现通过 Caddy WSS 代理（主 HTTPS 端口），不再需要独立端口
+  // Browser Bridge now uses Caddy WSS proxy (main HTTPS port), no longer needs a separate port
 });
 
 server.on('error', (err) => {
   if (err?.code === 'EADDRINUSE') {
-    console.error(`[web][error] 端口 ${PORT} 已被占用，疑似重复启动 web-panel，请先停止旧进程后再启动。`);
+    console.error(`[web][error] port ${PORT} already in use, possible duplicate web-panel launch. Please stop the old process before starting.`);
   } else {
-    console.error(`[web][error] Web 面板启动失败: ${err?.message || err}`);
+    console.error(`[web][error] Web panel startup failed: ${err?.message || err}`);
   }
   process.exit(1);
 });

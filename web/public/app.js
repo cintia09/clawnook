@@ -9,6 +9,9 @@ function $(id){ return document.getElementById(id); }
 function q(sel, root=document){ return root.querySelector(sel); }
 function qa(sel, root=document){ return Array.from(root.querySelectorAll(sel)); }
 
+// i18n helper — translates Chinese keys to English when locale=en
+const _t = typeof window.t === 'function' ? window.t : (x => x);
+
 const OC_DEBUG = (() => {
   try {
     return localStorage.getItem('ocDebug') === '1';
@@ -33,19 +36,19 @@ const UI_XTERM_SCROLLBACK = 50000;
 // ------------------------
 // Log deduplication for WebSocket connection logs
 // ------------------------
-// 使用 Set 存储已经显示过的日志标识（connId + state）
+// Use a Set to store log identifiers already shown (connId + state)
 const shownWsLogIds = new Set();
 let lastWsLogState = null; // 最后显示的状态
 
 function getWsLogId(line) {
-  // 提取 connId 和状态作为唯一标识
+  // Extract connId and state as a unique identifier
   const match = line.match(/\[ws\]\s+webchat\s+(connected|disconnected)\s+conn=([a-f0-9-]+)/i);
   if (!match) return null;
   return `${match[2]}:${match[1].toLowerCase()}`; // connId:state
 }
 
 function parseWsLogLine(line) {
-  // 匹配 [gateway-runtime] [2026-03-07 16:32:01] [ws] webchat connected conn=xxx remote=...
+  // Match [gateway-runtime] [2026-03-07 16:32:01] [ws] webchat connected conn=xxx remote=...
   const match = line.match(/\[ws\]\s+webchat\s+(connected|disconnected)\s+conn=([a-f0-9-]+)/i);
   if (!match) return null;
   return {
@@ -188,13 +191,13 @@ function highlightLogKeywords(rawLine, safeLine){
     .replace(/\bstatus=(running)\b/gi, '<span class="term-state-running">status=$1</span>')
     .replace(/\bstatus=(success)\b/gi, '<span class="term-state-success">status=$1</span>')
     .replace(/\bstatus=(failed|error)\b/gi, '<span class="term-state-failed">status=$1</span>')
-    // WebSocket 连接/断开高亮
+    // WebSocket connect/disconnect highlighting
     .replace(/\b(connected)\b/gi, '<span class="term-state-success">$1</span>')
     .replace(/\b(disconnected)\b/gi, '<span class="term-state-failed">$1</span>')
     .replace(/\b(conn=[a-f0-9-]+)\b/gi, '<span class="term-conn-id">$1</span>')
     .replace(/\b(code=\d+)\b/gi, '<span class="term-code">$1</span>')
     .replace(/\b(reason=\w+)\b/gi, '<span class="term-reason">$1</span>')
-    // 合并计数和持续时间
+    // Merge count and duration
     .replace(/(\(×\d+\))/g, '<span class="term-count">$1</span>')
     .replace(/(\[持续 [^\]]+\])/g, '<span class="term-duration">$1</span>');
 
@@ -207,7 +210,7 @@ function highlightLogKeywords(rawLine, safeLine){
 function colorizeLine(rawLine){
   const line = stripAnsi(String(rawLine ?? ''));
 
-  // 处理 WebSocket 跳过提示行
+  // Handle WebSocket skip hint lines
   if (/^\s*\.\.\.\s*跳过/.test(line)) {
     return `<span class="term-line"><span class="term-skip-hint">${escapeHtml(line)}</span></span>`;
   }
@@ -222,7 +225,7 @@ function colorizeLine(rawLine){
   } else if (/\b(WARN|Warning|timeout|超时|占用|冲突)\b/i.test(line)) {
     safe = `<span class="term-warn">${safe}</span>`;
   } else if (/\b(INFO|started|listening|完成|成功|已启动)\b/i.test(line)) {
-    // 排除 connected/disconnected，因为它们在 highlightLogKeywords 中有专门处理
+    // Exclude connected/disconnected since they have dedicated handling in highlightLogKeywords
     safe = `<span class="term-info">${safe}</span>`;
   }
 
@@ -246,7 +249,7 @@ function appendColored(el, text, maxLines = UI_MAX_LINES_DEFAULT, autoscroll = t
     : lines;
   while (renderLines.length > 0 && renderLines[renderLines.length - 1] === '') renderLines.pop();
 
-  // 处理每一行，支持 WebSocket 连接日志去重（基于唯一标识）
+  // Process each line, support WebSocket log dedup (based on unique identifier)
   const processedLines = [];
   let skippedCount = 0;
 
@@ -254,33 +257,33 @@ function appendColored(el, text, maxLines = UI_MAX_LINES_DEFAULT, autoscroll = t
     const wsLogId = getWsLogId(line);
 
     if (!wsLogId) {
-      // 非 WebSocket 日志，直接处理
+      // Non-WebSocket log, process directly
       processedLines.push(line);
       continue;
     }
 
-    // 检查这条日志是否已经显示过
+    // Check whether this log entry has already been shown
     if (shownWsLogIds.has(wsLogId)) {
-      // 已经显示过，跳过
+      // Already shown, skip
       skippedCount++;
       continue;
     }
 
-    // 新的日志，标记为已显示
+    // New log entry, mark as shown
     shownWsLogIds.add(wsLogId);
 
-    // 检查状态
+    // Check state
     const wsInfo = parseWsLogLine(line);
     const state = wsInfo ? wsInfo.state : null;
 
-    // 如果有跳过的日志，添加提示
+    // If there are skipped logs, add a hint
     if (skippedCount > 0) {
       const skipHint = `    ... 跳过 ${skippedCount} 条重复/已显示的日志`;
       processedLines.push(skipHint);
       skippedCount = 0;
     }
 
-    // 添加这条日志
+    // Add this log entry
     processedLines.push(line);
     lastWsLogState = state;
   }
@@ -307,7 +310,7 @@ function appendColored(el, text, maxLines = UI_MAX_LINES_DEFAULT, autoscroll = t
 function setColored(el, text, maxLines = UI_MAX_LINES_DEFAULT, autoscroll = true){
   if (!el) return;
   el.innerHTML = '';
-  // 注意：不在此处重置 shownWsLogIds，以支持跨刷新周期的去重
+  // Note: do not reset shownWsLogIds here, to support dedup across refresh cycles
   appendColored(el, text, maxLines, autoscroll);
 }
 
@@ -315,11 +318,16 @@ function toast(title, detail=''){
   const old = q('.toast');
   if (old) old.remove();
 
+  // Auto-translate toast messages via i18n
+  const _t = typeof window.t === 'function' ? window.t : x => x;
+  const tTitle = _t(title);
+  const tDetail = _t(detail);
+
   const el = document.createElement('div');
   el.className = 'toast';
   el.innerHTML = `
-    <div class="t"><b>${escapeHtml(title)}</b></div>
-    <div class="s">${escapeHtml(detail)}</div>
+    <div class="t"><b>${escapeHtml(tTitle)}</b></div>
+    <div class="s">${escapeHtml(tDetail)}</div>
   `;
   document.body.appendChild(el);
 
@@ -393,7 +401,7 @@ function setActiveRoute(route){
   }
   if (route === 'settings') { renderDetectedTimezone(); checkForUpdate(); }
   if (route === 'logs') {
-    // 重置 WebSocket 日志去重状态
+    // Reset WebSocket log dedup state
     shownWsLogIds.clear();
     lastWsLogState = null;
     refreshLogs();
@@ -584,10 +592,10 @@ async function refreshStatus(){
                   : '未检测到运行中的 Gateway')))
   ];
   if (!openclawMissing && !s.gateway && s.gatewayProcessRunning && Number(s.gatewayProcessUptimeSec || 0) > 0) {
-    gatewayParts.push(`运行 ${formatUptime(s.gatewayProcessUptimeSec)}`);
+    gatewayParts.push(_t('运行 {0}', formatUptime(s.gatewayProcessUptimeSec)));
   }
   if (s.gatewayWatchdog === false) {
-    gatewayParts.push('watchdog未运行');
+    gatewayParts.push(_t('watchdog未运行'));
   }
   if (s.terminal) {
     if (s.terminal.ready) {
@@ -625,15 +633,15 @@ async function refreshStatus(){
       ? `<span class="pulse online"></span>在线`
       : `<span class="pulse offline"></span>离线/未启用`;
   }
-  if ($('kpi-domain')) $('kpi-domain').textContent = s.domain ? `域名：${s.domain}` : '未配置域名';
+  if ($('kpi-domain')) $('kpi-domain').textContent = s.domain ? _t('域名：{0}', s.domain) : _t('未配置域名');
 
   if ($('kpi-memory')) $('kpi-memory').textContent = s.memory?.total ? `${s.memory.used}/${s.memory.total}MB (${s.memory.percent}%)` : '—';
-  if ($('kpi-uptime')) $('kpi-uptime').textContent = s.uptime ? `运行：${formatUptime(s.uptime)}` : '—';
+  if ($('kpi-uptime')) $('kpi-uptime').textContent = s.uptime ? _t('运行：{0}', formatUptime(s.uptime)) : '—';
 
   // Update sidebar footer
   const panelVer = formatVersionLabel(s.version) || '-';
   const ocVer = formatVersionLabel(s.openclawVersion) || '-';
-  if ($('sidebar-version')) $('sidebar-version').textContent = `面板 ${panelVer}`;
+  if ($('sidebar-version')) $('sidebar-version').textContent = _t('面板 {0}', panelVer);
   if ($('sidebar-oc-version')) $('sidebar-oc-version').textContent = `OpenClaw ${ocVer}`;
   const statusEl = $('sidebar-status');
   if (statusEl) {
@@ -642,7 +650,7 @@ async function refreshStatus(){
     statusEl.innerHTML = `Gateway <span class="gw-label ${cls}">${online ? 'ONLINE' : 'OFFLINE'}</span>`;
   }
 
-  // 远端设备管理 tab 始终可见
+  // Remote device management tab is always visible
   const browserNav = document.querySelector('#nav a[data-route="browser"]');
   if (browserNav) {
     browserNav.style.display = '';
@@ -908,10 +916,10 @@ async function doHotPatch(force = false) {
             if (hasFrontend || hasWebServer || updated.length === 0) {
               if (logPre) {
                 logPre.textContent += hasWebServer
-                  ? '\n检测到后端已更新，正在等待服务恢复后自动重查更新状态（不再强制刷新页面）。'
+                  ? '\n检测到后端已更新，正在等待服务恢复后自动重查更新状态（不再强制Refresh页面）。'
                   : updated.length === 0
-                  ? '\n所有文件已是最新，正在刷新版本状态...'
-                  : '\n前端文件已更新，将自动重查更新状态；如需立即加载新前端可手动刷新页面。';
+                  ? '\n所有文件已是最新，正在Refresh版本状态...'
+                  : '\n前端文件已更新，将自动重查更新状态；如需立即加载新前端可手动Refresh页面。';
               }
 
               if (hasWebServer) {
@@ -932,7 +940,7 @@ async function doHotPatch(force = false) {
                       await refreshStatus();
                       await checkForUpdate(true);
                       if (hasWebServer) {
-                        toast('热更新完成', 'Web 面板已恢复，已自动刷新更新状态');
+                        toast('热更新完成', 'Web 面板已恢复，已自动Refresh更新状态');
                         hotpatchRestartPending = false;
                         setHotpatchButtons(false, '⚡ 热更新（不重启容器）');
                       }
@@ -944,7 +952,7 @@ async function doHotPatch(force = false) {
                 }
                 await checkForUpdate(true);
                 if (hasWebServer) {
-                  toast('提示', 'Web 面板重启中，如状态未更新请稍后手动刷新页面');
+                  toast('提示', 'Web 面板重启中，如状态未更新请稍后手动Refresh页面');
                   hotpatchRestartPending = false;
                   setHotpatchButtons(false, '⚡ 热更新（不重启容器）');
                 }
@@ -968,7 +976,7 @@ async function doHotPatch(force = false) {
         }
       } catch { /* server might be restarting */ }
     }
-    if (!done) toast('热更新超时', '请稍后检查状态');
+    if (!done) toast('热更新超时', '请稍后Check state');
   } catch (e) {
     toast('热更新失败', e.message);
   } finally {
@@ -1249,10 +1257,10 @@ function renderOpenClawStatusTicker(){
   if (p && p.active && Number(p.totalSec || 0) > 0 && Number(p.startedAt || 0) > 0) {
     const elapsed = Math.max(0, Math.floor((Date.now() - Number(p.startedAt || 0)) / 1000));
     const remain = Math.max(0, Number(p.totalSec || 0) - elapsed);
-    text += `（已耗时 ${formatRemainingTime(elapsed)} / 预计剩余 ${formatRemainingTime(remain)}）`;
+    text += `（${_t('已耗时 {0} / 预计剩余 {1}', formatRemainingTime(elapsed), formatRemainingTime(remain))}）`;
   } else if (p && p.active && Number(p.startedAt || 0) > 0) {
     const elapsed = Math.max(0, Math.floor((Date.now() - Number(p.startedAt || 0)) / 1000));
-    text += `（已耗时 ${formatRemainingTime(elapsed)}）`;
+    text += `（${_t('已耗时 {0}', formatRemainingTime(elapsed))}）`;
   }
   el.textContent = text;
 }
@@ -1275,7 +1283,7 @@ function setOpenClawStatusLine(baseText, progress){
 }
 
 async function loadGatewayStartupLogs(lines = 160){
-  // 启动日志不再显示在操作日志面板，仅更新内部 snapshot 跟踪状态
+  // Startup logs no longer shown in op log panel; only update internal snapshot tracking
   try {
     const r = await api(`/api/openclaw/gateway/logs?lines=${Math.max(20, Math.min(lines, 1200))}`, { timeoutMs: 12000 });
     const snapshot = String(r?.logs || '').trim();
@@ -1283,7 +1291,7 @@ async function loadGatewayStartupLogs(lines = 160){
       ocLastGatewaySnapshot = snapshot;
     }
   } catch (e) {
-    // 静默失败，不刷日志
+    // Fail silently, do not flush logs
   }
 }
 
@@ -1428,13 +1436,13 @@ async function refreshOpenClaw(opts = {}){
   } else if (restartBusyNow) {
     setStatusBadge('oc-gateway', 'pending', '启动中', true);
   } else if (!d.gatewayRunning && d.gatewayStarting) {
-    setStatusBadge('oc-gateway', 'pending', '启动中（初始化中）', true);
+    setStatusBadge('oc-gateway', 'pending', '启动中（Initialize中）', true);
   } else if (!d.gatewayRunning && postInstallWarmup && d.gatewayProcessRunning) {
     setStatusBadge('oc-gateway', 'pending', '启动中', true);
   } else if (!d.gatewayRunning && d.gatewayPairingRequired) {
     setStatusBadge('oc-gateway', 'offline', '待配对（控制台鉴权）', false);
   } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
-    setStatusBadge('oc-gateway', 'pending', '启动中（初始化中）', true);
+    setStatusBadge('oc-gateway', 'pending', '启动中（Initialize中）', true);
   } else {
     setStatusBadge('oc-gateway', d.gatewayRunning ? 'online' : 'offline', d.gatewayRunning ? '运行中' : '未启动', false);
   }
@@ -1500,13 +1508,13 @@ async function refreshOpenClaw(opts = {}){
   } else if (!d.gatewayRunning && d.gatewayStarting) {
     setOpenClawStatusLine('Gateway 状态：启动中（正在等待健康检查）', null);
   } else if (!d.gatewayRunning && postInstallWarmup && d.gatewayProcessRunning) {
-    setOpenClawStatusLine('Gateway 状态：启动中（安装完成后初始化中）', null);
+    setOpenClawStatusLine('Gateway 状态：启动中（安装完成后Initialize中）', null);
   } else if (!d.gatewayRunning && d.gatewayPairingRequired) {
-    setOpenClawStatusLine('Gateway 状态：等待控制台配对。请先在网关页面完成配对授权', null);
+    setOpenClawStatusLine('Gateway 状态：等待控制台配对。请先在Gateway页面完成配对授权', null);
   } else if (!d.gatewayRunning && d.gatewayProcessRunning && d.discordConnectError) {
-    setOpenClawStatusLine(`Gateway 状态：初始化中（${d.discordConnectError}）`, null);
+    setOpenClawStatusLine(`Gateway 状态：Initialize中（${d.discordConnectError}）`, null);
   } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
-    setOpenClawStatusLine('Gateway 状态：启动中（初始化中，等待健康检查）', null);
+    setOpenClawStatusLine('Gateway 状态：启动中（Initialize中，等待健康检查）', null);
   } else if (d.installed && !d.version) {
     setOpenClawStatusLine('更新状态：已安装（版本待识别）', null);
   } else if (d.updateCheckError) {
@@ -1533,11 +1541,11 @@ async function pollTask(taskId){
 
   let lastSeq = 0;
   let errorStreak = 0;
-  let errorBackoffMs = 2000; // C8: 指数退避起始值 (DFMEA F2)
+  let errorBackoffMs = 2000; // C8: Exponential backoff initial value (DFMEA F2)
   const startedAt = Date.now();
   let lastHeartbeatAt = 0;
   const initialPhase = ocInstallPhase;
-  const POLL_TOTAL_TIMEOUT_MS = 120000; // C8: 总超时 120s (DFMEA F2)
+  const POLL_TOTAL_TIMEOUT_MS = 120000; // C8: Total timeout 120s (DFMEA F2)
 
   const schedulePoll = () => {
     if (ocPollTimer) clearTimeout(ocPollTimer);
@@ -1548,7 +1556,7 @@ async function pollTask(taskId){
     const st = await api('/api/openclaw/install/' + taskId + '?since=' + lastSeq, { timeoutMs: 20000 });
     if (!st || st.error) {
       errorStreak += 1;
-      errorBackoffMs = Math.min(errorBackoffMs * 2, 30000); // C8: 指数退避，上限 30s
+      errorBackoffMs = Math.min(errorBackoffMs * 2, 30000); // C8: Exponential backoff, max 30s
       const totalErrorMs = Date.now() - startedAt;
       if (totalErrorMs > POLL_TOTAL_TIMEOUT_MS && errorStreak >= 3) {
         if (ocPollTimer) clearTimeout(ocPollTimer);
@@ -1580,7 +1588,7 @@ async function pollTask(taskId){
       return;
     }
 
-    // C11: 操作日志窗口只显示关键里程碑，详细输出保留在后端日志
+    // C11: Op log window shows only key milestones; detailed output kept in backend logs
     lastSeq = Number(st.seq || lastSeq || 0);
 
     const now = Date.now();
@@ -1613,9 +1621,9 @@ async function pollTask(taskId){
       }
       refreshOpenClaw({ force: true });
       refreshStatus();
-      return; // C8: 任务结束，不再调度下一次轮询
+      return; // C8: 任务结束，不再Schedule next poll
     }
-    schedulePoll(); // C8: 调度下一次轮询
+    schedulePoll(); // C8: Schedule next poll
   };
 
   await tick();
@@ -1694,15 +1702,15 @@ async function pollRepairTask(taskId){
 }
 
 $('btn-oc-refresh').addEventListener('click', async ()=>{
-  appendOcLogLine('🔄 正在刷新状态...');
+  appendOcLogLine('🔄 正在Refresh状态...');
   const r = await refreshOpenClaw({ retries: 1 });
   if (r?.error) {
-    appendOcLogLine(`❌ 状态刷新失败：${r.error}`);
-    toast('状态刷新失败', r.error);
+    appendOcLogLine(`❌ 状态Refresh失败：${r.error}`);
+    toast('状态Refresh失败', r.error);
   } else {
     const ver = r?.version ? formatVersionLabel(r.version) : '未知';
     const gw = r?.gatewayRunning ? '运行中' : '未启动';
-    appendOcLogLine(`✅ 状态已刷新（版本：${ver}，Gateway：${gw}）`);
+    appendOcLogLine(`✅ 状态已Refresh（版本：${ver}，Gateway：${gw}）`);
   }
 });
 
@@ -1900,7 +1908,7 @@ $('migration-import-file')?.addEventListener('change', async (e) => {
 
 $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
   if (ocInstallRunning || ocInstallTaskRunningRemote || ocStartRunning || ocGatewayRestartRunningRemote) {
-    toast('任务进行中', '安装/更新或网关重启执行中，暂不可配置恢复');
+    toast('任务进行中', '安装/更新或Gateway重启执行中，暂不可配置恢复');
     return;
   }
   if (ocRepairRunning) {
@@ -1921,7 +1929,7 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
       return;
     }
 
-    // 构建备份选择列表
+    // Build the backup selection list
     const shown = list.backups.slice(0, 15);
     const hint = shown.map((item, idx) => {
       const dateStr = item.name.replace('snapshot-', '').replace(/^openclaw-/, '').replace(/\.json$/, '').replace(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/, '$1-$2-$3 $4:$5:$6');
@@ -1955,7 +1963,7 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
     const selected = shown[selectedIdx];
     let filesToRestore = [];
 
-    // 如果是 snapshot 且有多个文件，让用户选择恢复哪些
+    // If snapshot with multiple files, let user choose which to restore
     if (selected.type === 'snapshot' && selected.files && selected.files.length > 1) {
       const fileHint = selected.files.map((f, i) => `  ${i + 1}. ${f.name}`).join('\n');
       const fileInput = window.prompt(
@@ -1973,7 +1981,7 @@ $('btn-oc-repair-config')?.addEventListener('click', async ()=>{
       if (fraw === 'all' || fraw === '全部') {
         filesToRestore = selected.files.map(f => f.name);
       } else {
-        // 支持逗号分隔的多序号选择，如 "1,3" 或 "1, 2, 4"
+        // Support comma-separated multi-index selection, e.g. "1,3" or "1, 2, 4"
         const indices = fraw.split(/[,，\s]+/).map(s => Number(s.trim()) - 1).filter(i => i >= 0 && i < selected.files.length);
         if (indices.length > 0) {
           filesToRestore = [...new Set(indices)].map(i => selected.files[i].name);
@@ -2039,11 +2047,11 @@ $('btn-oc-install').addEventListener('click', async ()=>{
       if (!i.taskId){
         const isEmptyResponse = i && typeof i === 'object' && Object.keys(i).length === 0;
         const detail = i.error || (isEmptyResponse
-          ? '接口返回空响应（可能会话失效或页面缓存未更新，请刷新后重试）'
+          ? '接口返回空响应（可能会话失效或页面缓存未更新，请Refresh后重试）'
           : `接口返回异常（${JSON.stringify(i || {}) || 'empty'}）`);
         appendOcLogLine(`❌ 安装启动失败: ${detail}`);
         if (/空响应|缓存未更新|会话失效/.test(detail)) {
-          appendOcLogLine('💡 提示: 请强制刷新页面后重试（macOS: Command+Shift+R）');
+          appendOcLogLine('💡 提示: 请强制Refresh页面后重试（macOS: Command+Shift+R）');
         }
         toast('安装失败', detail);
         return;
@@ -2087,11 +2095,11 @@ $('btn-oc-install').addEventListener('click', async ()=>{
       if (!i.taskId){
         const isEmptyResponse = i && typeof i === 'object' && Object.keys(i).length === 0;
         const detail = i.error || (isEmptyResponse
-          ? '接口返回空响应（可能会话失效或页面缓存未更新，请刷新后重试）'
+          ? '接口返回空响应（可能会话失效或页面缓存未更新，请Refresh后重试）'
           : `接口返回异常（${JSON.stringify(i || {}) || 'empty'}）`);
         appendOcLogLine(`❌ 安装启动失败: ${detail}`);
         if (/空响应|缓存未更新|会话失效/.test(detail)) {
-          appendOcLogLine('💡 提示: 请强制刷新页面后重试（macOS: Command+Shift+R）');
+          appendOcLogLine('💡 提示: 请强制Refresh页面后重试（macOS: Command+Shift+R）');
         }
         toast('安装失败', detail);
         return;
@@ -2105,8 +2113,8 @@ $('btn-oc-install').addEventListener('click', async ()=>{
     }
 
     if (!current.version) {
-      appendOcLogLine('⚠️ 未检测到本地版本，已取消更新');
-      toast('更新已取消', '未检测到本地版本，请先检查安装状态');
+      appendOcLogLine('⚠️ 未检测到Local版本，已取消更新');
+      toast('更新已取消', '未检测到Local版本，请先检查安装状态');
       return;
     }
 
@@ -2139,11 +2147,11 @@ $('btn-oc-install').addEventListener('click', async ()=>{
     if (!r.taskId){
       const isEmptyResponse = r && typeof r === 'object' && Object.keys(r).length === 0;
       const detail = r.error || (isEmptyResponse
-        ? '接口返回空响应（可能会话失效或页面缓存未更新，请刷新后重试）'
+        ? '接口返回空响应（可能会话失效或页面缓存未更新，请Refresh后重试）'
         : `接口返回异常（${JSON.stringify(r || {}) || 'empty'}）`);
       appendOcLogLine(`❌ 更新启动失败: ${detail}`);
       if (/空响应|缓存未更新|会话失效/.test(detail)) {
-        appendOcLogLine('💡 提示: 请强制刷新页面后重试（macOS: Command+Shift+R）');
+        appendOcLogLine('💡 提示: 请强制Refresh页面后重试（macOS: Command+Shift+R）');
       }
       toast('更新失败', detail);
       return;
@@ -2171,7 +2179,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     return;
   }
   if (ocStartRunning) {
-    toast('任务进行中', '网关重启正在执行，请稍候');
+    toast('任务进行中', 'Gateway重启正在执行，请稍候');
     return;
   }
   const skipConfirm = !!(event && event.shiftKey);
@@ -2236,12 +2244,12 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
     syncOpenClawButtons();
   }
   if (restartAccepted) {
-    // 轮询等待 Gateway 真正启动完成（最多 10 分钟）
-    // Gateway 热重启通常在 5~15 秒内完成，冷启动可能需要更长时间
+    // Poll until Gateway has truly finished starting (up to 10 min)
+    // Gateway hot-restart usually completes in 5-15s; cold start may take longer
     const pollStart = Date.now();
     const pollTimeout = 10 * 60 * 1000;
     const pollInterval = 2000;
-    // 初始等待：给旧进程退出、新进程启动留时间，避免误判旧进程为"已成功"
+    // Initial wait: allow old process to exit and new one to start, avoid falsely judging old process as successful
     const initialDelay = 2500;
     let gwUp = false;
     let consecutiveErrors = 0;
@@ -2283,7 +2291,7 @@ $('btn-oc-start').addEventListener('click', async (event)=>{
       appendOcLogLine('✅ Gateway 重启成功');
       toast('重启成功', 'Gateway 已恢复运行');
     } else {
-      appendOcLogLine('⚠️ Gateway 重启超时或轮询中断，请检查状态');
+      appendOcLogLine('⚠️ Gateway 重启超时或轮询中断，请Check state');
       toast('重启超时', 'Gateway 未在预期时间内恢复，请手动检查');
     }
     ocGatewayRestartRunningRemote = false;
@@ -2306,7 +2314,7 @@ $('btn-oc-uninstall')?.addEventListener('click', async ()=>{
     toast('无法卸载', '当前未安装 OpenClaw');
     return;
   }
-  const ok1 = window.confirm('确认卸载 OpenClaw？\n将移除本地安装与源码目录。');
+  const ok1 = window.confirm('确认卸载 OpenClaw？\n将移除Local安装与源码目录。');
   if (!ok1) return toast('已取消', '未执行卸载');
   const ok2 = window.confirm('二次确认：确定继续卸载吗？\n卸载期间将禁止安装/更新/重启。');
   if (!ok2) return toast('已取消', '未执行卸载');
@@ -2343,7 +2351,7 @@ $('btn-oc-uninstall')?.addEventListener('click', async ()=>{
   }
 });
 
-// --- 历史版本选择安装 ---
+// --- Install from historical version selection ---
 $('btn-oc-load-versions')?.addEventListener('click', async () => {
   const btn = $('btn-oc-load-versions');
   const sel = $('oc-version-select');
@@ -2424,23 +2432,23 @@ $('btn-oc-install-version')?.addEventListener('click', async () => {
 // ------------------------
 // AI config - Refactored
 
-// Provider 配置信息
+// Provider configuration info
 const AI_PROVIDERS = {
-  // ─── 常用 ───
+  // ─── Common ───
   anthropic: {
-    name: 'Anthropic (Claude)', group: '常用',
+    name: 'Anthropic (Claude)', group: 'Common',
     apiKeyLabel: 'Anthropic API Key', apiKeyPlaceholder: 'sk-ant-api03-...',
     authType: 'apikey', baseUrl: 'https://api.anthropic.com/v1',
     models: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-3-5-sonnet-20241022']
   },
   openai: {
-    name: 'OpenAI (GPT)', group: '常用',
+    name: 'OpenAI (GPT)', group: 'Common',
     apiKeyLabel: 'OpenAI API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.openai.com/v1',
     models: ['gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo', 'o1', 'o1-mini']
   },
   'github-copilot': {
-    name: 'GitHub Copilot', group: '常用',
+    name: 'GitHub Copilot', group: 'Common',
     apiKeyLabel: 'OAuth Token', apiKeyPlaceholder: '使用设备授权登录',
     authType: 'oauth', oauthType: 'device',
     baseUrl: 'https://api.githubcopilot.com',
@@ -2455,187 +2463,187 @@ const AI_PROVIDERS = {
     </div>`
   },
   gemini: {
-    name: 'Google Gemini', group: '常用',
+    name: 'Google Gemini', group: 'Common',
     apiKeyLabel: 'Gemini API Key', apiKeyPlaceholder: 'AIza...',
     authType: 'apikey', baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash']
   },
   openrouter: {
-    name: 'OpenRouter', group: '常用',
+    name: 'OpenRouter', group: 'Common',
     apiKeyLabel: 'OpenRouter API Key', apiKeyPlaceholder: 'sk-or-...',
     authType: 'apikey', baseUrl: 'https://openrouter.ai/api/v1',
     models: ['anthropic/claude-sonnet-4', 'openai/gpt-4o', 'google/gemini-pro-1.5']
   },
   deepseek: {
-    name: 'DeepSeek', group: '常用',
+    name: 'DeepSeek', group: 'Common',
     apiKeyLabel: 'DeepSeek API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.deepseek.com/v1',
     models: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner']
   },
-  // ─── 国际 ───
+  // ─── International ───
   mistral: {
-    name: 'Mistral AI', group: '国际',
+    name: 'Mistral AI', group: 'International',
     apiKeyLabel: 'Mistral API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.mistral.ai/v1',
     models: ['mistral-large-latest', 'mistral-medium-latest', 'codestral-latest']
   },
   xai: {
-    name: 'xAI (Grok)', group: '国际',
+    name: 'xAI (Grok)', group: 'International',
     apiKeyLabel: 'xAI API Key', apiKeyPlaceholder: 'xai-...',
     authType: 'apikey', baseUrl: 'https://api.x.ai/v1',
     models: ['grok-4', 'grok-3', 'grok-3-fast']
   },
   groq: {
-    name: 'Groq', group: '国际',
+    name: 'Groq', group: 'International',
     apiKeyLabel: 'Groq API Key', apiKeyPlaceholder: 'gsk_...',
     authType: 'apikey', baseUrl: 'https://api.groq.com/openai/v1',
     models: ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'gemma2-9b-it']
   },
   together: {
-    name: 'Together AI', group: '国际',
+    name: 'Together AI', group: 'International',
     apiKeyLabel: 'Together API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.together.xyz/v1',
     models: ['moonshotai/Kimi-K2.5', 'deepseek-ai/DeepSeek-R1', 'meta-llama/Llama-3.3-70B-Instruct-Turbo']
   },
   huggingface: {
-    name: 'Hugging Face', group: '国际',
+    name: 'Hugging Face', group: 'International',
     apiKeyLabel: 'HF Token', apiKeyPlaceholder: 'hf_...',
     authType: 'apikey', baseUrl: 'https://router.huggingface.co/v1',
     models: ['deepseek-ai/DeepSeek-R1', 'deepseek-ai/DeepSeek-V3.1', 'meta-llama/Llama-3.3-70B-Instruct']
   },
   perplexity: {
-    name: 'Perplexity', group: '国际',
+    name: 'Perplexity', group: 'International',
     apiKeyLabel: 'Perplexity API Key', apiKeyPlaceholder: 'pplx-...',
     authType: 'apikey', baseUrl: 'https://api.perplexity.ai',
     models: ['sonar-pro', 'sonar', 'sonar-reasoning-pro']
   },
   nvidia: {
-    name: 'NVIDIA NIM', group: '国际',
+    name: 'NVIDIA NIM', group: 'International',
     apiKeyLabel: 'NVIDIA API Key', apiKeyPlaceholder: 'nvapi-...',
     authType: 'apikey', baseUrl: 'https://integrate.api.nvidia.com/v1',
     models: ['meta/llama-3.3-70b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct']
   },
   cerebras: {
-    name: 'Cerebras', group: '国际',
+    name: 'Cerebras', group: 'International',
     apiKeyLabel: 'Cerebras API Key', apiKeyPlaceholder: 'csk-...',
     authType: 'apikey', baseUrl: 'https://api.cerebras.ai/v1',
     models: ['llama-3.3-70b', 'llama-3.1-8b']
   },
   venice: {
-    name: 'Venice AI', group: '国际',
+    name: 'Venice AI', group: 'International',
     apiKeyLabel: 'Venice API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.venice.ai/api/v1',
     models: ['llama-3.3-70b', 'deepseek-r1-671b']
   },
-  // ─── 中国 ───
+  // ─── China ───
   bailian: {
-    name: '阿里云百炼 (Bailian)', group: '中国',
+    name: '阿里云百炼 (Bailian)', group: 'China',
     apiKeyLabel: 'DashScope API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://coding.dashscope.aliyuncs.com/v1',
     models: ['qwen3.5-plus', 'qwen3-max-2026-01-23', 'qwen3-coder-next', 'qwen3-coder-plus', 'MiniMax-M2.5', 'glm-5', 'glm-4.7', 'kimi-k2.5']
   },
   zai: {
-    name: '智谱 Z.AI (GLM)', group: '中国',
+    name: '智谱 Z.AI (GLM)', group: 'China',
     apiKeyLabel: 'Z.AI API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     models: ['glm-5', 'glm-4.7']
   },
   moonshot: {
-    name: 'Moonshot (Kimi)', group: '中国',
+    name: 'Moonshot (Kimi)', group: 'China',
     apiKeyLabel: 'Moonshot API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.moonshot.ai/v1',
     models: ['kimi-k2.5', 'moonshot-v1-128k', 'moonshot-v1-32k']
   },
   'kimi-coding': {
-    name: 'Kimi Coding', group: '中国',
+    name: 'Kimi Coding', group: 'China',
     apiKeyLabel: 'Kimi Coding API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.kimi.com/coding/',
     models: ['k2p5']
   },
   minimax: {
-    name: 'MiniMax', group: '中国',
+    name: 'MiniMax', group: 'China',
     apiKeyLabel: 'MiniMax API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.minimax.io/anthropic',
     models: ['MiniMax-M2.5', 'MiniMax-M1']
   },
   xiaomi: {
-    name: '小米 MiMo', group: '中国',
+    name: '小米 MiMo', group: 'China',
     apiKeyLabel: 'Xiaomi API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.xiaomimimo.com/anthropic',
     models: ['mimo-v2-flash']
   },
   qianfan: {
-    name: '百度千帆 (Qianfan)', group: '中国',
+    name: '百度千帆 (Qianfan)', group: 'China',
     apiKeyLabel: 'Qianfan API Key', apiKeyPlaceholder: 'bce-v3/ALTAK-...',
     authType: 'apikey', baseUrl: 'https://qianfan.baidubce.com/v2',
     models: ['deepseek-v3.2', 'ernie-4.5-8k']
   },
   volcengine: {
-    name: '火山引擎 (Volcengine)', group: '中国',
+    name: '火山引擎 (Volcengine)', group: 'China',
     apiKeyLabel: 'Volcengine API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     needsBaseUrl: true,
     models: ['ark-code-latest']
   },
   byteplus: {
-    name: 'BytePlus', group: '中国',
+    name: 'BytePlus', group: 'China',
     apiKeyLabel: 'BytePlus API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://ark.ap-southeast.bytepluses.com/api/v3',
     needsBaseUrl: true,
     models: ['ark-code-latest']
   },
-  // ─── 网关 / 代理 ───
+  // ─── Gateway / Proxy ───
   litellm: {
-    name: 'LiteLLM', group: '网关',
+    name: 'LiteLLM', group: 'Gateway',
     apiKeyLabel: 'LiteLLM API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'http://localhost:4000',
     needsBaseUrl: true,
     models: ['claude-opus-4-6', 'gpt-4o']
   },
   opencode: {
-    name: 'OpenCode Zen', group: '网关',
+    name: 'OpenCode Zen', group: 'Gateway',
     apiKeyLabel: 'OpenCode API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://opencode.ai/v1',
     models: ['claude-opus-4-6', 'gpt-4o']
   },
   kilocode: {
-    name: 'Kilo Gateway', group: '网关',
+    name: 'Kilo Gateway', group: 'Gateway',
     apiKeyLabel: 'Kilocode API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: 'https://api.kilo.ai/api/gateway/',
     models: ['anthropic/claude-opus-4.6']
   },
   synthetic: {
-    name: 'Synthetic', group: '网关',
+    name: 'Synthetic', group: 'Gateway',
     apiKeyLabel: 'Synthetic API Key', apiKeyPlaceholder: 'sk-...',
     authType: 'apikey', baseUrl: '',
     needsBaseUrl: true,
     models: ['hf:MiniMaxAI/MiniMax-M2.5']
   },
-  // ─── 本地 ───
+  // ─── Local ───
   ollama: {
-    name: 'Ollama (本地)', group: '本地',
+    name: 'Ollama (Local)', group: 'Local',
     apiKeyLabel: 'Ollama API Key (可选)', apiKeyPlaceholder: '留空即可',
     authType: 'apikey', baseUrl: 'http://localhost:11434',
     needsBaseUrl: true,
     models: []
   },
   lmstudio: {
-    name: 'LM Studio (本地)', group: '本地',
+    name: 'LM Studio (Local)', group: 'Local',
     apiKeyLabel: 'API Key (可选)', apiKeyPlaceholder: 'lm-studio',
     authType: 'apikey', baseUrl: 'http://127.0.0.1:1234/v1',
     needsBaseUrl: true,
     models: []
   },
   vllm: {
-    name: 'vLLM (本地)', group: '本地',
+    name: 'vLLM (Local)', group: 'Local',
     apiKeyLabel: 'vLLM API Key (可选)', apiKeyPlaceholder: '留空即可',
     authType: 'apikey', baseUrl: 'http://localhost:8000/v1',
     needsBaseUrl: true,
     models: []
   },
-  // ─── 自定义 ───
+  // ─── Custom ───
   custom: {
-    name: '自定义端点', group: '其他',
+    name: 'Custom端点', group: '其他',
     apiKeyLabel: 'API Key', apiKeyPlaceholder: 'your-api-key',
     authType: 'apikey', baseUrl: '',
     needsBaseUrl: true,
@@ -2643,11 +2651,11 @@ const AI_PROVIDERS = {
   }
 };
 
-// --- 多 API Key 管理 ---
+// --- Multi API Key management ---
 let aiConfiguredKeys = []; // [{id, provider, keyMasked, baseUrl, authType, models:[]}]
 let aiAuthTaskTimer = null;
 let lastFocusedModelInput = 'ai-model-primary';
-// 保存活跃的 OAuth 授权状态，切换 provider 时可恢复
+// Save active OAuth auth state; can be restored when switching providers
 let _activeOAuthState = null; // { provider, url, userCode, taskId }
 
 function providerFromModel(modelId = '') {
@@ -2772,7 +2780,7 @@ function updateAiProviderUI() {
     if (config.authType === 'oauth') {
       oauthWrap.hidden = false;
       const guideEl = $('ai-oauth-guide');
-      // 如果有正在进行的 OAuth 授权，恢复授权信息而不是覆盖
+      // If OAuth auth in progress, restore auth info instead of overwriting
       if (guideEl) {
         if (_activeOAuthState && _activeOAuthState.provider === provider) {
           _showActiveOAuthInCard();
@@ -2794,11 +2802,11 @@ function updateAiProviderUI() {
     }
   }
 
-  // 更新添加按钮文本：OAuth 模式不需要 API Key
+  // Update add-button text: OAuth mode does not require an API Key
   const addBtn = $('btn-ai-add-key');
   if (addBtn) {
     addBtn.textContent = config.authType === 'oauth' ? '添加此授权' : '添加此 API Key';
-    // OAuth 模式隐藏添加按钮（授权完成后自动添加）
+    // OAuth mode hides add button (auto-added after auth completes)
     addBtn.hidden = config.authType === 'oauth';
   }
 }
@@ -2807,10 +2815,10 @@ function renderConfiguredKeys() {
   const select = $('ai-configured-select');
   if (!select) return;
 
-  // 保存当前选中值
+  // Save currently selected value
   const prevVal = select.value;
 
-  // 清空并重建选项
+  // Clear and rebuild options
   select.innerHTML = '<option value="">— 请选择 —</option>';
 
   aiConfiguredKeys.forEach((k, idx) => {
@@ -2823,7 +2831,7 @@ function renderConfiguredKeys() {
     select.appendChild(opt);
   });
 
-  // 恢复选中
+  // Restore selection
   if (prevVal && select.querySelector(`option[value="${prevVal}"]`)) {
     select.value = prevVal;
   }
@@ -2831,7 +2839,7 @@ function renderConfiguredKeys() {
   onConfiguredKeySelected();
 }
 
-let _modelsFetchGen = 0; // 防止竞态：切换 key 时旧请求覆盖新结果
+let _modelsFetchGen = 0; // Prevent race: old request overwriting new result when switching key
 
 function onConfiguredKeySelected() {
   const select = $('ai-configured-select');
@@ -2844,7 +2852,7 @@ function onConfiguredKeySelected() {
   const modelsWrap = $('ai-configured-models-wrap');
   const modelsList = $('ai-configured-models-list');
 
-  // 切换时立即清空旧模型列表，避免显示上一个 provider 的模型
+  // Clear old model list immediately on switch to avoid showing previous provider models
   if (modelsList) modelsList.innerHTML = '';
   if (modelsWrap) modelsWrap.hidden = true;
 
@@ -2863,7 +2871,7 @@ function onConfiguredKeySelected() {
   if (key.baseUrl) infoText += `\nURL: ${key.baseUrl}`;
   if (info) info.textContent = infoText;
 
-  // 自动获取可用模型
+  // Auto-fetch available models
   fetchConfiguredKeyModels();
 }
 
@@ -2877,9 +2885,9 @@ async function fetchConfiguredKeyModels() {
   }
 
   const pConfig = AI_PROVIDERS[key.provider] || {};
-  const gen = ++_modelsFetchGen; // 递增 generation
+  const gen = ++_modelsFetchGen; // Increment generation
 
-  // 显示加载中
+  // Show loading indicator
   const modelsWrap = $('ai-configured-models-wrap');
   const modelsList = $('ai-configured-models-list');
   if (modelsWrap) modelsWrap.hidden = false;
@@ -2888,12 +2896,12 @@ async function fetchConfiguredKeyModels() {
   appendAiAuthLog(`[fetch] 正在获取 ${pConfig.name || key.provider} 的模型列表...`);
 
   try {
-    // 所有 provider 都通过后端 API 获取真实模型列表
+    // All providers fetch real model list through backend API
     const res = await api('/api/ai/models', {
       method: 'POST',
       body: { provider: key.provider }
     });
-    // 丢弃过期的请求结果（用户已切换到其他 key）
+    // Discard stale request results (user switched to another key)
     if (gen !== _modelsFetchGen) return;
     if (res.error && !res.models) {
       appendAiAuthLog(`[fetch] 获取失败: ${res.error}`, 'error');
@@ -2994,7 +3002,7 @@ async function addAiKey() {
   const baseUrl = $('ai-baseurl')?.value?.trim() || '';
   const config = AI_PROVIDERS[provider] || {};
 
-  // OAuth 类型不能通过"添加"按钮直接添加，必须先完成 OAuth 授权流程
+  // OAuth type cannot be added via Add button; OAuth auth flow must complete first
   if (config.authType === 'oauth') {
     toast('请先授权', `${config.name || provider} 需要先点击"启动设备授权"完成 OAuth 登录`);
     appendAiAuthLog(`[add] ${config.name || provider} 是 OAuth 类型，请先完成设备授权`, 'error');
@@ -3007,7 +3015,7 @@ async function addAiKey() {
     return;
   }
 
-  // 先验证 API Key 有效性
+  // Validate API Key first
   appendAiAuthLog(`[validate] 正在验证 ${config.name || provider} API Key...`);
   const addBtn = $('btn-ai-add-key');
   if (addBtn) { addBtn.disabled = true; addBtn.textContent = '验证中…'; }
@@ -3052,16 +3060,16 @@ async function addAiKey() {
     appendAiAuthLog(`[add] ${config.name || provider} API Key 添加成功`, 'success');
     if ($('ai-apikey')) $('ai-apikey').value = '';
     await loadAIConfig();
-    // 自动切到已配置 Key 页面
+    // Auto-switch to configured keys page
     document.querySelector('#ai-key-tabs .tab[data-ai-tab="configured-keys"]')?.click();
-    // 自动选中刚添加的 key（选最后一个匹配的 provider）
+    // Auto-select just-added key (pick last matching provider)
     const sel = $('ai-configured-select');
     if (sel) {
       let lastIdx = -1;
       aiConfiguredKeys.forEach((k, i) => { if (k.provider === provider) lastIdx = i; });
       if (lastIdx >= 0) { sel.value = String(lastIdx); onConfiguredKeySelected(); }
     }
-    // 自动获取可用模型
+    // Auto-fetch available models
     appendAiAuthLog(`[add] 正在获取可用模型列表...`);
     try { await fetchConfiguredKeyModels(); } catch {}
   } catch (e) {
@@ -3077,7 +3085,7 @@ async function loadAIConfig(){
   try {
     let d = await api('/api/ai/config', { timeoutMs: 30000 });
 
-    // 首次超时自动重试一次
+    // Auto-retry once on first timeout
     if (d.error && /超时|timeout/i.test(d.error)) {
       appendAiAuthLog('[load] 首次读取超时，正在重试...');
       d = await api('/api/ai/config', { timeoutMs: 30000 });
@@ -3142,11 +3150,11 @@ async function saveAIConfig() {
     return;
   }
 
-  // 自动补全 provider/ 前缀
+  // Auto-complete the provider/ prefix
   const autoPrefix = (modelStr) => {
     if (!modelStr) return modelStr;
     if (modelStr.includes('/')) return modelStr;
-    // 从已配置 key 中找匹配的 provider，或使用当前选中的 provider
+    // Find matching provider from configured keys, or use currently selected provider
     const selProvider = $('ai-provider')?.value || '';
     const configuredProviders = aiConfiguredKeys.map(k => k.provider);
     const provider = configuredProviders.length > 0 ? configuredProviders[0] : selProvider;
@@ -3155,7 +3163,7 @@ async function saveAIConfig() {
   };
   primaryModel = autoPrefix(primaryModel);
   subModel = subModel ? autoPrefix(subModel) : '';
-  // 对 fallback 列表中的每个模型也自动补前缀
+  // Also auto-prepend prefix for each model in fallback list
   const autoPrefixList = (str) => {
     if (!str) return str;
     return str.split(',').map(s => autoPrefix(s.trim())).filter(Boolean).join(', ');
@@ -3176,8 +3184,8 @@ async function saveAIConfig() {
     };
 
     appendAiAuthLog(`[save] 主模型: ${primaryModel}`);
-    if (body.fallbacks.primary.length) appendAiAuthLog(`[save] 主代理 Fallbacks: ${body.fallbacks.primary.join(', ')}`);
-    if (subModel) appendAiAuthLog(`[save] 子代理模型: ${subModel}`);
+    if (body.fallbacks.primary.length) appendAiAuthLog(`[save] ${_t('主代理 Fallbacks: {0}', body.fallbacks.primary.join(', '))}`);
+    if (subModel) appendAiAuthLog(`[save] ${_t('子代理模型: {0}', subModel)}`);
 
     const res = await api('/api/ai/config', { method:'POST', body });
     if (res.error) {
@@ -3204,7 +3212,7 @@ async function pollAiAuthTask(taskId){
     if (!st || st.error) return;
     if (st.delta) {
       appendColored($('ai-auth-log'), st.delta, 3000, true);
-      // 自动显示设备授权信息 — 在 OAuth 卡片区域内显示
+      // Auto-display device auth info — shown inside the OAuth card area
       if (!oauthUrlOpened) {
         const urlMatch = st.delta.match(/https?:\/\/[^\s)]+\/login\/device[^\s)']*/i)
           || st.delta.match(/https?:\/\/[^\s)]+verification[^\s)']*/i)
@@ -3212,10 +3220,10 @@ async function pollAiAuthTask(taskId){
         if (urlMatch) {
           const url = urlMatch[0].replace(/[,.;:]+$/, '');
           oauthUrlOpened = true;
-          // 提取 user_code
+          // Extract user_code
           const codeMatch = st.delta.match(/(?:授权码|code)[:：]\s*([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})?)/i);
           const userCode = codeMatch ? codeMatch[1] : '';
-          // 保存活跃授权状态，切换 provider 时可恢复
+          // Save active auth state; can be restored when switching providers
           const provider = $('ai-provider')?.value || '';
           _activeOAuthState = { provider, url, userCode, taskId };
           _showActiveOAuthInCard();
@@ -3229,21 +3237,21 @@ async function pollAiAuthTask(taskId){
       const success = st.status === 'success';
       toast(success ? '认证完成' : '认证失败', success ? '认证信息已写入' : '请查看日志');
       appendAiAuthLog(`[auth] OAuth 认证${success ? '成功' : '失败'}`, success ? 'success' : 'error');
-      // 恢复 OAuth 卡片区域到初始状态
+      // Restore OAuth card area to initial state
       _restoreOAuthCard(success);
       if (success) {
-        // OAuth 成功后重新加载配置（服务端已自动添加 provider 条目）
+        // After OAuth success, reload config (server auto-added provider entry)
         const provider = $('ai-provider')?.value || '';
         await loadAIConfig();
-        // 自动切到已配置 Key 页面
+        // Auto-switch to configured keys page
         document.querySelector('#ai-key-tabs .tab[data-ai-tab="configured-keys"]')?.click();
-        // 自动选中刚授权的 provider
+        // Auto-select just-authorized provider
         const sel = $('ai-configured-select');
         if (sel) {
           const newIdx = aiConfiguredKeys.findIndex(k => k.provider === provider);
           if (newIdx >= 0) { sel.value = String(newIdx); onConfiguredKeySelected(); }
         }
-        // OAuth 成功后自动获取可用模型
+        // Auto-fetch available models after OAuth success
         appendAiAuthLog(`[auth] 正在获取可用模型列表...`);
         try { await fetchConfiguredKeyModels(); } catch {}
         return;
@@ -3255,7 +3263,7 @@ async function pollAiAuthTask(taskId){
   aiAuthTaskTimer = setInterval(tick, 1000);
 }
 
-/** 在 OAuth 卡片区域显示活跃的授权信息（链接+授权码+重新授权按钮） */
+/** Display active auth info in OAuth card area (link + code + re-auth button) */
 function _showActiveOAuthInCard() {
   if (!_activeOAuthState) return;
   const { url, userCode } = _activeOAuthState;
@@ -3270,7 +3278,7 @@ function _showActiveOAuthInCard() {
     const hintHtml = `<div style="margin-top:8px;font-size:12px;color:#8b949e">请点击上方链接，在 GitHub 页面中输入授权码完成认证</div>`;
     const reAuthHtml = `<div style="margin-top:12px;text-align:center"><button class="btn btn-secondary" id="_btn-reauth" style="font-size:12px">🔄 重新授权</button></div>`;
     guideEl.innerHTML = `<div style="padding:4px 0">${linkHtml}${codeHtml}${hintHtml}${reAuthHtml}</div>`;
-    // 绑定重新授权按钮
+    // Bind re-authorize button
     const reAuthBtn = document.getElementById('_btn-reauth');
     if (reAuthBtn) reAuthBtn.addEventListener('click', () => {
       _activeOAuthState = null;
@@ -3280,16 +3288,16 @@ function _showActiveOAuthInCard() {
   }
 }
 
-/** 恢复 OAuth 卡片区域到初始状态 */
+/** Restore OAuth card area to initial state */
 function _restoreOAuthCard(success) {
   const statusEl = $('ai-oauth-status');
   const guideEl = $('ai-oauth-guide');
   const oauthBtn = $('btn-ai-oauth-login');
   if (oauthBtn) { oauthBtn.disabled = false; oauthBtn.textContent = '启动设备授权'; }
-  if (statusEl) statusEl.textContent = success ? '✅ 授权成功，可再次点击刷新授权' : '点击按钮启动设备授权流程';
-  // 清除活跃状态
+  if (statusEl) statusEl.textContent = success ? '✅ 授权成功，可再次点击Refresh授权' : '点击按钮启动设备授权流程';
+  // Clear active state
   if (success || !_activeOAuthState) _activeOAuthState = null;
-  // 恢复 guide 内容
+  // Restore guide content
   const provider = $('ai-provider')?.value || '';
   const config = AI_PROVIDERS[provider] || {};
   if (guideEl && config.oauthGuide) guideEl.innerHTML = config.oauthGuide;
@@ -3298,7 +3306,7 @@ function _restoreOAuthCard(success) {
 async function startOAuthLogin() {
   const provider = $('ai-provider')?.value || '';
   appendAiAuthLog(`[auth] 启动 ${provider} OAuth 登录...`);
-  // 更新 OAuth 卡片状态为"正在启动"
+  // Update OAuth card status to "starting"
   const statusEl = $('ai-oauth-status');
   if (statusEl) statusEl.textContent = '正在启动授权…';
 
@@ -3318,7 +3326,7 @@ async function startOAuthLogin() {
   }
 }
 
-// 事件监听
+// Event listeners
 $('ai-provider')?.addEventListener('change', updateAiProviderUI);
 $('btn-ai-load')?.addEventListener('click', loadAIConfig);
 $('btn-ai-oauth-login')?.addEventListener('click', startOAuthLogin);
@@ -3328,12 +3336,12 @@ $('ai-configured-select')?.addEventListener('change', onConfiguredKeySelected);
 $('btn-ai-configured-fetch')?.addEventListener('click', fetchConfiguredKeyModels);
 $('btn-ai-configured-delete')?.addEventListener('click', deleteConfiguredKey);
 
-// 记录最后聚焦的模型输入框
+// Record the last focused model input field
 ['ai-model-primary','ai-model-primary-fallback','ai-model-sub','ai-model-sub-fallback'].forEach(id => {
   $(id)?.addEventListener('focus', () => { lastFocusedModelInput = id; });
 });
 
-// 初始化
+// Initialize
 updateAiProviderUI();
 // ------------------------
 // Messaging – load / save (refactored to match openclaw.json schema)
@@ -3352,7 +3360,7 @@ async function loadMessagingConfig(){
   const setBoolSelect = (id, v) => { if ($(id)) $(id).value = String(!!v); };
   const setVal = (id, v) => { if ($(id)) $(id).value = v ?? ''; };
 
-  // -- 飞书 (nested: accounts.default, fallback accounts.main) with flat fallback --
+  // -- Feishu (nested: accounts.default, fallback accounts.main) with flat fallback --
   const fs = c.feishu || {};
   const fsMain = fs.accounts?.default || fs.accounts?.main || {};
   setBoolSelect('feishu-enabled', fs.enabled);
@@ -3373,7 +3381,7 @@ async function loadMessagingConfig(){
   const guildKeys = Object.keys(dc.guilds || {}).filter((k) => k !== '*');
   setBoolSelect('discord-enabled', dc.enabled);
   setVal('discord-token', dc.token);
-  // 多服务器模式：优先展示标准 guilds，兼容历史 guildId
+  // Multi-server mode: prefer standard guilds, backward-compatible with single guildId
   const guildText = guildKeys.length
     ? guildKeys.join('\n')
     : (dc.guildId ? String(dc.guildId) : '');
@@ -3437,7 +3445,7 @@ $('btn-discord-approve-pairing')?.addEventListener('click', async ()=>{
   await loadDiscordRuntimeStatus();
 });
 
-// 重启 Gateway 生效
+// 重启 Gateway to apply
 $('btn-msg-restart')?.addEventListener('click', async ()=>{
   appendMsgLog('[restart] 正在重启 Gateway...');
   const r = await api('/api/openclaw/start', { method:'POST' });
@@ -3478,9 +3486,9 @@ qa('[data-save-msg]').forEach(btn => {
         historyLimit:    Number($('discord-historylimit')?.value) || 30,
         dmHistoryLimit:  Number($('discord-dmhistorylimit')?.value) || 50,
       });
-      // OpenClaw 官方 schema：使用 guilds（多服务器）
+      // OpenClaw official schema: use guilds (multi-server)
       update.channels.discord.guilds = Object.fromEntries(guildIds.map((id) => [id, {}]));
-      // 标记后端执行完整替换，避免 deepMerge 残留旧服务器
+      // Mark backend for full replacement, avoid deepMerge leaving old servers
       update.channels.discord.__replaceGuilds = true;
       appendMsgLog(`[save] Discord 服务器数: ${guildIds.length}`);
     }
@@ -3503,7 +3511,7 @@ qa('[data-save-msg]').forEach(btn => {
       const saved = Array.isArray(r.savedChannels) && r.savedChannels.length
         ? r.savedChannels.join(', ')
         : platform;
-      toast('保存成功', `已写入 channels.${saved}，需重启 Gateway 生效`);
+      toast('保存成功', `已写入 channels.${saved}，需重启 Gateway to apply`);
       appendMsgLog(`[save] 保存成功: channels.${saved}`);
       if ($('btn-msg-restart')) $('btn-msg-restart').style.display = '';
     } else {
@@ -3514,7 +3522,7 @@ qa('[data-save-msg]').forEach(btn => {
 });
 
 // ------------------------
-// 远端设备管理 (Node 模式)
+// Remote device management (Node mode)
 // ------------------------
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
@@ -3522,7 +3530,7 @@ async function loadDeviceManagement(forceConnectedRefresh = false) {
   if (window.__deviceMgmtRefreshing) return;
   window.__deviceMgmtRefreshing = true;
   try {
-  // 并行加载: setup command + pairing list + security config + connected nodes
+  // Parallel load: setup command + pairing list + security config + connected nodes
   const [cmdRes, pairRes, secRes, connRes] = await Promise.all([
     api('/api/node/setup-command'),
     api('/api/openclaw/pairing/list'),
@@ -3530,7 +3538,7 @@ async function loadDeviceManagement(forceConnectedRefresh = false) {
     api(`/api/node/connected${forceConnectedRefresh ? '?force=1' : ''}`)
   ]);
 
-  // 快速连接命令
+  // Quick-connect command
   const cmdEl = $('device-setup-command');
   const cmdWinEl = $('device-setup-command-win');
   const cmdBgEl = $('device-setup-command-bg');
@@ -3568,21 +3576,21 @@ async function loadDeviceManagement(forceConnectedRefresh = false) {
     const noteParts = [];
     noteParts.push(cmdRes.tlsNote || '命令会根据当前 HTTPS 配置决定是否保留 NODE_TLS_REJECT_UNAUTHORIZED=0；无法可靠判断时会保守保留。');
     if (cmdRes.nodeBgDir) {
-      noteParts.push(`后台模式会为当前网关使用独立目录 ${cmdRes.nodeBgDir}，不同网关可同时运行。`);
+      noteParts.push(_t('后台模式会为当前 Gateway 使用独立目录 {0}，不同 Gateway 可同时运行。', cmdRes.nodeBgDir));
     }
     cmdNoteEl.textContent = noteParts.join(' ');
   }
 
-  // 在线节点列表
+  // Online nodes list
   renderConnectedNodes(connRes);
 
-  // 配对审批列表
+  // Pairing approval list
   renderPairingList(pairRes);
 
-  // 已配对设备列表
+  // Paired devices list
   renderPairedList(pairRes, connRes);
 
-  // 安全配置
+  // Security configuration
   if (secRes.success) {
     if ($('device-auto-approve')) $('device-auto-approve').value = String(!!secRes.autoApprove);
     if ($('device-browser-mode')) $('device-browser-mode').value = secRes.browserMode || 'auto';
@@ -3821,7 +3829,7 @@ deviceMgmtPageEl?.addEventListener('change', (event) => {
   }
 });
 
-// 复制快速连接命令
+// Copy quick-connect command
 $('btn-copy-setup-cmd')?.addEventListener('click', () => {
   // Copy whichever tab is visible
   const linuxEl = $('device-setup-command');
@@ -3851,12 +3859,12 @@ $('btn-copy-setup-cmd')?.addEventListener('click', () => {
   );
 });
 
-// 刷新
+// Refresh
 $('btn-device-refresh')?.addEventListener('click', () => loadDeviceManagement(true));
 $('btn-pairing-refresh')?.addEventListener('click', () => loadDeviceManagement(true));
 $('btn-connected-refresh')?.addEventListener('click', () => loadDeviceManagement(true));
 
-// 保存安全配置
+// Save security configuration
 $('btn-device-save-security')?.addEventListener('click', async () => {
   const autoApprove = ($('device-auto-approve')?.value || 'false') === 'true';
   const browserMode = $('device-browser-mode')?.value || 'auto';
@@ -3865,7 +3873,7 @@ $('btn-device-save-security')?.addEventListener('click', async () => {
 
   const r = await api('/api/node/security', { method: 'POST', body: { autoApprove, browserMode, execSecurity, denyCommands } });
   if (r.success) {
-    toast('安全配置已保存', '部分配置需重启 Gateway 生效');
+    toast('安全配置已保存', '部分配置需重启 Gateway to apply');
     if ($('btn-device-restart-gw')) $('btn-device-restart-gw').style.display = '';
   } else {
     toast('保存失败', r.error || '');
@@ -3932,7 +3940,7 @@ function scanSkillCard(s, idx) {
   } else if (skillNameMismatch) {
     statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px">⚠ 同名目录 (不同 Skill)</span>';
   } else if (nameConflict) {
-    statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px">⚠ 同名已安装 (自定义)</span>';
+    statusBadge = '<span style="color:#ff9800;font-size:11px;margin-left:6px">⚠ 同名已安装 (Custom)</span>';
   } else if (installed && isLocalScan) {
     statusBadge = '<span style="color:#2196f3;font-size:11px;margin-left:6px">⟳ 已安装 (可覆盖)</span>';
   } else if (installed) {
@@ -5048,7 +5056,7 @@ async function terminalConnect(){
         termWsToken = null;
       }
       if (termFailureCount >= 2) {
-        startTerminalFallback('网络或代理异常');
+        startTerminalFallback('网络或Proxy异常');
       }
     };
 
@@ -5087,7 +5095,7 @@ $('btn-term-clear').addEventListener('click', ()=>{
   saveTerminalCache();
 });
 loadTerminalCache();
-// 页面加载时检测 localStorage 中残留的"等待重启"日志，若 Gateway 已恢复则补偿完成消息
+// On page load, detect leftover restart-waiting logs in localStorage; if Gateway recovered, compensate with completion message
 (function reconcileStaleRestartLog() {
   const logEl = $('oc-log');
   if (!logEl) return;
@@ -5097,9 +5105,9 @@ loadTerminalCache();
   if (hasWaiting && !hasResult) {
     api('/api/openclaw', { timeoutMs: 10000 }).then(st => {
       if (st && !st.error && st.gatewayRunning) {
-        appendOcLogLine('✅ Gateway 已恢复运行（页面刷新后检测）');
+        appendOcLogLine('✅ Gateway 已恢复运行（页面Refresh后检测）');
       } else if (st && !st.error && !st.gatewayRunning) {
-        appendOcLogLine('⚠️ Gateway 当前未运行，请检查状态');
+        appendOcLogLine('⚠️ Gateway 当前未运行，请Check state');
       }
     }).catch(() => {});
   }

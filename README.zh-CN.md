@@ -9,33 +9,35 @@
 </p>
 
 <p align="center">
-  <strong>Your personal AI assistant, one-click deployment to any platform.</strong>
+  <strong>你的私人 AI 助手，一键部署到任何平台。</strong>
 </p>
 
 <p align="center">
-  <a href="README.zh-CN.md">中文</a> ·
+  <a href="README.md">English</a> ·
   <a href="https://github.com/openclaw/openclaw">OpenClaw</a> ·
-  <a href="#one-click-install">Install</a> ·
-  <a href="#screenshots">Screenshots</a> ·
-  <a href="https://docs.openclaw.ai">Docs</a>
+  <a href="#一键安装">安装</a> ·
+  <a href="#截图">截图</a> ·
+  <a href="https://docs.openclaw.ai">文档</a>
 </p>
 
 ---
 
-[OpenClaw](https://github.com/openclaw/openclaw) is an open-source personal AI assistant that connects to 20+ platforms including Discord, Feishu (Lark), WeChat, Telegram, Slack, WhatsApp, and more. Through a flexible Skills and Extensions mechanism, it integrates AI into your daily workflow.
+[OpenClaw](https://github.com/openclaw/openclaw) 是一款开源的个人 AI 助手，支持接入 Discord、飞书、微信、Telegram、Slack、WhatsApp 等 20+ 平台，通过灵活的技能（Skills）和扩展（Extensions）机制，让 AI 真正融入你的日常工作流。
 
-**OpenClaw Pro** is a **one-click deployment toolkit** for Linux, macOS, and Windows, providing:
+**OpenClaw Pro** 是面向 Linux、macOS、Windows 的 OpenClaw **一键部署工具**，提供：
 
-- 🚀 **One-Click Install** — A single command handles Docker image pull, container creation, and Gateway startup
-- 🔄 **Hot Update** — One-click upgrade from the Web control panel with A/B version swap and auto-rollback
-- 🛡️ **Self-Healing** — Gateway Watchdog health monitoring, automatic recovery, and runtime checkpoint resumption
-- 🎨 **Web Control Panel** — Visual management for config, models, skill plugins, install/update status
-- 🧩 **Skill Market** — Browse, install, and update community skill packages online
+- 🚀 **一键安装** — 一条命令完成 Docker 镜像拉取、容器创建、Gateway 启动
+- 🔄 **热更新** — Web 控制面板内一键升级，支持 A/B 版本切换与自动回退
+- 🛡️ **自愈能力** — Gateway Watchdog 健康监控、异常自动恢复、运行时断点续传
+- 🎨 **Web 控制面板** — 可视化管理配置、模型、技能插件、安装/更新状态
+- 🧩 **技能市场** — 在线浏览、安装、更新社区技能包
 
-## Screenshots
+> 💬 OpenClaw 交流群：QQ `852036008`
+
+## 截图
 
 <details open>
-<summary><b>📸 Web Control Panel Overview (click to expand/collapse)</b></summary>
+<summary><b>📸 Web 控制面板一览（点击展开/收起）</b></summary>
 <br/>
 
 <table>
@@ -59,7 +61,7 @@
 
 </details>
 
-## One-Click Install
+## 一键安装
 
 ### Linux / macOS
 
@@ -67,17 +69,17 @@
 curl -fsSL https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install.sh | bash
 ```
 
-### Windows (Administrator PowerShell)
+### Windows（管理员 PowerShell）
 
-Windows installation currently uses the Docker Desktop approach only.
-Please install and start Docker Desktop first, then run the install command below.
+Windows 安装当前仅保留 Docker Desktop 方案。
+请先安装并启动 Docker Desktop，再执行下面的安装命令。
 
 ```powershell
 irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows-bootstrap.ps1 | iex
 ```
 
-Or download and run `install-windows.bat` as Administrator.
+或下载后以管理员身份运行 `install-windows.bat`。
 
-## License
+## 许可证
 
 [MIT](LICENSE)

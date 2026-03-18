@@ -1,4 +1,5 @@
 function $(id){return document.getElementById(id)}
+const _t = typeof window.t === 'function' ? window.t : x => x;
 
 async function api(url, opts = {}) {
   const res = await fetch(url, {
@@ -13,8 +14,9 @@ async function api(url, opts = {}) {
 
 function setHint(msg, type = '', html = false) {
   const el = $('login-hint');
-  if (html) el.innerHTML = msg || '';
-  else el.textContent = msg || '';
+  const translated = html ? msg : _t(msg || '');
+  if (html) el.innerHTML = translated || '';
+  else el.textContent = translated || '';
   el.className = 'auth-hint' + (type ? ` ${type}` : '');
 }
 
@@ -25,7 +27,7 @@ function setSetupMode(on) {
   $('setup-confirm-field').style.display = setupMode ? '' : 'none';
   $('login-username').value = 'admin';
   $('login-username').disabled = true;
-  $('login-submit').textContent = setupMode ? '设置密码' : '登录';
+  $('login-submit').textContent = _t(setupMode ? '设置密码' : '登录');
   $('login-password').setAttribute('autocomplete', setupMode ? 'new-password' : 'current-password');
   setHint(setupMode ? '首次使用：请设置管理密码（至少8位，含大小写字母、数字和特殊字符）' : '', setupMode ? '' : '');
 }
@@ -61,7 +63,7 @@ async function doSubmit() {
 
   const btn = $('login-submit');
   btn.disabled = true;
-  btn.textContent = setupMode ? '设置中...' : '登录中...';
+  btn.textContent = _t(setupMode ? '设置中...' : '登录中...');
   setHint('');
 
   try {
@@ -97,7 +99,7 @@ async function doSubmit() {
     setHint('网络错误：' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = setupMode ? '设置密码' : '登录';
+    btn.textContent = _t(setupMode ? '设置密码' : '登录');
   }
 }
 
