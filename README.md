@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="OpenClaw Pro" width="680" />
+  <img src="docs/images/banner-en.svg" alt="OpenClaw Pro" width="680" />
 </p>
 
 <p align="center">
@@ -16,7 +16,6 @@
   <a href="README.zh-CN.md">中文</a> ·
   <a href="https://github.com/openclaw/openclaw">OpenClaw</a> ·
   <a href="#one-click-install">Install</a> ·
-  <a href="#screenshots">Screenshots</a> ·
   <a href="https://docs.openclaw.ai">Docs</a>
 </p>
 
@@ -31,33 +30,6 @@
 - 🛡️ **Self-Healing** — Gateway Watchdog health monitoring, automatic recovery, and runtime checkpoint resumption
 - 🎨 **Web Control Panel** — Visual management for config, models, skill plugins, install/update status
 - 🧩 **Skill Market** — Browse, install, and update community skill packages online
-
-## Screenshots
-
-<details open>
-<summary><b>📸 Web Control Panel Overview (click to expand/collapse)</b></summary>
-<br/>
-
-<table>
-  <tr>
-    <td><img src="docs/images/screenshot-01.png" width="400" /></td>
-    <td><img src="docs/images/screenshot-02.png" width="400" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/screenshot-03.png" width="400" /></td>
-    <td><img src="docs/images/screenshot-04.png" width="400" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/screenshot-05.png" width="400" /></td>
-    <td><img src="docs/images/screenshot-06.png" width="400" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/screenshot-07.png" width="400" /></td>
-    <td><img src="docs/images/screenshot-08.png" width="400" /></td>
-  </tr>
-</table>
-
-</details>
 
 ## One-Click Install
 

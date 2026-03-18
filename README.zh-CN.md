@@ -32,8 +32,6 @@
 - 🎨 **Web 控制面板** — 可视化管理配置、模型、技能插件、安装/更新状态
 - 🧩 **技能市场** — 在线浏览、安装、更新社区技能包
 
-> 💬 OpenClaw 交流群：QQ `852036008`
-
 ## 截图
 
 <details open>
@@ -44,18 +42,6 @@
   <tr>
     <td><img src="docs/images/screenshot-01.png" width="400" /></td>
     <td><img src="docs/images/screenshot-02.png" width="400" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/screenshot-03.png" width="400" /></td>
-    <td><img src="docs/images/screenshot-04.png" width="400" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/screenshot-05.png" width="400" /></td>
-    <td><img src="docs/images/screenshot-06.png" width="400" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/screenshot-07.png" width="400" /></td>
-    <td><img src="docs/images/screenshot-08.png" width="400" /></td>
   </tr>
 </table>
 

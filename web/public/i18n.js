@@ -60,7 +60,6 @@
     '显示侧边栏': 'Show sidebar',
     '退出': 'Logout',
     '打开 OpenClaw Gateway 控制台': 'Open OpenClaw Gateway Console',
-    'OpenClaw交流群：QQ：852036008': 'OpenClaw Community: QQ: 852036008',
 
     // ─── Dashboard ───────────────────────────────────
     '系统概览': 'System Overview',
@@ -527,6 +526,10 @@
 
     // ─── Settings ────────────────────────────────────
     '系统更新': 'System Update',
+    '语言 / Language': 'Language',
+    '界面语言': 'Interface Language',
+    '说明': 'Note',
+    '根据浏览器语言自动选择，也可手动切换。切换后页面会自动刷新。': 'Auto-detected from browser language. Can be switched manually. Page will refresh after switching.',
     '面板登录密码': 'Panel Login Password',
     '当前密码': 'Current Password',
     '新密码': 'New Password',
@@ -1286,17 +1289,33 @@
     _updateLangUI();
   }
 
+  // Bind Settings-page language <select>
+  function _bindSettingsLanguage() {
+    var sel = document.getElementById('settings-language');
+    if (!sel) return;
+    sel.value = _locale;
+    sel.addEventListener('change', function () {
+      var lang = sel.value;
+      if (lang !== _locale) {
+        setLocale(lang);
+        location.reload();
+      }
+    });
+  }
+
   // --------------- initialization ---------------
   function _init() {
     document.documentElement.lang = _locale === 'zh' ? 'zh-CN' : 'en';
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', function () {
         _injectLanguageSelector();
+        _bindSettingsLanguage();
         applyI18n();
         _startObserver();
       });
     } else {
       _injectLanguageSelector();
+      _bindSettingsLanguage();
       applyI18n();
       _startObserver();
     }
