@@ -1694,9 +1694,9 @@
   }
   let _sortedKeys = null;
 
-  // Translate attributes (placeholder, title, aria-label)
+  // Translate attributes (placeholder, title, aria-label, optgroup label)
   function _translateAttrs(el) {
-    for (const attr of ['placeholder', 'title', 'aria-label']) {
+    for (const attr of ['placeholder', 'title', 'aria-label', 'label']) {
       const val = el.getAttribute(attr);
       if (!val || !/[\u4e00-\u9fff]/.test(val)) continue;
       const trimmed = val.trim();
