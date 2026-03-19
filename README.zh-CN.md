@@ -66,6 +66,30 @@ irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows
 
 或下载后以管理员身份运行 `install-windows.bat`。
 
+## 本地安装（离线）
+
+如果网络受限或希望离线安装，可从 [Releases](https://github.com/cintia09/openclaw-pro/releases) 页面同时下载**源码包**和 **Docker 镜像**（`openclaw-pro-image-lite.tar.gz`）。
+
+### Linux / macOS
+
+```bash
+tar xzf openclaw-pro-*.tar.gz
+cp openclaw-pro-image-lite.tar.gz openclaw-pro-*/
+cd openclaw-pro-*
+bash install-imageonly.sh
+```
+
+### Windows（管理员 PowerShell）
+
+```powershell
+Expand-Archive openclaw-pro-*.zip -DestinationPath .
+Copy-Item openclaw-pro-image-lite.tar.gz -Destination openclaw-pro-*\
+cd openclaw-pro-*
+powershell -ExecutionPolicy Bypass -File install-windows.ps1
+```
+
+> 安装脚本会自动检测本地镜像文件并跳过下载，端口、HTTPS、域名等交互式配置流程与一键安装完全一致。
+
 ## 许可证
 
 [MIT](LICENSE)

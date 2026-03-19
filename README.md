@@ -54,6 +54,30 @@ irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows
 
 Or download and run `install-windows.bat` as Administrator.
 
+## Local Install (Offline)
+
+If you have limited internet access or prefer offline installation, download both the **source code** and the **Docker image** (`openclaw-pro-image-lite.tar.gz`) from the [Releases](https://github.com/cintia09/openclaw-pro/releases) page.
+
+### Linux / macOS
+
+```bash
+tar xzf openclaw-pro-*.tar.gz
+cp openclaw-pro-image-lite.tar.gz openclaw-pro-*/
+cd openclaw-pro-*
+bash install-imageonly.sh
+```
+
+### Windows (Administrator PowerShell)
+
+```powershell
+Expand-Archive openclaw-pro-*.zip -DestinationPath .
+Copy-Item openclaw-pro-image-lite.tar.gz -Destination openclaw-pro-*\
+cd openclaw-pro-*
+powershell -ExecutionPolicy Bypass -File install-windows.ps1
+```
+
+> The install script auto-detects the local image and skips downloading. The full interactive setup (ports, HTTPS, domain, etc.) runs as normal.
+
 ## License
 
 [MIT](LICENSE)
