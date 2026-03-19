@@ -1048,6 +1048,185 @@
     '离线/未启用': 'Offline / Not Enabled',
     '待配对': 'Awaiting Pairing',
     '暂无用户额外安装的 Extension。OpenClaw 内置的 40+ Extensions 已自动加载。': 'No additional user-installed Extensions. 40+ built-in Extensions are auto-loaded.',
+
+    // ─── index.html static text — v1.1.314 batch ─────
+
+    // AI Model Config
+    '格式: provider/model-id': 'Format: provider/model-id',
+    '配置读取成功': 'Config loaded successfully',
+    '配置读取完成': 'Config load complete',
+
+    // Feishu setup guide
+    '前往': 'Go to',
+    '飞书开放平台': 'Feishu (Lark) Open Platform',
+    '创建企业自建应用': 'create an enterprise app',
+    '添加「机器人」能力': 'add "Bot" capability',
+    '在「凭证与基础信息」中获取 App ID 和 App Secret': 'get App ID and App Secret from "Credentials & Basic Info"',
+    '在「事件订阅」中配置回调 URL（格式:': 'configure callback URL in "Event Subscription" (format:',
+    '你的域名': 'your-domain',
+    '如: 小豆豆': 'e.g. My Bot',
+    '高级选项（Verification Token / Encrypt Key）': 'Advanced (Verification Token / Encrypt Key)',
+
+    // Discord setup guide & form
+    '获取 Bot Token': 'get Bot Token',
+    '开启 Message Content Intent': 'enable Message Content Intent',
+    '生成邀请链接将 Bot 添加到服务器': 'generate invite link to add Bot to server',
+    '当 Discord 里出现 access not configured 和配对码时，可在这里直接审批，无需再进容器执行命令。': 'When Discord shows "access not configured" and a pairing code, you can approve it here without running container commands.',
+    'partial（逐段）': 'partial',
+    'progress（逐字）': 'progress (per char)',
+    'block（整段）': 'block (whole message)',
+    'off（关闭）': 'off',
+    '将写入 channels.discord.guilds（多服务器模式）': 'Saved to channels.discord.guilds (multi-server mode)',
+    '例如: G8RP2Z8R': 'e.g. G8RP2Z8R',
+    '每行一个，或逗号分隔\n例如:': 'One per line or comma-separated\ne.g.:',
+
+    // Telegram setup guide
+    '在 Telegram 中搜索': 'Search in Telegram for',
+    '按提示创建机器人': 'follow the prompts to create a bot',
+    '可通过': 'you can use',
+    '获取你的 User ID': 'to get your User ID',
+    '逗号分隔，如 123456,789012': 'comma-separated, e.g. 123456,789012',
+    '发送': 'Send',
+
+    // Signal setup guide
+    '需要先安装': 'requires',
+    '然后用': 'then use',
+    '注册': 'to register',
+    '再用': 'then use',
+    '完成验证': 'to complete verification',
+    '验证码': 'verification code',
+    'Signal CLI 路径': 'Signal CLI Path',
+
+    // WhatsApp setup guide
+    '需要 WhatsApp Business API 或兼容网关（如': 'Requires WhatsApp Business API or compatible gateway (e.g.',
+    '填入网关的 API 地址和密钥即可': 'Enter the gateway API address and key',
+
+    // Messaging common footer
+    '此页面提供常用配置项。如需更详细的通道设置，请打开': 'This page provides common settings. For advanced channel configuration, open',
+    'openclaw 命令行 或访问 Gateway 自带 Web UI': 'openclaw CLI or Gateway built-in Web UI',
+
+    // Remote Device Management — header & quick connect
+    '将远端机器接入本 Gateway，AI 代理可远程操控浏览器与执行命令': 'connect remote machines to this Gateway, enabling AI agents to control browsers and execute commands remotely',
+    '在远端机器上运行以下命令即可自动配对（需先安装': 'Run the following command on the remote machine to auto-pair (install',
+    'CLI）。命令会自动配置节点安全策略并通过 TLS 加密连接：': 'CLI first). The command auto-configures node security policy and connects via TLS encryption:',
+    '复制命令': 'Copy Command',
+    '后台命令会为当前网关创建独立守护目录；同一网关重复执行会覆盖自身实例，不同网关可在同一台机器上并行运行。': 'Background command creates a dedicated daemon directory for the current gateway; re-running for the same gateway replaces the existing instance; different gateways can run in parallel on the same machine.',
+    '命令会自动在远端创建': 'The command auto-creates',
+    '并设置命令执行策略，然后启动节点连接。运行后需在下方审批才能接入。': 'and sets command execution policy, then starts the node connection. Approval below is required after running.',
+
+
+    // Remote Device — node status & pairing
+    '已配对的 Node 节点及其在线状态': 'Paired Node endpoints and their online status',
+    '新设备首次连接 Gateway 时需要审批（包括 CLI、Node、Web UI、消息平台 Bot 等所有客户端）': 'New devices require approval on first Gateway connection (including CLI, Node, Web UI, messaging bots, etc.)',
+
+    // Remote Device — security config
+    '(Gateway 配置)': '(Gateway config)',
+    '高危操作：': 'High-risk operation: ',
+    '开启自动审批后，任何知道 Gateway Token 的设备都可以': 'With auto-approve enabled, any device with the Gateway Token can',
+    '无需人工确认': 'without manual confirmation',
+    '直接接入并获得完整操作权限。': 'connect directly with full access.',
+    '完全的 AI 代理操控权': 'full AI agent control',
+    '包括浏览器、命令执行等': 'including browser, command execution, etc.',
+    '仅建议在完全可信的局域网环境中使用': 'recommended only in fully trusted LAN environments',
+    '这等同于授予远端设备': 'This is equivalent to granting the remote device',
+    '控制 AI 代理在远端节点上执行命令的放行方式；无人值守节点建议使用': 'Controls how AI agent commands are approved on remote nodes; for unattended nodes use',
+    '在 gateway.nodes.denyCommands 中配置，禁止 Node 执行的命令': 'Configured in gateway.nodes.denyCommands to block specific Node commands',
+    '每行一个命令，如：': 'One command per line, e.g.:',
+
+    // Node Mode Guide
+    'Node 模式说明（点击展开）': 'Node Mode Guide (click to expand)',
+    '点击展开': 'click to expand',
+    '重要：命令执行安全策略': 'Important: Command Execution Security Policy',
+    '快速连接命令会自动在远端节点配置': 'Quick connect commands will auto-configure',
+    '与上方安全配置同步': 'synced with security settings above',
+    'AI 代理可直接执行命令，无需逐次审批；这是当前页面默认值，适合无人值守节点': 'AI agents can execute commands directly without per-request approval; this is the default, suitable for unattended nodes',
+    '每次执行都需要在节点本地审批；如果节点不在你手边，命令会因': 'Each execution requires local node approval; if the node is not accessible, commands will fail due to',
+    '超时而被拒绝': 'timeout rejection',
+    '禁止所有命令执行': 'All command execution is blocked',
+    'Gateway 页面里没有单独的"命令审批通过"按钮；若选择': 'There is no "approve command" button in the Gateway page; if you choose',
+    '批准动作发生在节点本机': 'approval happens on the node itself',
+    '什么是 Node 模式？': 'What is Node Mode?',
+    '远端机器运行': 'A remote machine runs',
+    '后，会自动连接到 Gateway 并注册为一个 Node 节点。': 'then auto-connects to the Gateway and registers as a Node endpoint.',
+    'Gateway 可以通过该节点远程操控浏览器（Headless Chrome）和执行命令。': 'The Gateway can then remotely control browsers (Headless Chrome) and execute commands via this node.',
+    '支持平台': 'Supported Platforms',
+    '完整支持，命令相同（上方 Linux/macOS 标签页）': 'Full support, same commands (Linux/macOS tab above)',
+    '完整支持，需 Node.js 18+ 环境，使用 PowerShell 命令（上方 Windows 标签页）': 'Full support, requires Node.js 18+, uses PowerShell commands (Windows tab above)',
+    '连接方式': 'Connection Method',
+    'TLS 加密': 'TLS Encryption',
+    '通过 Caddy 独立 TLS 端口代理到 Gateway，命令已自动包含证书兼容设置：': 'Via Caddy TLS port proxy to Gateway; commands include cert compatibility settings:',
+    'TLS 端口在安装时由用户指定，Caddy 自动提供 TLS 证书。': 'TLS port is user-specified during install; Caddy auto-provides TLS certificates.',
+    '前置要求': 'Prerequisites',
+    '远端机器需安装 Node.js 18+（': 'Remote machine needs Node.js 18+ (',
+    '远端机器需安装 Chrome / Chromium（Node 会自动管理 Headless 实例）': 'Remote machine needs Chrome / Chromium (Node auto-manages Headless instances)',
+    '远端机器需能访问到本 Gateway 的地址（局域网 / Tailscale / WireGuard / 公网）': 'Remote machine must reach this Gateway (LAN / Tailscale / WireGuard / public)',
+    '安全模型': 'Security Model',
+    'Node 配对需要 Gateway Auth Token + 人工审批（除非开启自动审批）': 'Node pairing requires Gateway Auth Token + manual approval (unless auto-approve is on)',
+    '配对后 Node 获得 operator 级别权限，可被 AI 代理远程操控': 'After pairing, Node gets operator-level access and can be controlled by AI agents',
+    '限制远端命令执行': 'restrict remote command execution',
+    '建议仅在可信局域网或 VPN 环境中使用': 'recommended only in trusted LAN or VPN environments',
+
+    // Background Running Guide (details section)
+    '后台运行与自动重连': 'Background Running & Auto-Reconnect',
+    '推荐使用"后台运行"命令': 'Recommended: use the "Background" command',
+    '推荐使用"后台运行"': 'Recommended: "Background"',
+    'Gateway 重启或网络中断后会自动重连（5秒间隔）': 'Auto-reconnects after Gateway restart or network interruption (5s interval)',
+    '重连循环': 'reconnect loop',
+    '独立目录，可同时连接多个网关': 'separate directory, allowing multiple Gateway connections',
+    '后台模式同样支持多网关隔离；命令执行后会打印当前网关专用的日志、错误日志和停止命令': 'Background mode also supports multi-gateway isolation; after running, it prints gateway-specific log paths, error logs, and stop commands',
+    '执行命令后会显示准确路径': 'Exact paths are shown after running the command',
+    '会话独立）': 'session is independent)',
+    '独立会话）': 'independent session)',
+    '关闭 SSH 后进程不会退出（': 'Process persists after closing SSH (',
+    '关闭 SSH 会话后进程不会退出（': 'Process persists after closing SSH session (',
+    '停止节点：执行命令后终端会显示当前网关专用的停止命令': 'Stop node: the stop command for the current gateway is displayed after running',
+    '前台模式': 'Foreground mode',
+    '适合调试：可直接看到输出，': 'suitable for debugging: see output directly,',
+    'Gateway 重启': 'Gateway restart',
+    '后节点会自动重连（后台模式），前台模式需手动重新运行': 'nodes auto-reconnect in background mode; foreground mode requires manual re-run',
+    '如使用前台模式，Gateway 重启后需手动重新运行命令': 'If using foreground mode, manually re-run the command after Gateway restart',
+    '网关 重启后，节点会在 5 秒内自动重连': 'After Gateway restart, nodes auto-reconnect within 5 seconds',
+    'Gateway 重启后，节点会在 5 秒内自动重连': 'After Gateway restart, nodes auto-reconnect within 5 seconds',
+
+    // Plugins Market — descriptions
+    'Markdown 驱动的知识包，为 Agent 注入专业领域能力（如 GitHub 操作、Notion 读写等）。每个 Skill 是一个包含': 'Markdown-driven knowledge packs that inject domain expertise into Agents (e.g. GitHub Actions, Notion read/write). Each Skill is a directory containing',
+    '的目录。': '.',
+    'TypeScript 插件，扩展 OpenClaw 运行时功能（如新的消息通道、工具集、存储后端等）。通过 npm 安装。': 'TypeScript plugins that extend OpenClaw runtime (e.g. messaging channels, tool sets, storage backends). Installed via npm.',
+    '所有已安装 Skills（内置 + 扩展 + 手动安装至': 'All installed Skills (built-in + extensions + manually installed to',
+    '含安全扫描标记。': 'Includes security scan indicators.',
+    '远程仓库': 'Remote Repository',
+    '输入 URL 后点扫描（如': 'Enter URL and click Scan (e.g.',
+    '本地目录：点 📂 按钮选择文件夹，含客户端安全扫描（支持 Chrome/Edge/Safari）。': 'Local: click 📂 to select a folder with client-side security scan (Chrome/Edge/Safari).',
+    'OpenClaw 内置 40+ Extensions（含 Feishu、Discord、Telegram 等通道）。以下为用户额外安装的 Extensions。': 'OpenClaw includes 40+ built-in Extensions (Feishu, Discord, Telegram channels, etc.). Below are user-installed Extensions.',
+    'npm 包名': 'npm package name',
+    'GitHub 简写': 'GitHub shorthand',
+    '如': 'e.g.',
+    '安装后需重启 Gateway 生效': 'Restart Gateway after installing to apply',
+    '支持三种安装方式：': 'Three install methods supported:',
+    '输入 GitHub/GitLab/Gitee URL': 'Enter GitHub/GitLab/Gitee URL',
+
+    // Settings — update descriptions
+    '直接从 GitHub 拉取最新的 Web 前端、配置模板等文件，无需下载镜像/重建容器。': 'Pull the latest Web frontend and config templates from GitHub without downloading images or rebuilding containers.',
+    '完整更新': 'Full Update',
+    '如需更新系统包、Node.js 等底层依赖，请在宿主机重新执行一键安装脚本：': 'To update system packages, Node.js, and other core dependencies, re-run the install script on the host:',
+
+    // Update banner
+    '📦 此版本需要完整更新（下载新镜像）': '📦 This version requires a full update (new image download)',
+
+    // confirm dialogs fragments
+    '重启期间连接会短暂中断。': 'Connections will be briefly interrupted during restart.',
+    '等待 Gateway 启动完成': 'Waiting for Gateway to start',
+
+    // Tab labels for device command
+    '前台': 'Foreground',
+    '后台': 'Background',
+
+    // Misc / app.js dynamic strings
+    '未设置': 'Not set',
+    '主模型：': 'Primary model: ',
+    '主代理模型未设置': 'Primary agent model not set',
+    '状态：已读取': 'Status: Loaded',
+    '状态：读取失败': 'Status: Load failed',
   };
 
   // Reverse mapping: English server messages → Chinese
