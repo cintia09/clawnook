@@ -1187,6 +1187,21 @@
     '限制远端命令执行': 'restrict remote command execution',
     '建议仅在可信局域网或 VPN 环境中使用': 'recommended only in trusted LAN or VPN environments',
 
+    // Text-node fragments split by HTML tags (short keys for substring matching)
+    '命令：使用': 'command: uses',
+    '不同网关会写入': 'Different gateways write to',
+    '日志输出到当前网关对应目录下的': 'Logs are written to',
+    '后台运行使用': 'Background mode uses',
+    '点 📂 按钮选择文件夹，含客户端安全扫描（支持 Chrome/Edge/Safari）。': 'Click 📂 to select a folder with client-side security scan (Chrome/Edge/Safari).',
+    '从浏览器本地选择目录': 'Select local directory from browser',
+    '使用': 'uses',
+    '包装': 'wrapper',
+    '验证': 'to verify',
+    '或': 'or',
+    '和': 'and',
+    '通过': 'via',
+    '面板': 'Panel',
+
     // Background Running Guide (details section)
     '后台运行与自动重连': 'Background Running & Auto-Reconnect',
     '推荐使用"后台运行"命令': 'Recommended: use the "Background" command',
@@ -1725,7 +1740,7 @@
       _translateTextNode(walker.currentNode);
     }
     // Attributes
-    const elements = root.querySelectorAll ? root.querySelectorAll('[placeholder],[title],[aria-label]') : [];
+    const elements = root.querySelectorAll ? root.querySelectorAll('[placeholder],[title],[aria-label],[label]') : [];
     for (const el of elements) {
       if (el.closest('[data-i18n-skip]')) continue;
       _translateAttrs(el);
