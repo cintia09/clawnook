@@ -1055,6 +1055,27 @@
     '格式: provider/model-id': 'Format: provider/model-id',
     '配置读取成功': 'Config loaded successfully',
     '配置读取完成': 'Config load complete',
+    '配置导出': 'Export Config',
+    '配置导入': 'Import Config',
+    '迁移导出': 'Migration Export',
+    '迁移导入': 'Migration Import',
+    '版本': 'Version',
+    '交互模式': 'Interactive mode',
+    '更新状态：安装中': 'Update status: Installing',
+    '更新状态：更新中': 'Update status: Updating',
+    '更新状态：卸载中': 'Update status: Uninstalling',
+    '更新状态：配置恢复中': 'Update status: Restoring config',
+    'Gateway 状态：启动中（正在等待健康检查）': 'Gateway status: Starting (waiting for health check)',
+    'Gateway 状态：启动中（安装完成后Initialize中）': 'Gateway status: Starting (initializing after install)',
+    'Gateway 状态：启动中（Initialize中，等待健康检查）': 'Gateway status: Starting (initializing, waiting for health check)',
+    'Gateway 状态：等待控制台配对。请先在Gateway页面完成配对授权': 'Gateway status: Awaiting console pairing. Complete authorization on Gateway page first',
+    'OpenClaw 已卸载': 'OpenClaw uninstalled',
+    '进程已拉起，等待健康检查': 'Process started, awaiting health check',
+    '终端: 正常(PTY)': 'Terminal: OK (PTY)',
+    '终端: 正常(兼容模式)': 'Terminal: OK (compat mode)',
+    '终端: 状态未知': 'Terminal: status unknown',
+    '交互模式：PTY': 'Interactive mode: PTY',
+    '待识别': 'pending identification',
 
     // Feishu setup guide
     '前往': 'Go to',
@@ -1409,6 +1430,9 @@
     document.documentElement.lang = _locale === 'zh' ? 'zh-CN' : 'en';
     if (_locale === 'en') {
       _translateDOM(document.body);
+      _startObserver();
+    } else {
+      _stopObserver();
     }
   }
 

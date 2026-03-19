@@ -136,22 +136,22 @@ function formatVersionLabel(rawVersion){
   if (!v) return '';
   const lower = v.toLowerCase();
   if (lower === 'dev') {
-    return '开发版（dev）';
+    return _t('开发版（dev）');
   }
   if (lower === 'unknown' || /^v?0\.0\.0(?:[-+].*)?$/i.test(v)) {
-    return '未标注版本';
+    return _t('未标注版本');
   }
   return v;
 }
 
 function formatInstallSourceLabel(rawSource){
   const s = String(rawSource || '').trim().toLowerCase();
-  if (s === 'source') return '源码安装';
-  if (s === 'npm') return 'npm 安装';
-  if (s === 'binary') return '二进制安装';
-  if (s === 'version') return '版本探测';
-  if (s === 'none') return '未安装';
-  return '已安装';
+  if (s === 'source') return _t('源码安装');
+  if (s === 'npm') return _t('npm 安装');
+  if (s === 'binary') return _t('二进制安装');
+  if (s === 'version') return _t('版本探测');
+  if (s === 'none') return _t('未安装');
+  return _t('已安装');
 }
 
 // ------------------------
@@ -571,25 +571,25 @@ async function refreshStatus(){
   const gatewayPairing = !openclawMissing && !s.gateway && !!s.gatewayPairingRequired;
   if ($('kpi-gateway')) {
     $('kpi-gateway').innerHTML = s.gateway
-      ? `<span class="pulse online"></span>在线`
+      ? `<span class="pulse online"></span>${_t('在线')}`
       : (openclawMissing
-          ? `<span class="pulse offline"></span>离线`
+          ? `<span class="pulse offline"></span>${_t('离线')}`
           : (gatewayPairing
-              ? `<span class="pulse offline"></span>待配对`
+              ? `<span class="pulse offline"></span>${_t('待配对')}`
               : (gatewayPending
-                  ? `<span class="pulse pending"></span>启动中`
-                  : `<span class="pulse offline"></span>离线`)));
+                  ? `<span class="pulse pending"></span>${_t('启动中')}`
+                  : `<span class="pulse offline"></span>${_t('离线')}`)));
   }
   const gatewayParts = [
     s.gateway
-      ? '健康检查正常'
+      ? _t('健康检查正常')
       : (openclawMissing
-          ? 'OpenClaw 已卸载'
+          ? _t('OpenClaw 已卸载')
           : (gatewayPairing
-              ? '等待控制台配对'
+              ? _t('等待控制台配对')
               : (gatewayPending
-                  ? '进程已拉起，等待健康检查'
-                  : '未检测到运行中的 Gateway')))
+                  ? _t('进程已拉起，等待健康检查')
+                  : _t('未检测到运行中的 Gateway'))))
   ];
   if (!openclawMissing && !s.gateway && s.gatewayProcessRunning && Number(s.gatewayProcessUptimeSec || 0) > 0) {
     gatewayParts.push(_t('运行 {0}', formatUptime(s.gatewayProcessUptimeSec)));
@@ -601,37 +601,37 @@ async function refreshStatus(){
     if (s.terminal.ready) {
       const mode = s.terminal.mode || 'unknown';
       if (mode === 'pty') {
-        gatewayParts.push('终端: 正常(PTY)');
+        gatewayParts.push(_t('终端: 正常(PTY)'));
       } else if (mode === 'fallback') {
-        gatewayParts.push('终端: 正常(兼容模式)');
+        gatewayParts.push(_t('终端: 正常(兼容模式)'));
       } else {
-        gatewayParts.push(`终端: 正常(${mode})`);
+        gatewayParts.push(`${_t('终端')}: ${_t('正常')}(${mode})`);
       }
     } else {
-      const reasonText = s.terminal.reason || '终端后端未就绪';
-      gatewayParts.push(`终端: ${reasonText}`);
+      const reasonText = s.terminal.reason || _t('终端后端未就绪');
+      gatewayParts.push(`${_t('终端')}: ${reasonText}`);
     }
   } else {
-    gatewayParts.push('终端: 状态未知');
+    gatewayParts.push(_t('终端: 状态未知'));
   }
   const terminalStatus = $('kpi-terminal-status');
   const terminalDetail = $('kpi-terminal-detail');
   if (terminalStatus && terminalDetail) {
     if (s.terminal?.ready) {
       const mode = s.terminal.mode || 'unknown';
-      terminalStatus.innerHTML = '<span class="pulse online"></span>终端就绪';
-      terminalDetail.textContent = mode === 'pty' ? '交互模式：PTY' : `交互模式：${mode}`;
+      terminalStatus.innerHTML = `<span class="pulse online"></span>${_t('终端就绪')}`;
+      terminalDetail.textContent = mode === 'pty' ? _t('交互模式：PTY') : `${_t('交互模式')}：${mode}`;
     } else {
-      terminalStatus.innerHTML = '<span class="pulse offline"></span>终端异常';
-      terminalDetail.textContent = s.terminal?.reason || '终端后端未就绪';
+      terminalStatus.innerHTML = `<span class="pulse offline"></span>${_t('终端异常')}`;
+      terminalDetail.textContent = s.terminal?.reason || _t('终端后端未就绪');
     }
   }
   if ($('kpi-gateway-sub')) $('kpi-gateway-sub').textContent = gatewayParts.join(' · ');
 
   if ($('kpi-caddy')) {
     $('kpi-caddy').innerHTML = s.caddy
-      ? `<span class="pulse online"></span>在线`
-      : `<span class="pulse offline"></span>离线/未启用`;
+      ? `<span class="pulse online"></span>${_t('在线')}`
+      : `<span class="pulse offline"></span>${_t('离线/未启用')}`;
   }
   if ($('kpi-domain')) $('kpi-domain').textContent = s.domain ? _t('域名：{0}', s.domain) : _t('未配置域名');
 
@@ -1061,35 +1061,35 @@ function syncOpenClawButtons(){
 
   if (installBtn) {
     if (statusDetecting) {
-      installBtn.textContent = '检测中...';
+      installBtn.textContent = _t('检测中...');
       installBtn.disabled = true;
     } else if (installBusy && installPhase === 'install') {
-      installBtn.textContent = '安装中...';
+      installBtn.textContent = _t('安装中...');
       installBtn.disabled = true;
     } else if (installBusy && installPhase === 'update') {
-      installBtn.textContent = '更新中...';
+      installBtn.textContent = _t('更新中...');
       installBtn.disabled = true;
     } else if (installBusy && installPhase === 'uninstall') {
-      installBtn.textContent = ocInstalled ? '更新' : '安装';
+      installBtn.textContent = ocInstalled ? _t('更新') : _t('安装');
       installBtn.disabled = true;
     } else {
-      installBtn.textContent = ocInstalled ? (noUpdateNeeded ? '已是最新' : '更新') : '安装';
+      installBtn.textContent = ocInstalled ? (noUpdateNeeded ? _t('已是最新') : _t('更新')) : _t('安装');
       installBtn.disabled = !!repairBusy || (restartBusy && ocInstalled) || noUpdateNeeded;
     }
   }
 
   if (uninstallBtn) {
-    uninstallBtn.textContent = statusDetecting ? '检测中...' : (installBusy && installPhase === 'uninstall' ? '卸载中...' : '卸载');
+    uninstallBtn.textContent = statusDetecting ? _t('检测中...') : (installBusy && installPhase === 'uninstall' ? _t('卸载中...') : _t('卸载'));
     uninstallBtn.disabled = statusDetecting || !ocInstalled || !!installBusy || !!repairBusy || !!restartBusy;
   }
 
   if (repairBtn) {
-    repairBtn.textContent = statusDetecting ? '检测中...' : (repairBusy ? '修复中...' : '配置恢复');
+    repairBtn.textContent = statusDetecting ? _t('检测中...') : (repairBusy ? _t('修复中...') : _t('配置恢复'));
     repairBtn.disabled = statusDetecting || !!installBusy || !!repairBusy || !!restartBusy;
   }
 
   if (startBtn) {
-    startBtn.textContent = statusDetecting ? '检测中...' : (restartBusy ? '启动中...' : '重启 Gateway');
+    startBtn.textContent = statusDetecting ? _t('检测中...') : (restartBusy ? _t('启动中...') : _t('重启 Gateway'));
     startBtn.disabled = statusDetecting || !!installBusy || !!repairBusy || !!restartBusy || !canRestartGateway;
   }
 
@@ -1252,7 +1252,7 @@ function syncStatusLabelTicker(){
 function renderOpenClawStatusTicker(){
   const el = $('oc-update-status');
   if (!el) return;
-  let text = ocStatusBaseText || '更新状态：自动检查中';
+  let text = ocStatusBaseText || _t('更新状态：自动检查中');
   const p = ocStatusProgress;
   if (p && p.active && Number(p.totalSec || 0) > 0 && Number(p.startedAt || 0) > 0) {
     const elapsed = Math.max(0, Math.floor((Date.now() - Number(p.startedAt || 0)) / 1000));
@@ -1303,7 +1303,7 @@ function stopGatewayStartupLogPulls(){
 
 function applyGatewayRestartingUi(){
   setStatusBadge('oc-gateway', 'pending', '启动中', true);
-  setOpenClawStatusLine('更新状态：Gateway 启动中', { active: true, startedAt: Date.now(), totalSec: 60 });
+  setOpenClawStatusLine(_t('更新状态：Gateway 启动中'), { active: true, startedAt: Date.now(), totalSec: 60 });
 }
 
 function triggerLogsBurstPolling(durationMs = 18000, intervalMs = 1200){
@@ -1353,7 +1353,7 @@ async function refreshOpenClaw(opts = {}){
     ocStatusLoading = true;
     setStatusBadge('oc-installed', 'pending', '检测中', true);
     setStatusBadge('oc-gateway', 'pending', '检测中', true);
-    setOpenClawStatusLine('更新状态：正在检测 OpenClaw 状态', null);
+    setOpenClawStatusLine(_t('更新状态：正在检测 OpenClaw 状态'), null);
     syncOpenClawButtons();
   }
   const retries = Math.max(0, Number(opts.retries ?? 0));
@@ -1373,7 +1373,7 @@ async function refreshOpenClaw(opts = {}){
 
   if (!d || d.error || !Object.prototype.hasOwnProperty.call(d, 'installed')) {
     const detail = lastErr || '状态读取失败';
-    setOpenClawStatusLine(`更新状态：读取失败（${detail}）`, null);
+    setOpenClawStatusLine(_t('更新状态：读取失败') + `（${detail}）`, null);
     if (initialLoading) {
       ocStatusLoadedOnce = true;
       ocStatusLoading = false;
@@ -1411,40 +1411,40 @@ async function refreshOpenClaw(opts = {}){
   const postInstallWarmup = Date.now() < Number(ocPostInstallWarmupUntil || 0);
 
   if (installBusyNow && installPhaseNow === 'install') {
-    setStatusBadge('oc-installed', 'pending', '安装中', true);
+    setStatusBadge('oc-installed', 'pending', _t('安装中'), true);
   } else if (installBusyNow && installPhaseNow === 'update') {
-    setStatusBadge('oc-installed', 'pending', '更新中', true);
+    setStatusBadge('oc-installed', 'pending', _t('更新中'), true);
   } else if (installBusyNow && installPhaseNow === 'uninstall') {
-    setStatusBadge('oc-installed', 'pending', '卸载中', true);
+    setStatusBadge('oc-installed', 'pending', _t('卸载中'), true);
   } else {
-    setStatusBadge('oc-installed', d.installed ? 'online' : 'offline', d.installed ? '已安装' : '未安装', false);
+    setStatusBadge('oc-installed', d.installed ? 'online' : 'offline', d.installed ? _t('已安装') : _t('未安装'), false);
   }
   if (d.installed) {
     const versionLabel = formatVersionLabel(d.version);
     if (d.version && d.latestVersion && d.hasUpdate) {
-      $('oc-version').textContent = `版本：${versionLabel}（可更新到 ${d.latestVersion}）`;
+      $('oc-version').textContent = `${_t('版本')}：${versionLabel}（${_t('可更新到 {0}', d.latestVersion)}）`;
     } else if (d.version) {
-      $('oc-version').textContent = `版本：${versionLabel}`;
+      $('oc-version').textContent = `${_t('版本')}：${versionLabel}`;
     } else {
-      $('oc-version').textContent = `版本：待识别（${formatInstallSourceLabel(d.installSource)}）`;
+      $('oc-version').textContent = `${_t('版本')}：${_t('待识别')}（${formatInstallSourceLabel(d.installSource)}）`;
     }
   } else {
     $('oc-version').textContent = '—';
   }
   if (!d.installed && !d.gatewayRunning && !restartBusyNow) {
-    setStatusBadge('oc-gateway', 'offline', '未安装', false);
+    setStatusBadge('oc-gateway', 'offline', _t('未安装'), false);
   } else if (restartBusyNow) {
-    setStatusBadge('oc-gateway', 'pending', '启动中', true);
+    setStatusBadge('oc-gateway', 'pending', _t('启动中'), true);
   } else if (!d.gatewayRunning && d.gatewayStarting) {
-    setStatusBadge('oc-gateway', 'pending', '启动中（Initialize中）', true);
+    setStatusBadge('oc-gateway', 'pending', _t('启动中（初始化中）'), true);
   } else if (!d.gatewayRunning && postInstallWarmup && d.gatewayProcessRunning) {
-    setStatusBadge('oc-gateway', 'pending', '启动中', true);
+    setStatusBadge('oc-gateway', 'pending', _t('启动中'), true);
   } else if (!d.gatewayRunning && d.gatewayPairingRequired) {
-    setStatusBadge('oc-gateway', 'offline', '待配对（控制台鉴权）', false);
+    setStatusBadge('oc-gateway', 'offline', _t('待配对（控制台鉴权）'), false);
   } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
-    setStatusBadge('oc-gateway', 'pending', '启动中（Initialize中）', true);
+    setStatusBadge('oc-gateway', 'pending', _t('启动中（初始化中）'), true);
   } else {
-    setStatusBadge('oc-gateway', d.gatewayRunning ? 'online' : 'offline', d.gatewayRunning ? '运行中' : '未启动', false);
+    setStatusBadge('oc-gateway', d.gatewayRunning ? 'online' : 'offline', d.gatewayRunning ? _t('运行中') : _t('未启动'), false);
   }
 
   if (d.gatewayRunning) {
@@ -1466,10 +1466,10 @@ async function refreshOpenClaw(opts = {}){
 
   const actionBtn = $('btn-oc-install');
   if (actionBtn) {
-    if (installBusyNow && installPhaseNow === 'install') actionBtn.textContent = '安装中...';
-    else if (installBusyNow && installPhaseNow === 'update') actionBtn.textContent = '更新中...';
-    else if (d.installed && !d.hasUpdate) actionBtn.textContent = '已是最新';
-    else actionBtn.textContent = d.installed ? '更新' : '安装';
+    if (installBusyNow && installPhaseNow === 'install') actionBtn.textContent = _t('安装中...');
+    else if (installBusyNow && installPhaseNow === 'update') actionBtn.textContent = _t('更新中...');
+    else if (d.installed && !d.hasUpdate) actionBtn.textContent = _t('已是最新');
+    else actionBtn.textContent = d.installed ? _t('更新') : _t('安装');
   }
 
   if ($('oc-current-ver')) {
@@ -1480,53 +1480,53 @@ async function refreshOpenClaw(opts = {}){
     if (displayLatestVersion) {
       $('oc-latest-ver').textContent = displayLatestVersion;
     } else if (d.updateCheckError) {
-      $('oc-latest-ver').textContent = `检测失败（${d.updateCheckError}）`;
+      $('oc-latest-ver').textContent = `${_t('检测失败')}（${d.updateCheckError}）`;
     } else {
-      $('oc-latest-ver').textContent = '检测中';
+      $('oc-latest-ver').textContent = _t('检测中');
     }
   }
   const invalidKeys = Array.isArray(d.invalidConfigKeys) ? d.invalidConfigKeys : [];
   const noLinuxPrebuilt = d.hasLinuxBinaryAsset === false;
   if (installBusyNow && installPhaseNow === 'install') {
-    setOpenClawStatusLine('更新状态：安装中', opProgress);
+    setOpenClawStatusLine(_t('更新状态：安装中'), opProgress);
   } else if (installBusyNow && installPhaseNow === 'update') {
-    setOpenClawStatusLine('更新状态：更新中', opProgress);
+    setOpenClawStatusLine(_t('更新状态：更新中'), opProgress);
   } else if (uninstallBusyNow || (installBusyNow && installPhaseNow === 'uninstall')) {
-    setOpenClawStatusLine('更新状态：卸载中', opProgress);
+    setOpenClawStatusLine(_t('更新状态：卸载中'), opProgress);
   } else if (restartBusyNow) {
-    setOpenClawStatusLine('更新状态：Gateway 启动中（正在等待健康检查）', opProgress);
+    setOpenClawStatusLine(_t('更新状态：Gateway 启动中'), opProgress);
   } else if (repairBusyNow) {
-    setOpenClawStatusLine('更新状态：配置恢复中', opProgress);
+    setOpenClawStatusLine(_t('更新状态：配置恢复中'), opProgress);
   } else if (invalidKeys.length > 0) {
-    setOpenClawStatusLine(`配置状态：检测到无效 key（${invalidKeys.join(', ')}），请点击“配置恢复”`, null);
+    setOpenClawStatusLine(_t('配置状态：检测到无效 key') + `（${invalidKeys.join(', ')}）`, null);
   } else if (noLinuxPrebuilt && !d.installed) {
-    setOpenClawStatusLine('安装提示：将使用官方 npm 安装', null);
+    setOpenClawStatusLine(_t('安装提示：将使用官方 npm 安装'), null);
   } else if (!d.installed) {
-    setOpenClawStatusLine('更新状态：未安装，可执行安装', null);
+    setOpenClawStatusLine(_t('更新状态：未安装，可执行安装'), null);
   } else if (!d.gatewayRunning && d.gatewayStarting && d.discordConnectError) {
-    setOpenClawStatusLine(`Gateway 状态：启动中（通道连接受阻 — ${d.discordConnectError}）`, null);
+    setOpenClawStatusLine(_t('Gateway 状态：启动中') + `（${d.discordConnectError}）`, null);
   } else if (!d.gatewayRunning && d.gatewayStarting) {
-    setOpenClawStatusLine('Gateway 状态：启动中（正在等待健康检查）', null);
+    setOpenClawStatusLine(_t('Gateway 状态：启动中（正在等待健康检查）'), null);
   } else if (!d.gatewayRunning && postInstallWarmup && d.gatewayProcessRunning) {
-    setOpenClawStatusLine('Gateway 状态：启动中（安装完成后Initialize中）', null);
+    setOpenClawStatusLine(_t('Gateway 状态：启动中（安装完成后Initialize中）'), null);
   } else if (!d.gatewayRunning && d.gatewayPairingRequired) {
-    setOpenClawStatusLine('Gateway 状态：等待控制台配对。请先在Gateway页面完成配对授权', null);
+    setOpenClawStatusLine(_t('Gateway 状态：等待控制台配对。请先在Gateway页面完成配对授权'), null);
   } else if (!d.gatewayRunning && d.gatewayProcessRunning && d.discordConnectError) {
-    setOpenClawStatusLine(`Gateway 状态：Initialize中（${d.discordConnectError}）`, null);
+    setOpenClawStatusLine(_t('Gateway 状态：初始化中') + `（${d.discordConnectError}）`, null);
   } else if (!d.gatewayRunning && d.gatewayProcessRunning) {
-    setOpenClawStatusLine('Gateway 状态：启动中（Initialize中，等待健康检查）', null);
+    setOpenClawStatusLine(_t('Gateway 状态：启动中（Initialize中，等待健康检查）'), null);
   } else if (d.installed && !d.version) {
-    setOpenClawStatusLine('更新状态：已安装（版本待识别）', null);
+    setOpenClawStatusLine(_t('更新状态：已安装（版本待识别）'), null);
   } else if (d.updateCheckError) {
-    setOpenClawStatusLine(`更新状态：检查失败（${d.updateCheckError}）`, null);
+    setOpenClawStatusLine(_t('更新状态：检查失败') + `（${d.updateCheckError}）`, null);
   } else if (d.hasUpdate) {
-    setOpenClawStatusLine('更新状态：发现新版本，可更新', null);
+    setOpenClawStatusLine(_t('更新状态：发现新版本，可更新'), null);
   } else if (d.installed && d.gatewayRunning && d.discordConnectError) {
-    setOpenClawStatusLine(`ℹ️ Discord 连接问题：${d.discordConnectError}`, null);
+    setOpenClawStatusLine(`ℹ️ Discord ${_t('连接问题')}：${d.discordConnectError}`, null);
   } else if (d.installed) {
-    setOpenClawStatusLine('更新状态：已是最新版本', null);
+    setOpenClawStatusLine(_t('更新状态：已是最新版本'), null);
   } else {
-    setOpenClawStatusLine('更新状态：自动检查中', null);
+    setOpenClawStatusLine(_t('更新状态：自动检查中'), null);
   }
 
   // pairing section is now always visible on the messaging page
@@ -1616,7 +1616,7 @@ async function pollTask(taskId){
         ocPostInstallWarmupUntil = Date.now() + (5 * 60 * 1000);
         ocLastGatewaySnapshot = '';
         setStatusBadge('oc-gateway', 'pending', '启动中', true);
-        setOpenClawStatusLine('更新状态：Gateway 启动中', { active: true, startedAt: Date.now(), totalSec: 60 });
+        setOpenClawStatusLine(_t('更新状态：Gateway 启动中'), { active: true, startedAt: Date.now(), totalSec: 60 });
         scheduleGatewayStartupLogPulls(220);
       }
       refreshOpenClaw({ force: true });
@@ -1762,7 +1762,7 @@ $('btn-oc-config-export')?.addEventListener('click', async () => {
     toast('\u5BFC\u51FA\u5931\u8D25', e.message);
     appendOcLogLine('[export] \u5BFC\u51FA\u5931\u8D25: ' + e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDCE4 \u914D\u7F6E\u5BFC\u51FA'; }
+    if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDCE4 ' + _t('\u914D\u7F6E\u5BFC\u51FA'); }
   }
 });
 
@@ -1805,14 +1805,14 @@ $('config-import-file')?.addEventListener('change', async (e) => {
     toast('\u5BFC\u5165\u5931\u8D25', e.message);
     appendOcLogLine('[import] \u5BFC\u5165\u5931\u8D25: ' + e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDCE5 \u914D\u7F6E\u5BFC\u5165'; }
+    if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDCE5 ' + _t('\u914D\u7F6E\u5BFC\u5165'); }
   }
 });
 
 // --- Migration Export ---
 $('btn-migration-export')?.addEventListener('click', async () => {
   const btn = $('btn-migration-export');
-  if (btn) { btn.disabled = true; btn.textContent = '打包中...'; }
+  if (btn) { btn.disabled = true; btn.textContent = _t('打包中...'); }
   appendOcLogLine('[migration] 正在导出全量迁移数据（配置+密钥+身份+设备+工作空间+会话历史）...');
   try {
     const resp = await fetch('/api/openclaw/migration/export', { credentials: 'same-origin' });
@@ -1852,7 +1852,7 @@ $('btn-migration-export')?.addEventListener('click', async () => {
     toast('导出失败', e.message);
     appendOcLogLine('[migration] 导出失败: ' + e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🚚 迁移导出'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🚚 ' + _t('迁移导出'); }
   }
 });
 
@@ -1902,7 +1902,7 @@ $('migration-import-file')?.addEventListener('change', async (e) => {
     toast('导入失败', e.message);
     appendOcLogLine('[migration] 导入失败: ' + e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🚚 迁移导入'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🚚 ' + _t('迁移导入'); }
   }
 });
 
@@ -5195,6 +5195,13 @@ setInterval(() => {
   const route = getRouteFromHash();
   if (route !== 'openclaw-engine') refreshOpenClaw({ retries: 0 });
 }, 5 * 60 * 1000);
+
+// i18n: re-render dynamic content when locale changes without full reload
+window._i18nRefresh = function() {
+  refreshStatus();
+  refreshOpenClaw({ retries: 0 });
+  syncOpenClawButtons();
+};
 
 // ------------------------
 // Session inactivity timeout
