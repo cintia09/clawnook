@@ -2,8 +2,8 @@ name: Build & Release Docker Image
 
 on:
   push:
-    tags: ['v*']          # 只在打 tag (如 v1.0.0) 时构建
-  workflow_dispatch:       # 也支持手动触发
+    tags: ['v*']          # Only build on tag push (e.g. v1.0.0)
+  workflow_dispatch:       # Also supports manual trigger
 
 env:
   REGISTRY: ghcr.io
@@ -13,7 +13,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # 需要 write 权限上传 Release
+      contents: write      # Write permission needed to upload Release
       packages: write
 
     steps:
@@ -29,11 +29,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 构建精简版镜像
+      # Build lite Docker image
       - name: Build lite Docker image
         run: docker build --build-arg BUILD_VERSION=${{ github.ref_name }} -f Dockerfile.lite -t openclaw-pro:lite .
 
-      # 推送到 GHCR (可选，给有条件访问的用户)
+      # Push to GHCR (optional, for users with access)
       - name: Tag and push to GHCR
         run: |
           set -euo pipefail
@@ -67,19 +67,51 @@ jobs:
           push_with_retry "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:lite"
           push_with_retry "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-lite"
 
-      # 导出镜像为 tar.gz (用户直接下载，无需 Docker Hub/GHCR)
+      # Export image as tar.gz (direct download, no Docker Hub/GHCR needed)
       - name: Export images as tar.gz
         run: |
           docker save openclaw-pro:lite | gzip > openclaw-pro-image-lite.tar.gz
           ls -lh openclaw-pro-image-lite.tar.gz
           sha256sum openclaw-pro-image-lite.tar.gz > openclaw-pro-image-lite.tar.gz.sha256
 
-      # 上传到 GitHub Release
+      # Upload to GitHub Release
       - name: Create Release and upload image
         uses: softprops/action-gh-release@v2
         with:
           name: OpenClaw Pro ${{ github.ref_name }}
           body: |
+            ## OpenClaw Pro Docker Image
+
+            ### Image Version
+            - **Lite (sole release edition)** `openclaw-pro-image-lite.tar.gz` (~250 MB)
+
+            ### One-Click Install (Windows)
+            ```powershell
+            irm https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install-windows.ps1 | iex
+            ```
+
+            ### One-Click Install (Linux / macOS)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/cintia09/openclaw-pro/main/install.sh | bash
+            ```
+
+            ### Manual Install
+            1. Download the image file (Lite)
+            2. `docker load < openclaw-pro-image-lite.tar.gz`
+            3. Create state volume: `docker volume create openclaw-pro-state`
+            4. HTTP direct mode:
+              `docker run -d --name openclaw-pro -p 18789:18789 -p 3000:3000 -v openclaw-pro-state:/root/.openclaw --restart unless-stopped openclaw-pro:latest`
+
+            5. HTTPS reverse-proxy mode (recommended; domain must resolve to this host):
+              - Write `docker-config.json` into the state volume first:
+                 `{"domain":"your.domain.com","http_port":80,"https_port":443,"browserEnabled":false}`
+               - Run the container:
+                `docker run -d --name openclaw-pro -p 80:80 -p 443:443 -v openclaw-pro-state:/root/.openclaw --restart unless-stopped openclaw-pro:latest`
+
+            6. The browser feature is disabled by default. Enable it in the Web panel under **System Settings** (restart the container after saving).
+
+            ---
+
             ## OpenClaw Pro Docker 镜像
 
             ### 镜像版本
