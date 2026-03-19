@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "description": "Hot update file manifest. The hot-patch API downloads this file first, then fetches each listed file.",
+  "files": [
+    ["web/public/app.js",       "/opt/openclaw-web/public/app.js"],
+    ["web/public/i18n.js",      "/opt/openclaw-web/public/i18n.js"],
+    ["web/public/index.html",   "/opt/openclaw-web/public/index.html"],
+    ["web/public/login.html",   "/opt/openclaw-web/public/login.html"],
+    ["web/public/login.js",     "/opt/openclaw-web/public/login.js"],
+    ["web/public/style.css",    "/opt/openclaw-web/public/style.css"],
+    ["web/server.js",           "/opt/openclaw-web/server.js"],
+    ["start-services.sh",       "/usr/local/bin/start-services.sh"],
+    ["scripts/openclaw-gateway-watchdog.sh", "/usr/local/bin/openclaw-gateway-watchdog.sh"],
+    ["Caddyfile.template",      "/etc/caddy/Caddyfile.template"],
+    ["hotpatch-manifest.json",  "/opt/openclaw-web/hotpatch-manifest.json"]
+  ]
+}

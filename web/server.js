@@ -4166,7 +4166,9 @@ app.get('/api/update/check', async (req, res) => {
 // ============================================================
 // API: hot patch (update files without rebuilding image)
 // ============================================================
-const HOTPATCH_FILES = [
+
+// Fallback file list if remote manifest is unavailable
+const HOTPATCH_FILES_FALLBACK = [
   // [GitHub path, local path]
   ['web/public/app.js', '/opt/openclaw-web/public/app.js'],
   ['web/public/i18n.js', '/opt/openclaw-web/public/i18n.js'],
@@ -4180,17 +4182,39 @@ const HOTPATCH_FILES = [
   ['Caddyfile.template', '/etc/caddy/Caddyfile.template'],
 ];
 
+/**
+ * Fetch the hot update manifest from GitHub.
+ * Returns an array of [ghPath, localPath] pairs, or the fallback list on failure.
+ */
+async function fetchHotpatchManifest(branch) {
+  try {
+    const url = `${GITHUB_RAW_BASE}/${branch}/hotpatch-manifest.json`;
+    const resp = await fetchWithFallback(url, {
+      headers: { 'User-Agent': 'openclaw-pro' },
+      timeout: 8000
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const manifest = await resp.json();
+    if (manifest && Array.isArray(manifest.files) && manifest.files.length > 0) {
+      return { files: manifest.files, source: 'remote' };
+    }
+    throw new Error('Empty or invalid manifest');
+  } catch (e) {
+    return { files: HOTPATCH_FILES_FALLBACK, source: 'fallback', error: e.message };
+  }
+}
+
 const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}`;
 const WEB_PANEL_BACKUP_DIR = '/root/.openclaw/web-panel-backup';
 
 /**
  * Backup current files before hot update，for watchdog rollback
  */
-function backupCurrentHotpatchFiles() {
+function backupCurrentHotpatchFiles(fileList) {
   try {
     fs.mkdirSync(WEB_PANEL_BACKUP_DIR, { recursive: true });
     const meta = { version: getCurrentVersion(), timestamp: Date.now(), files: {} };
-    for (const [, localPath] of HOTPATCH_FILES) {
+    for (const [, localPath] of fileList) {
       try {
         if (fs.existsSync(localPath)) {
           const basename = path.basename(localPath);
@@ -4249,8 +4273,17 @@ app.post('/api/update/hotpatch', async (req, res) => {
   const log = (msg) => { hotpatchState.log += msg + '\n'; console.log('[hotpatch] ' + msg); };
 
   try {
+    // Fetch remote manifest to determine which files to update
+    const manifest = await fetchHotpatchManifest(branch);
+    const fileList = manifest.files;
+    if (manifest.source === 'remote') {
+      log(`Loaded remote manifest: ${fileList.length} file(s)`);
+    } else {
+      log(`⚠ Remote manifest unavailable (${manifest.error}), using built-in file list (${fileList.length} files)`);
+    }
+
     // Backup current version before updating for rollback
-    if (backupCurrentHotpatchFiles()) {
+    if (backupCurrentHotpatchFiles(fileList)) {
       log('Backed up current files to web-panel-backup/');
     } else {
       log('⚠ Failed to backup current files, continuing update (rollback unavailable)');
@@ -4261,7 +4294,7 @@ app.post('/api/update/hotpatch', async (req, res) => {
     let needWebRestart = false;
     let needContainerRestart = false;
 
-    for (const [ghPath, localPath] of HOTPATCH_FILES) {
+    for (const [ghPath, localPath] of fileList) {
       try {
         const url = `${GITHUB_RAW_BASE}/${branch}/${ghPath}`;
         const resp = await fetchWithFallback(url, {
