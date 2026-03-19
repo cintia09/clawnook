@@ -4169,6 +4169,7 @@ app.get('/api/update/check', async (req, res) => {
 const HOTPATCH_FILES = [
   // [GitHub path, local path]
   ['web/public/app.js', '/opt/openclaw-web/public/app.js'],
+  ['web/public/i18n.js', '/opt/openclaw-web/public/i18n.js'],
   ['web/public/index.html', '/opt/openclaw-web/public/index.html'],
   ['web/public/login.html', '/opt/openclaw-web/public/login.html'],
   ['web/public/login.js', '/opt/openclaw-web/public/login.js'],
