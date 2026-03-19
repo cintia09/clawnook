@@ -44,6 +44,7 @@
   const _en = {
     // ─── Navigation & Layout ──────────────────────────
     '管理面板': 'Control Panel',
+    'OpenClaw 管理面板': 'OpenClaw Control Panel',
     '总览': 'Overview',
     '仪表盘': 'Dashboard',
     'OpenClaw 控制台': 'OpenClaw Console',
@@ -1187,7 +1188,7 @@
     '限制远端命令执行': 'restrict remote command execution',
     '建议仅在可信局域网或 VPN 环境中使用': 'recommended only in trusted LAN or VPN environments',
 
-    // Text-node fragments split by HTML tags (specific multi-char keys only)
+    // Text-node fragments split by HTML tags
     '命令：使用': 'command: uses',
     '不同网关会写入': 'Different gateways write to',
     '日志输出到当前网关对应目录下的': 'Logs are written to',
@@ -1196,6 +1197,50 @@
     '面板': 'Panel',
     '当前：': 'Current: ',
     '最新：': 'Latest: ',
+
+    // Feishu setup guide text-node fragments (split by <a>/<code> tags)
+    '创建企业自建应用': 'create an enterprise app',
+    '添加「机器人」能力': 'add "Bot" capability',
+    '在「凭证与基础信息」中获取': 'get from "Credentials & Basic Info"',
+    '和': 'and',
+    '在「事件订阅」中配置回调': 'configure callback in "Event Subscriptions"',
+    '格式': 'format',
+    '你的域名': 'your-domain',
+
+    // Messaging page bottom note (split by <b>/<code> tags)
+    '命令行 或访问 Gateway 自带 Web UI）。': 'CLI, or access the Gateway built-in Web UI).',
+
+    // Device management (split by <code> tags)
+    '通过': 'via',
+    '使用': 'uses',
+    '包装': 'wrapper',
+    '验证': 'to verify',
+    '或': 'or',
+
+    // Plugin install (split by <b>/<code> tags, text after </b>)
+    '：点 📂 按钮选择文件夹，含客户端安全扫描（支持 Chrome/Edge/Safari）。': ': click 📂 to pick a folder with client-side security scan (Chrome/Edge/Safari).',
+
+    // Wizard hint
+    '首次使用提示': 'First-time Setup',
+    '检测到尚未完成模型配置。请到「接入模型配置」完成基础设置。': 'Model configuration not yet complete. Go to "Model Configuration" to finish basic setup.',
+
+    // index.html title attributes
+    '无需下载镜像，直接更新文件': 'Update files directly without downloading images',
+    '会进行二次确认，并在日志中记录状态变更': 'Requires confirmation; status changes are logged',
+    '重启前会二次确认，按住 Shift 点击可跳过': 'Requires confirmation before restart; hold Shift to skip',
+    '导出当前配置为压缩包下载到本地': 'Export current config as archive download',
+    '从本地压缩包导入配置（会自动备份当前配置）': 'Import config from local archive (auto-backs up current config)',
+    '导出全部数据（配置+密钥+身份+设备+定时任务），用于迁移到新容器': 'Export all data (config+keys+identity+devices+cron) for migration to new container',
+    '从迁移包恢复全部数据，需重启 Gateway 生效': 'Restore all data from migration package; restart Gateway to apply',
+    '安装选择的指定版本': 'Install the selected version',
+    '从 npm 加载所有可用版本列表': 'Load all available versions from npm',
+
+    // Discord placeholder (text-node fragment after \n)
+    '例如': 'e.g.',
+    '（如': '(e.g.',
+
+    // Extension install placeholder (split by 、)
+    'npm 包名、github:user/repo 或 GitHub URL': 'npm package name, github:user/repo, or GitHub URL',
 
     // Background Running Guide (details section)
     '后台运行与自动重连': 'Background Running & Auto-Reconnect',
@@ -1231,7 +1276,6 @@
     'OpenClaw 内置 40+ Extensions（含 Feishu、Discord、Telegram 等通道）。以下为用户额外安装的 Extensions。': 'OpenClaw includes 40+ built-in Extensions (Feishu, Discord, Telegram channels, etc.). Below are user-installed Extensions.',
     'npm 包名': 'npm package name',
     'GitHub 简写': 'GitHub shorthand',
-    '如': 'e.g.',
     '安装后需重启 Gateway 生效': 'Restart Gateway after installing to apply',
     '支持三种安装方式：': 'Three install methods supported:',
     '输入 GitHub/GitLab/Gitee URL': 'Enter GitHub/GitLab/Gitee URL',
@@ -1660,7 +1704,7 @@
     }
     // English: look up translation (normalize quotes for consistent matching)
     var nk = _normQ(zhKey);
-    let str = _en[zhKey] || _en[nk] || zhKey;
+    let str = _en[zhKey] || _en[nk] || _getNormEn()[nk] || zhKey;
     for (let i = 1; i < arguments.length; i++) {
       str = str.replace('{' + (i - 1) + '}', arguments[i] != null ? arguments[i] : '');
     }
@@ -1684,9 +1728,18 @@
 
   // Sorted keys for substring replacement (longest first)
   let _sortedKeys = null;
+  // Build normalized-key → english map so both text and keys use straight quotes
+  var _normEn = null;
+  function _getNormEn() {
+    if (_normEn) return _normEn;
+    _normEn = {};
+    for (var k in _en) { _normEn[_normQ(k)] = _en[k]; }
+    return _normEn;
+  }
+
   function _getSortedKeys() {
     if (_sortedKeys) return _sortedKeys;
-    _sortedKeys = Object.keys(_en).sort(function (a, b) { return b.length - a.length; });
+    _sortedKeys = Object.keys(_getNormEn()).sort(function (a, b) { return b.length - a.length; });
     return _sortedKeys;
   }
 
@@ -1698,8 +1751,9 @@
     if (!raw || !/[\u4e00-\u9fff]/.test(raw)) return;
     const text = _normQ(raw);
     const trimmed = text.trim();
-    if (_en[trimmed]) {
-      node.textContent = text.replace(trimmed, _en[trimmed]);
+    const ne = _getNormEn();
+    if (ne[trimmed]) {
+      node.textContent = text.replace(trimmed, ne[trimmed]);
       return;
     }
     // Try translating Chinese segments within mixed text
@@ -1708,7 +1762,7 @@
     const sorted = _getSortedKeys();
     for (const zh of sorted) {
       if (result.includes(zh)) {
-        result = result.split(zh).join(_en[zh]);
+        result = result.split(zh).join(ne[zh]);
         changed = true;
       }
     }
@@ -1722,8 +1776,9 @@
       if (!raw || !/[\u4e00-\u9fff]/.test(raw)) continue;
       const val = _normQ(raw);
       const trimmed = val.trim();
-      if (_en[trimmed]) {
-        el.setAttribute(attr, val.replace(trimmed, _en[trimmed]));
+      const ne = _getNormEn();
+      if (ne[trimmed]) {
+        el.setAttribute(attr, val.replace(trimmed, ne[trimmed]));
         continue;
       }
       let result = val;
@@ -1731,7 +1786,7 @@
       const sorted = _getSortedKeys();
       for (const zh of sorted) {
         if (result.includes(zh)) {
-          result = result.split(zh).join(_en[zh]);
+          result = result.split(zh).join(ne[zh]);
           changed = true;
         }
       }
@@ -1762,6 +1817,12 @@
         const trimmed = text.trim();
         if (_en[trimmed]) opt.textContent = text.replace(trimmed, _en[trimmed]);
       }
+    }
+    // Translate <title>
+    if (root === document.body && /[\u4e00-\u9fff]/.test(document.title)) {
+      var nt = _normQ(document.title).trim();
+      var ne = _getNormEn();
+      if (ne[nt]) document.title = ne[nt];
     }
   }
 
