@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ClawNook — One-command installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/menriothink/clawnook/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/cintia09/clawnook/main/install.sh | bash
 set -euo pipefail
 
 INSTALLER_COMMIT="${INSTALLER_COMMIT:-}"
@@ -13,12 +13,12 @@ fetch_remote_installer(){
 
 fetch_imageonly_script(){
   local out_file="$1"
-  local api_url="https://api.github.com/repos/menriothink/clawnook/commits/main"
+  local api_url="https://api.github.com/repos/cintia09/clawnook/commits/main"
   local sha=""
 
   if [ -n "$INSTALLER_COMMIT" ]; then
     echo "[INFO] 正在获取安装脚本（固定提交 ${INSTALLER_COMMIT}）..." >&2
-    if fetch_remote_installer "https://raw.githubusercontent.com/menriothink/clawnook/${INSTALLER_COMMIT}/install-imageonly.sh" "$out_file"; then
+    if fetch_remote_installer "https://raw.githubusercontent.com/cintia09/clawnook/${INSTALLER_COMMIT}/install-imageonly.sh" "$out_file"; then
       return 0
     fi
   fi
@@ -27,13 +27,13 @@ fetch_imageonly_script(){
   sha="$(curl -fsSL --connect-timeout 8 --max-time 15 "$api_url" 2>/dev/null | awk -F'"' '/"sha"/ {print $4; exit}' || true)"
   if [ -n "$sha" ]; then
     echo "[INFO] 正在获取安装脚本（提交 ${sha}）..." >&2
-    if fetch_remote_installer "https://raw.githubusercontent.com/menriothink/clawnook/${sha}/install-imageonly.sh" "$out_file"; then
+    if fetch_remote_installer "https://raw.githubusercontent.com/cintia09/clawnook/${sha}/install-imageonly.sh" "$out_file"; then
       return 0
     fi
   fi
 
   echo "[INFO] 回退获取 main 分支安装脚本..." >&2
-  fetch_remote_installer "https://raw.githubusercontent.com/menriothink/clawnook/main/install-imageonly.sh?ts=$(date +%s)" "$out_file"
+  fetch_remote_installer "https://raw.githubusercontent.com/cintia09/clawnook/main/install-imageonly.sh?ts=$(date +%s)" "$out_file"
 }
 
 run_imageonly_installer(){

@@ -3946,7 +3946,7 @@ app.post('/api/password', (req, res) => {
 // ============================================================
 const VERSION_FILE = '/etc/openclaw-version';
 const DOCKERFILE_HASH_FILE = '/etc/openclaw-dockerfile-hash';
-const GITHUB_REPO = 'menriothink/clawnook';
+const GITHUB_REPO = 'cintia09/clawnook';
 
 function getCurrentVersion() {
   try { return fs.readFileSync(VERSION_FILE, 'utf8').trim(); } catch { return 'unknown'; }

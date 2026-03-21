@@ -25,7 +25,7 @@ cd /d "%~dp0"
 powershell -ExecutionPolicy Bypass -Command ^
     "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;" ^
     "$nonce=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();" ^
-    "$u='https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows.ps1?ts='+$nonce;" ^
+    "$u='https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows.ps1?ts='+$nonce;" ^
     "$s=$null;" ^
     "Write-Host '  [INFO] Downloading latest installer script...';" ^
     "Write-Host '  [NOTE] Installer uses the Docker Desktop + ImageOnly path only.';" ^

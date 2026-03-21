@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 # PowerShell 5.1 默认不启用 TLS 1.2，导致无法连接 GitHub
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$GITHUB_REPO = "menriothink/clawnook"
+$GITHUB_REPO = "cintia09/clawnook"
 $CONTAINER_NAME = "clawnook"
 $IMAGE_NAME = "clawnook"
 

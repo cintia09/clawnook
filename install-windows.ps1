@@ -36,10 +36,10 @@ $DEFAULT_HTTP_PORT  = "80"
 $DEFAULT_DEPLOY_DIR_NAME = ".clawnook"
 $LEGACY_DEPLOY_DIR_NAME = "clawnook"
 $DOCKER_PLATFORM = "linux/amd64"
-$GITHUB_REPO     = "menriothink/clawnook"
+$GITHUB_REPO     = "cintia09/clawnook"
 $IMAGE_NAME      = "clawnook"
 $script:imageEdition = "lite"  # 发布仅保留 lite
-$SCRIPT_URL      = "https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows.ps1"
+$SCRIPT_URL      = "https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows.ps1"
 $SCRIPT_DIR      = if ($MyInvocation.MyCommand.Path) {
     Split-Path -Parent $MyInvocation.MyCommand.Path
 } else {
@@ -711,7 +711,7 @@ function Assert-Administrator {
     Write-Host "     1. 右键点击 '开始' 菜单 → 'Windows PowerShell (管理员)'" -ForegroundColor White
     Write-Host "        或搜索 PowerShell → 右键 → 以管理员身份运行" -ForegroundColor Gray
     Write-Host "     2. 运行以下命令:" -ForegroundColor White
-    Write-Host '        irm https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows-bootstrap.ps1 | iex' -ForegroundColor Cyan
+    Write-Host '        irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows-bootstrap.ps1 | iex' -ForegroundColor Cyan
     Write-Host ""
     Write-Host "     如果已下载 install-windows.bat，可右键 → 以管理员身份运行" -ForegroundColor Gray
     Write-Host ""
@@ -3139,7 +3139,7 @@ function Show-Completion {
         Write-Warn "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）"
         Write-Host "" 
         Write-Host "  升级命令" -ForegroundColor White
-        Write-Host '     irm https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows-bootstrap.ps1 | iex' -ForegroundColor Cyan
+        Write-Host '     irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows-bootstrap.ps1 | iex' -ForegroundColor Cyan
     } else {
         Write-Host ""
         Write-Host "  -------------------------------------------------" -ForegroundColor DarkGray
@@ -3498,7 +3498,7 @@ function Main {
                             Remove-Item $localDeployDir -Recurse -Force
                         }
                         # Clone with tags so we can checkout the latest release
-                        & git clone --depth 1 https://github.com/menriothink/clawnook.git "$localDeployDir" 2>&1
+                        & git clone --depth 1 https://github.com/cintia09/clawnook.git "$localDeployDir" 2>&1
                         if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
                         # Try to switch to latest release tag
                         try {
@@ -3540,7 +3540,7 @@ function Main {
                 try {
                     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
                     Write-Info "正在查询最新 Release 版本..."
-                    $releaseApi = "https://api.github.com/repos/menriothink/clawnook/releases/latest"
+                    $releaseApi = "https://api.github.com/repos/cintia09/clawnook/releases/latest"
                     try {
                         $releaseJson = Invoke-RestMethod -Uri $releaseApi -TimeoutSec 10 -ErrorAction Stop
                         $zipUrl = $releaseJson.zipball_url
@@ -3548,7 +3548,7 @@ function Main {
                         Write-OK "找到最新 Release: $relTag"
                     } catch {
                         Write-Info "未找到 Release 版本，使用 main 分支"
-                        $zipUrl = "https://github.com/menriothink/clawnook/archive/refs/heads/main.zip"
+                        $zipUrl = "https://github.com/cintia09/clawnook/archive/refs/heads/main.zip"
                     }
 
                     # -- Resume-capable download with Range header --
@@ -3701,7 +3701,7 @@ function Main {
 
                     # GitHub ZIP directory names vary by download type:
                     # - main branch: "clawnook-main/"
-                    # - release zipball: "menriothink-clawnook-{sha}/"
+                    # - release zipball: "cintia09-clawnook-{sha}/"
                     $extractedDir = $null
                     $candidates = @(
                         (Join-Path $env:TEMP "clawnook-main"),
@@ -3733,7 +3733,7 @@ function Main {
                     Write-Err "下载失败: $_"
                     Write-Host ""
                     Write-Host "  💡 请手动下载并解压:" -ForegroundColor Cyan
-                    Write-Host "     1. 浏览器打开: https://github.com/menriothink/clawnook/releases/latest" -ForegroundColor White
+                    Write-Host "     1. 浏览器打开: https://github.com/cintia09/clawnook/releases/latest" -ForegroundColor White
                     Write-Host "     2. 解压到当前目录，重命名为 clawnook" -ForegroundColor White
                     Write-Host "     3. 重新运行此脚本" -ForegroundColor White
                     Write-Host ""

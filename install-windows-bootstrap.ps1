@@ -12,7 +12,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$repo      = 'menriothink/clawnook'
+$repo      = 'cintia09/clawnook'
 $branch    = 'main'
 $fileName  = 'install-windows.ps1'
 $nonce     = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()

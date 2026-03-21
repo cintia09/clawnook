@@ -14,7 +14,7 @@ echo.
 powershell -ExecutionPolicy Bypass -Command ^
   "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;" ^
   "$nonce=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();" ^
-  "$u='https://raw.githubusercontent.com/menriothink/clawnook/main/update-windows.ps1?ts='+$nonce;" ^
+  "$u='https://raw.githubusercontent.com/cintia09/clawnook/main/update-windows.ps1?ts='+$nonce;" ^
   "$s=$null;" ^
   "Write-Host '  Downloading update script...';" ^
   "try{$s=Invoke-RestMethod $u -UseBasicParsing}catch{};" ^

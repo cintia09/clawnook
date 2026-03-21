@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/menriothink/clawnook/releases"><img src="https://img.shields.io/github/v/release/menriothink/clawnook?style=for-the-badge&color=f97316" alt="GitHub release"></a>
+  <a href="https://github.com/cintia09/clawnook/releases"><img src="https://img.shields.io/github/v/release/cintia09/clawnook?style=for-the-badge&color=f97316" alt="GitHub release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <a href="https://github.com/menriothink/clawnook/stargazers"><img src="https://img.shields.io/github/stars/menriothink/clawnook?style=for-the-badge&color=f97316" alt="Stars"></a>
+  <a href="https://github.com/cintia09/clawnook/stargazers"><img src="https://img.shields.io/github/stars/cintia09/clawnook?style=for-the-badge&color=f97316" alt="Stars"></a>
 </p>
 
 <p align="center">
@@ -48,7 +48,7 @@ Docker deployment ensures environment isolation and reproducibility — no depen
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/menriothink/clawnook/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cintia09/clawnook/main/install.sh | bash
 ```
 
 ### Windows (Administrator PowerShell)
@@ -57,14 +57,14 @@ Windows installation currently uses the Docker Desktop approach only.
 Please install and start Docker Desktop first, then run the install command below.
 
 ```powershell
-irm https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows-bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows-bootstrap.ps1 | iex
 ```
 
 Or download and run `install-windows.bat` as Administrator.
 
 ## Local Install (Offline)
 
-If you have limited internet access or prefer offline installation, download both the **source code** and the **Docker image** (`clawnook-image-lite.tar.gz`) from the [Releases](https://github.com/menriothink/clawnook/releases) page.
+If you have limited internet access or prefer offline installation, download both the **source code** and the **Docker image** (`clawnook-image-lite.tar.gz`) from the [Releases](https://github.com/cintia09/clawnook/releases) page.
 
 ### Linux / macOS
 

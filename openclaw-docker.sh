@@ -247,7 +247,7 @@ log_msg() {
 }
 
 # GitHub Release 配置
-GITHUB_REPO="menriothink/clawnook"
+GITHUB_REPO="cintia09/clawnook"
 GHCR_IMAGE="ghcr.io/${GITHUB_REPO}"
 IMAGE_TARBALL="clawnook-image-lite.tar.gz"
 IMAGE_EDITION="lite"  # 强制使用 lite 版本

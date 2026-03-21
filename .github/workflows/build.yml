@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: menriothink/clawnook
+  IMAGE_NAME: cintia09/clawnook
 
 jobs:
   build:
@@ -87,12 +87,12 @@ jobs:
 
             ### One-Click Install (Windows)
             ```powershell
-            irm https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows.ps1 | iex
+            irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows.ps1 | iex
             ```
 
             ### One-Click Install (Linux / macOS)
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/menriothink/clawnook/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/cintia09/clawnook/main/install.sh | bash
             ```
 
             ### Local Install (Offline / No Internet)
@@ -126,12 +126,12 @@ jobs:
 
             ### 一键安装 (Windows)
             ```powershell
-            irm https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows.ps1 | iex
+            irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows.ps1 | iex
             ```
 
             ### 一键安装 (Linux/macOS)
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/menriothink/clawnook/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/cintia09/clawnook/main/install.sh | bash
             ```
 
             ### 本地安装（离线 / 无网络）

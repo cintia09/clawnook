@@ -14,7 +14,7 @@ set -euo pipefail
 
 CONTAINER_NAME="clawnook"
 IMAGE_NAME="clawnook:latest"
-GITHUB_REPO="menriothink/clawnook"
+GITHUB_REPO="cintia09/clawnook"
 IMAGE_TARBALL_LITE="clawnook-image-lite.tar.gz"
 DEFAULT_BASE_DIR_NAME=".clawnook"
 TARGET_DIR="$HOME"

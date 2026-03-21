@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/menriothink/clawnook/releases"><img src="https://img.shields.io/github/v/release/menriothink/clawnook?style=for-the-badge&color=f97316" alt="GitHub release"></a>
+  <a href="https://github.com/cintia09/clawnook/releases"><img src="https://img.shields.io/github/v/release/cintia09/clawnook?style=for-the-badge&color=f97316" alt="GitHub release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <a href="https://github.com/menriothink/clawnook/stargazers"><img src="https://img.shields.io/github/stars/menriothink/clawnook?style=for-the-badge&color=f97316" alt="Stars"></a>
+  <a href="https://github.com/cintia09/clawnook/stargazers"><img src="https://img.shields.io/github/stars/cintia09/clawnook?style=for-the-badge&color=f97316" alt="Stars"></a>
 </p>
 
 <p align="center">
@@ -60,7 +60,7 @@ Docker 部署带来环境隔离与一致性保证——无需担心依赖冲突�
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/menriothink/clawnook/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cintia09/clawnook/main/install.sh | bash
 ```
 
 ### Windows（管理员 PowerShell）
@@ -69,14 +69,14 @@ Windows 安装当前仅保留 Docker Desktop 方案。
 请先安装并启动 Docker Desktop，再执行下面的安装命令。
 
 ```powershell
-irm https://raw.githubusercontent.com/menriothink/clawnook/main/install-windows-bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows-bootstrap.ps1 | iex
 ```
 
 或下载后以管理员身份运行 `install-windows.bat`。
 
 ## 本地安装（离线）
 
-如果网络受限或希望离线安装，可从 [Releases](https://github.com/menriothink/clawnook/releases) 页面同时下载**源码包**和 **Docker 镜像**（`clawnook-image-lite.tar.gz`）。
+如果网络受限或希望离线安装，可从 [Releases](https://github.com/cintia09/clawnook/releases) 页面同时下载**源码包**和 **Docker 镜像**（`clawnook-image-lite.tar.gz`）。
 
 ### Linux / macOS
 
