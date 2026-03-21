@@ -32,6 +32,10 @@
 - 🧩 **Skill Market** — Browse, install, and update community skill packages online
 
 <p align="center">
+  <img src="docs/images/feature-overview-en.png" alt="OpenClaw Pro Feature Overview" width="600" />
+</p>
+
+<p align="center">
   <img src="docs/images/screenshot-09.png" alt="OpenClaw Pro Screenshot" width="600" />
 </p>
 

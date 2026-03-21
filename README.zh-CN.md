@@ -32,6 +32,10 @@
 - 🎨 **Web 控制面板** — 可视化管理配置、模型、技能插件、安装/更新状态
 - 🧩 **技能市场** — 在线浏览、安装、更新社区技能包
 
+<p align="center">
+  <img src="docs/images/feature-overview-zh.png" alt="OpenClaw Pro 功能全景" width="600" />
+</p>
+
 ## 截图
 
 <details open>
