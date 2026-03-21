@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── i18n: detect system language ──
+_LANG="en"
+case "${LANG:-}${LC_ALL:-}${LANGUAGE:-}" in zh*) _LANG="zh" ;; esac
+_m() { if [ "$_LANG" = "zh" ]; then echo "$1"; else echo "$2"; fi; }
+_mf() { if [ "$_LANG" = "zh" ]; then printf "$1" "${@:3}"; else printf "$2" "${@:3}"; fi; }
+
 # ──────────────────────────────────────────────────────────────
 # ClawNook — Image-Only Linux Installer
 # 完全对齐 Windows install-windows.ps1 行为：
@@ -265,15 +271,15 @@ prompt(){
 
 ensure_docker(){
   if ! command -v docker &>/dev/null; then
-    warn "未检测到 Docker，请先安装 Docker 并重试"
+    warn "$(_m "未检测到 Docker，请先安装 Docker 并重试" "Docker not found. Please install Docker first and try again")"
     exit 1
   fi
   if ! docker info >/dev/null 2>&1; then
     echo ""
-    warn "Docker 已安装但 Docker daemon 未运行"
+    warn "$(_m "Docker 已安装但 Docker daemon 未运行" "Docker is installed but the Docker daemon is not running")"
     case "$(uname -s 2>/dev/null)" in
-      Darwin*) warn "请先启动 Docker Desktop，然后重新运行安装脚本" ;;
-      *)       warn "请先启动 Docker daemon（sudo systemctl start docker 或启动 Docker Desktop），然后重新运行安装脚本" ;;
+      Darwin*) warn "$(_m "请先启动 Docker Desktop，然后重新运行安装脚本" "Please start Docker Desktop first, then re-run the install script")" ;;
+      *)       warn "$(_m "请先启动 Docker daemon（sudo systemctl start docker 或启动 Docker Desktop），然后重新运行安装脚本" "Please start the Docker daemon (sudo systemctl start docker or start Docker Desktop), then re-run the install script")" ;;
     esac
     exit 1
   fi
@@ -307,7 +313,7 @@ find_available_port(){
 
 prompt_port_or_default(){
   local label="$1" default_port="$2" answer trimmed
-  answer="$(prompt "${label} (默认 ${default_port}): ")"
+  answer="$(prompt "$(_m "${label} (默认 ${default_port}): " "${label} (default ${default_port}): ")")"
   trimmed="$(printf '%s' "$answer" | tr -d '[:space:]')"
   if [ -z "$trimmed" ]; then
     printf '%s' "$default_port"
@@ -317,7 +323,7 @@ prompt_port_or_default(){
     printf '%s' "$trimmed"
     return 0
   fi
-  warn "${label} 输入无效（${answer}），使用默认值 ${default_port}"
+  warn "$(_m "${label} 输入无效（${answer}），使用默认值 ${default_port}" "${label} invalid input (${answer}), using default ${default_port}")"
   printf '%s' "$default_port"
 }
 
@@ -326,33 +332,33 @@ apply_port_conflicts(){
 
   ng="$(find_available_port "$GW_PORT" 18790 18999)"
   if [ "$ng" != "$GW_PORT" ]; then
-    warn "Gateway 端口 ${GW_PORT} 已占用，自动调整为 ${ng}"
+    warn "$(_m "Gateway 端口 ${GW_PORT} 已占用，自动调整为 ${ng}" "Gateway port ${GW_PORT} is in use, auto-adjusted to ${ng}")"
     GW_PORT="$ng"
   fi
 
   local ngt
   ngt="$(find_available_port "$GW_TLS_PORT" 18800 18999)"
   if [ "$ngt" != "$GW_TLS_PORT" ]; then
-    warn "Gateway TLS 端口 ${GW_TLS_PORT} 已占用，自动调整为 ${ngt}"
+    warn "$(_m "Gateway TLS 端口 ${GW_TLS_PORT} 已占用，自动调整为 ${ngt}" "Gateway TLS port ${GW_TLS_PORT} is in use, auto-adjusted to ${ngt}")"
     GW_TLS_PORT="$ngt"
   fi
 
   nw="$(find_available_port "$WEB_PORT" 3001 3099)"
   if [ "$nw" != "$WEB_PORT" ]; then
-    warn "Web 端口 ${WEB_PORT} 已占用，自动调整为 ${nw}"
+    warn "$(_m "Web 端口 ${WEB_PORT} 已占用，自动调整为 ${nw}" "Web port ${WEB_PORT} is in use, auto-adjusted to ${nw}")"
     WEB_PORT="$nw"
   fi
 
   ns="$(find_available_port "$SSH_PORT" 2223 2299)"
   if [ "$ns" != "$SSH_PORT" ]; then
-    warn "SSH 端口 ${SSH_PORT} 已占用，自动调整为 ${ns}"
+    warn "$(_m "SSH 端口 ${SSH_PORT} 已占用，自动调整为 ${ns}" "SSH port ${SSH_PORT} is in use, auto-adjusted to ${ns}")"
     SSH_PORT="$ns"
   fi
 
   if [ "$HTTPS_ENABLED" = "true" ] && [ "$CERT_MODE" = "letsencrypt" ] && [ "$HTTP_PORT" -gt 0 ] 2>/dev/null; then
     nh="$(find_available_port "$HTTP_PORT" 8080 8099)"
     if [ "$nh" != "$HTTP_PORT" ]; then
-      warn "HTTP 端口 ${HTTP_PORT} 已占用，自动调整为 ${nh}"
+      warn "$(_m "HTTP 端口 ${HTTP_PORT} 已占用，自动调整为 ${nh}" "HTTP port ${HTTP_PORT} is in use, auto-adjusted to ${nh}")"
       HTTP_PORT="$nh"
     fi
   fi
@@ -360,7 +366,7 @@ apply_port_conflicts(){
   if [ "$HTTPS_ENABLED" = "true" ] && [ "$HTTPS_PORT" -gt 0 ] 2>/dev/null; then
     np="$(find_available_port "$HTTPS_PORT" 8443 8499)"
     if [ "$np" != "$HTTPS_PORT" ]; then
-      warn "HTTPS 端口 ${HTTPS_PORT} 已占用，自动调整为 ${np}"
+      warn "$(_m "HTTPS 端口 ${HTTPS_PORT} 已占用，自动调整为 ${np}" "HTTPS port ${HTTPS_PORT} is in use, auto-adjusted to ${np}")"
       HTTPS_PORT="$np"
     fi
   fi
@@ -457,9 +463,9 @@ get_latest_tag(){
 ensure_latest_tag(){
   TAG="$(get_latest_tag)"
   if [ -z "$TAG" ]; then
-    warn "无法获取最新 Release tag，跳过 release 直链下载，将在本地镜像失败后自动回退 GHCR"
+    warn "$(_m "无法获取最新 Release tag，跳过 release 直链下载，将在本地镜像失败后自动回退 GHCR" "Failed to fetch latest release tag; skipping release direct download, will fallback to GHCR if local image fails")"
   else
-    info "检测到最新 release: $TAG"
+    info "$(_m "检测到最新 release: $TAG" "Latest release detected: $TAG")"
   fi
 }
 
@@ -586,7 +592,7 @@ render_chunk_progress_line(){
   total_mib="$(format_mib "$total_bytes")"
   speed_mib="$(format_mib "$speed_bytes_per_sec")"
 
-  printf '\r[INFO] 分块下载进度：%3d%% %s/%s MiB %s/%s 块 速度 %s MiB/s ETA %s' \
+  _mf '\r[INFO] 分块下载进度：%3d%% %s/%s MiB %s/%s 块 速度 %s MiB/s ETA %s' '\r[INFO] Chunk progress: %3d%% %s/%s MiB %s/%s chunks speed %s MiB/s ETA %s' \
     "$pct" "$completed_mib" "$total_mib" "$completed_chunks" "$total_chunks" "$speed_mib" "$eta_text"
 }
 
@@ -661,7 +667,7 @@ download_chunk_worker(){
     fi
 
     if ! download_chunk_with_retry "$url" "$chunk_file" "$start_byte" "$end_byte" "$expected_len" "$idx" "$total_chunks" 20; then
-      printf '分块 %s/%s 下载失败，范围 %s-%s\n' "$((idx + 1))" "$total_chunks" "$start_byte" "$end_byte" > "$failure_file"
+      _mf '分块 %s/%s 下载失败，范围 %s-%s\n' 'Chunk %s/%s download failed, range %s-%s\n' "$((idx + 1))" "$total_chunks" "$start_byte" "$end_byte" > "$failure_file"
       return 1
     fi
   done
@@ -692,7 +698,7 @@ download_tarball_chunked(){
     meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$chunk_meta" 2>/dev/null || true)"
     meta_size="$(awk -F= '/^size=/{print $2; exit}' "$chunk_meta" 2>/dev/null || true)"
     if [ "$meta_sig" != "$expected_sig" ] || [ "$meta_size" != "$total_bytes" ]; then
-      warn "检测到旧分块缓存与当前版本不一致，已清理后重新下载"
+      warn "$(_m "检测到旧分块缓存与当前版本不一致，已清理后重新下载" "Stale chunk cache detected (version mismatch); cleared and re-downloading")"
       clear_chunk_cache "$output"
     fi
   fi
@@ -725,9 +731,9 @@ download_tarball_chunked(){
   total_mib="$(format_mib "$total_bytes")"
   if [ "$completed_chunks" -gt 0 ]; then
     completed_mib="$(awk -v n="$completed_chunks" -v s="$chunk_size" -v t="$total_bytes" 'BEGIN{v=n*s; if (v>t) v=t; printf "%.2f", v/1024/1024}')"
-    info "续传分块下载：已完成 ${completed_chunks}/${total_chunks} 块（${completed_mib} MiB / ${total_mib} MiB），并发 ${chunk_jobs} 线程"
+    info "$(_m "续传分块下载：已完成 ${completed_chunks}/${total_chunks} 块（${completed_mib} MiB / ${total_mib} MiB），并发 ${chunk_jobs} 线程" "Resuming chunked download: ${completed_chunks}/${total_chunks} chunks done (${completed_mib} MiB / ${total_mib} MiB), ${chunk_jobs} threads")"
   else
-    info "启动分块下载：${total_chunks} 块，约 ${total_mib} MiB，并发 ${chunk_jobs} 线程"
+    info "$(_m "启动分块下载：${total_chunks} 块，约 ${total_mib} MiB，并发 ${chunk_jobs} 线程" "Starting chunked download: ${total_chunks} chunks, ~${total_mib} MiB, ${chunk_jobs} threads")"
   fi
 
   failure_file="${chunk_dir}/.failed"
@@ -783,9 +789,9 @@ EOF
   done
   if [ "$failed" -ne 0 ] || [ -f "$failure_file" ]; then
     if [ -f "$failure_file" ]; then
-      warn "$(cat "$failure_file" 2>/dev/null || echo '分块下载失败')"
+      warn "$(cat "$failure_file" 2>/dev/null || _m '分块下载失败' 'Chunked download failed')"
     else
-      warn "分块下载失败"
+      warn "$(_m "分块下载失败" "Chunked download failed")"
     fi
     return 1
   fi
@@ -800,7 +806,7 @@ EOF
 
   actual_size="$(wc -c < "$assembled_file" 2>/dev/null | tr -d '[:space:]' || echo 0)"
   if [ "$actual_size" -ne "$total_bytes" ] 2>/dev/null; then
-    warn "分块合并后的文件大小异常：期望 ${total_bytes}，实际 ${actual_size}"
+    warn "$(_m "分块合并后的文件大小异常：期望 ${total_bytes}，实际 ${actual_size}" "Merged file size mismatch: expected ${total_bytes}, got ${actual_size}")"
     rm -f "$assembled_file" 2>/dev/null || true
     return 1
   fi
@@ -825,12 +831,12 @@ log_resume_state(){
   if [[ "$total_bytes" =~ ^[0-9]+$ ]] && [ "$total_bytes" -gt 0 ]; then
     total_mib="$(awk -v n="$total_bytes" 'BEGIN{printf "%.2f", n/1024/1024}')"
     total_pct=$(( cached_bytes * 100 / total_bytes ))
-    info "检测到断点缓存：已缓存 ${cached_mib} MiB / 估算总大小 ${total_mib} MiB（总体约 ${total_pct}%）"
+    info "$(_m "检测到断点缓存：已缓存 ${cached_mib} MiB / 估算总大小 ${total_mib} MiB（总体约 ${total_pct}%）" "Resumable cache found: ${cached_mib} MiB cached / estimated total ${total_mib} MiB (~${total_pct}%)")"
   else
-    info "检测到断点缓存：已缓存 ${cached_mib} MiB（总大小暂不可得）"
+    info "$(_m "检测到断点缓存：已缓存 ${cached_mib} MiB（总大小暂不可得）" "Resumable cache found: ${cached_mib} MiB cached (total size unknown)")"
   fi
   if [ "$show_hint" = "true" ]; then
-    info "说明：下面 curl 百分比显示的是本次新增下载进度，不是总体百分比。"
+    info "$(_m "说明：下面 curl 百分比显示的是本次新增下载进度，不是总体百分比。" "Note: The curl percentage below shows this session's progress, not overall progress.")"
   fi
 }
 
@@ -855,7 +861,7 @@ download_with_resume(){
   for attempt in 1 2 3; do
     before_bytes="$( [ -f "$output" ] && wc -c < "$output" 2>/dev/null | tr -d '[:space:]' || echo 0)"
     if [ "$before_bytes" -gt 0 ] 2>/dev/null; then
-      info "继续断点续传：第 ${attempt}/3 次尝试"
+      info "$(_m "继续断点续传：第 ${attempt}/3 次尝试" "Resuming download: attempt ${attempt}/3")"
       if [ "$resume_hint_shown" = "true" ]; then
         log_resume_state "$output" "$total_bytes" "false"
       else
@@ -863,7 +869,7 @@ download_with_resume(){
         resume_hint_shown="true"
       fi
     elif [ "$attempt" -gt 1 ]; then
-      info "重新发起下载：第 ${attempt}/3 次尝试"
+      info "$(_m "重新发起下载：第 ${attempt}/3 次尝试" "Restarting download: attempt ${attempt}/3")"
     fi
 
     if curl "${curl_args[@]}" -o "$output" "$url" 2>/dev/null; then
@@ -875,17 +881,17 @@ download_with_resume(){
     after_bytes="$( [ -f "$output" ] && wc -c < "$output" 2>/dev/null | tr -d '[:space:]' || echo 0)"
     grown_bytes=$(( after_bytes - before_bytes ))
     echo ""
-    warn "下载中断：${url}（第 ${attempt}/3 次，curl exit ${rc}）"
+    warn "$(_m "下载中断：${url}（第 ${attempt}/3 次，curl exit ${rc}）" "Download interrupted: ${url} (attempt ${attempt}/3, curl exit ${rc})")"
     if [ "$after_bytes" -gt 0 ] 2>/dev/null; then
       if [ "$grown_bytes" -gt 0 ] 2>/dev/null; then
         grown_mib="$(awk -v n="$grown_bytes" 'BEGIN{printf "%.2f", n/1024/1024}')"
-        info "本次已额外写入 ${grown_mib} MiB，分片会保留用于下一次继续下载"
+        info "$(_m "本次已额外写入 ${grown_mib} MiB，分片会保留用于下一次继续下载" "Wrote ${grown_mib} MiB this session; partial file kept for next resume")"
       else
-        info "当前分片未增长，但会保留继续尝试"
+        info "$(_m "当前分片未增长，但会保留继续尝试" "No new data written, but partial file kept for retry")"
       fi
     fi
     if [ "$attempt" -lt 3 ]; then
-      info "保留已下载分片，稍后继续断点续传"
+      info "$(_m "保留已下载分片，稍后继续断点续传" "Keeping partial file for later resume")"
       sleep $(( attempt * 2 ))
     fi
   done
@@ -905,23 +911,23 @@ check_local_tarball(){
     local meta_sig=""
     meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$target_meta" 2>/dev/null || true)"
     if [ -n "$meta_sig" ] && [ "$meta_sig" != "$expected_sig" ]; then
-      warn "检测到旧版本本地镜像（${meta_sig}），当前需要 ${TAG}，已清理"
+      warn "$(_m "检测到旧版本本地镜像（${meta_sig}），当前需要 ${TAG}，已清理" "Old version local image detected (${meta_sig}), need ${TAG}; cleaned up")"
       rm -f "$target" "$target_meta" || true
       return 1
     fi
   else
     # 无版本标记的本地镜像，清理避免跨版本复用
-    warn "检测到无版本标记的本地镜像，已清理避免跨版本复用"
+    warn "$(_m "检测到无版本标记的本地镜像，已清理避免跨版本复用" "Unversioned local image detected; cleaned up to prevent cross-version reuse")"
     rm -f "$target" || true
     return 1
   fi
 
   # 检查 gzip 完整性
   if gzip -t "$target" >/dev/null 2>&1; then
-    info "检测到本地镜像且校验通过：$target"
+    info "$(_m "检测到本地镜像且校验通过：$target" "Local image found and verified: $target")"
     return 0
   fi
-  warn "检测到本地镜像损坏（gzip 校验失败），将自动删除并重新下载"
+  warn "$(_m "检测到本地镜像损坏（gzip 校验失败），将自动删除并重新下载" "Local image corrupted (gzip check failed); will delete and re-download")"
   rm -f "$target" "$target_meta" || true
   return 1
 }
@@ -939,7 +945,7 @@ download_tarball(){
   local selected_url=""
   local -a download_urls
   if [ -z "$TAG" ]; then
-    warn "缺少有效 release tag，跳过 release 资产下载"
+    warn "$(_m "缺少有效 release tag，跳过 release 资产下载" "No valid release tag; skipping release asset download")"
     return 1
   fi
 
@@ -949,7 +955,7 @@ download_tarball(){
   expected_sig="${TAG}|${IMAGE_TARBALL}"
   primary_http_code="$(curl -sSLI -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 "$primary_url" 2>/dev/null || true)"
   if [ "$primary_http_code" = "404" ]; then
-    warn "Release 资产不存在：${TAG}/${IMAGE_TARBALL}（HTTP 404），跳过 release 下载并回退 GHCR"
+    warn "$(_m "Release 资产不存在：${TAG}/${IMAGE_TARBALL}（HTTP 404），跳过 release 下载并回退 GHCR" "Release asset not found: ${TAG}/${IMAGE_TARBALL} (HTTP 404); skipping release download, falling back to GHCR")"
     return 1
   fi
   total_bytes="$(curl -fsSLI --connect-timeout 8 --max-time 20 "$primary_url" 2>/dev/null | awk -F': ' 'tolower($1)=="content-length"{print $2}' | tr -d '\r' | tail -1 || true)"
@@ -962,14 +968,14 @@ download_tarball(){
       meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$target_meta" 2>/dev/null || true)"
       meta_size="$(awk -F= '/^size=/{print $2; exit}' "$target_meta" 2>/dev/null || true)"
       if [ "$meta_sig" != "$expected_sig" ]; then
-        warn "检测到旧版本完整缓存（${meta_sig:-unknown}），已清理并重新下载 ${TAG}"
+        warn "$(_m "检测到旧版本完整缓存（${meta_sig:-unknown}），已清理并重新下载 ${TAG}" "Old version full cache detected (${meta_sig:-unknown}); cleared and re-downloading ${TAG}")"
         rm -f "$target" "$target_meta" || true
       elif [[ "$total_bytes" =~ ^[0-9]+$ ]] && [[ "$meta_size" =~ ^[0-9]+$ ]] && [ "$meta_size" -gt 0 ] && [ "$meta_size" -ne "$total_bytes" ]; then
-        warn "检测到完整缓存大小与远端不一致，已清理并重新下载"
+        warn "$(_m "检测到完整缓存大小与远端不一致，已清理并重新下载" "Full cache size mismatch with remote; cleared and re-downloading")"
         rm -f "$target" "$target_meta" || true
       fi
     else
-      warn "检测到无版本标记的旧完整缓存，已清理避免跨版本复用"
+      warn "$(_m "检测到无版本标记的旧完整缓存，已清理避免跨版本复用" "Unversioned full cache detected; cleaned up to prevent cross-version reuse")"
       rm -f "$target" || true
     fi
   fi
@@ -979,14 +985,14 @@ download_tarball(){
       meta_sig="$(awk -F= '/^sig=/{print substr($0,5); exit}' "$part_meta" 2>/dev/null || true)"
       meta_size="$(awk -F= '/^size=/{print $2; exit}' "$part_meta" 2>/dev/null || true)"
       if [ "$meta_sig" != "$expected_sig" ]; then
-        warn "检测到旧版本断点缓存（${meta_sig:-unknown}），已清理并重新下载 ${TAG}"
+        warn "$(_m "检测到旧版本断点缓存（${meta_sig:-unknown}），已清理并重新下载 ${TAG}" "Old version partial cache detected (${meta_sig:-unknown}); cleared and re-downloading ${TAG}")"
         rm -f "$part" "$part_meta" || true
       elif [[ "$total_bytes" =~ ^[0-9]+$ ]] && [[ "$meta_size" =~ ^[0-9]+$ ]] && [ "$meta_size" -gt 0 ] && [ "$meta_size" -ne "$total_bytes" ]; then
-        warn "检测到断点缓存大小与远端不一致，已清理并重新下载"
+        warn "$(_m "检测到断点缓存大小与远端不一致，已清理并重新下载" "Partial cache size mismatch with remote; cleared and re-downloading")"
         rm -f "$part" "$part_meta" || true
       fi
     else
-      warn "检测到无版本标记的旧断点缓存，已清理避免跨版本续传"
+      warn "$(_m "检测到无版本标记的旧断点缓存，已清理避免跨版本续传" "Unversioned partial cache detected; cleaned up to prevent cross-version resume")"
       rm -f "$part" || true
     fi
   fi
@@ -1006,29 +1012,29 @@ download_tarball(){
   done < <(probe_range_capable_source "${download_urls[@]}")
 
   if [ -n "$selected_url" ] && [[ "$total_bytes" =~ ^[0-9]+$ ]] && [ "$total_bytes" -gt 0 ]; then
-    info "已锁定支持 Range 的下载源进行分块下载：$selected_url"
+    info "$(_m "已锁定支持 Range 的下载源进行分块下载：$selected_url" "Locked Range-capable source for chunked download: $selected_url")"
     if download_tarball_chunked "$selected_url" "$part" "$total_bytes" "$expected_sig"; then
       if gzip -t "$part" >/dev/null 2>&1; then
         mv -f "$part" "$target"
         printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$target_meta" 2>/dev/null || true
         rm -f "$part_meta" || true
         clear_chunk_cache "$part"
-        success "镜像下载并校验成功"
+        success "$(_m "镜像下载并校验成功" "Image downloaded and verified")"
         return 0
       fi
-      warn "分块下载完成但 gzip 校验失败，说明该下载源虽然支持 Range，但返回内容不稳定；已清理分块缓存并回退线性续传"
+      warn "$(_m "分块下载完成但 gzip 校验失败，说明该下载源虽然支持 Range，但返回内容不稳定；已清理分块缓存并回退线性续传" "Chunked download finished but gzip check failed (unstable Range source); cleared chunk cache, falling back to linear resume")"
       rm -f "$part" "$part_meta" || true
       clear_chunk_cache "$part"
     else
-      warn "分块下载未完成，将回退到线性续传下载"
+      warn "$(_m "分块下载未完成，将回退到线性续传下载" "Chunked download incomplete; falling back to linear resume download")"
     fi
   else
-    warn "未探测到稳定的 Range 下载源，将回退到线性续传下载"
+    warn "$(_m "未探测到稳定的 Range 下载源，将回退到线性续传下载" "No stable Range-capable source found; falling back to linear resume download")"
   fi
 
   for u in "${download_urls[@]}"; do
     [ -z "$u" ] && continue
-    info "尝试下载：$u"
+    info "$(_m "尝试下载：$u" "Trying download: $u")"
     printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$part_meta" 2>/dev/null || true
     if download_with_resume "$u" "$part" "$total_bytes"; then
       echo ""
@@ -1036,26 +1042,26 @@ download_tarball(){
         mv -f "$part" "$target"
         printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$target_meta" 2>/dev/null || true
         rm -f "$part_meta" || true
-        success "镜像下载并校验成功"
+        success "$(_m "镜像下载并校验成功" "Image downloaded and verified")"
         return 0
       fi
-      warn "下载完成但校验失败，删除损坏分片并切换下一个源"
+      warn "$(_m "下载完成但校验失败，删除损坏分片并切换下一个源" "Download finished but verification failed; deleting corrupt file and trying next source")"
       rm -f "$part" "$part_meta" || true
     else
       echo ""
-      warn "该下载源失败：${u}（保留当前分片供下次继续）"
+      warn "$(_m "该下载源失败：${u}（保留当前分片供下次继续）" "Download source failed: ${u} (keeping partial file for next attempt)")"
     fi
   done
 
   if command -v aria2c >/dev/null 2>&1; then
-    info "curl 源均失败，尝试 aria2c 多线程下载"
+    info "$(_m "curl 源均失败，尝试 aria2c 多线程下载" "All curl sources failed; trying aria2c multi-threaded download")"
     printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$part_meta" 2>/dev/null || true
     aria2c -c -x 8 -s 8 -d "$TMP_DIR" -o "${IMAGE_TARBALL}.part" "$primary_url" || true
     if [ -f "$part" ] && gzip -t "$part" >/dev/null 2>&1; then
       mv -f "$part" "$target"
       printf 'sig=%s\nsize=%s\n' "$expected_sig" "${total_bytes:-0}" > "$target_meta" 2>/dev/null || true
       rm -f "$part_meta" || true
-      success "aria2c 下载并校验成功"
+      success "$(_m "aria2c 下载并校验成功" "aria2c download and verification succeeded")"
       return 0
     fi
     rm -f "$part" "$part_meta" || true
@@ -1070,10 +1076,10 @@ load_image(){
   local load_pid start_ts elapsed next_report rc
   if ! check_local_tarball; then return 1; fi
   if ! docker info >/dev/null 2>&1; then
-    warn "Docker daemon 未运行，无法导入镜像"
+    warn "$(_m "Docker daemon 未运行，无法导入镜像" "Docker daemon is not running; cannot load image")"
     case "$(uname -s 2>/dev/null)" in
-      Darwin*) warn "请先启动 Docker Desktop，然后重新运行安装脚本" ;;
-      *)       warn "请先启动 Docker daemon，然后重新运行安装脚本" ;;
+      Darwin*) warn "$(_m "请先启动 Docker Desktop，然后重新运行安装脚本" "Please start Docker Desktop first, then re-run the install script")" ;;
+      *)       warn "$(_m "请先启动 Docker daemon，然后重新运行安装脚本" "Please start the Docker daemon first, then re-run the install script")" ;;
     esac
     exit 1
   fi
@@ -1081,7 +1087,7 @@ load_image(){
   dangling_before_file="$(mktemp "${TMP_DIR}/.docker-dangling-before.XXXXXX")"
   capture_dangling_image_ids > "$dangling_before_file" 2>/dev/null || true
 
-  info "正在导入镜像（docker load）: $f"
+  info "$(_m "正在导入镜像（docker load）: $f" "Loading image (docker load): $f")"
   rm -f "$load_log" || true
   docker load < "$f" >"$load_log" 2>&1 &
   load_pid=$!
@@ -1090,7 +1096,7 @@ load_image(){
   while kill -0 "$load_pid" >/dev/null 2>&1; do
     elapsed=$(( $(date +%s) - start_ts ))
     if [ "$elapsed" -ge "$next_report" ]; then
-      printf '\r\033[K[INFO] 正在导入镜像（docker load），已耗时 %ds' "$elapsed"
+      _mf '\r\033[K[INFO] 正在导入镜像（docker load），已耗时 %ds' '\r\033[K[INFO] Loading image (docker load), elapsed %ds' "$elapsed"
       next_report=$((next_report + 5))
     fi
     sleep 1
@@ -1105,24 +1111,24 @@ load_image(){
     tag_loaded_image_if_needed
     cleanup_replaced_image_from_load_log "$load_log"
     cleanup_new_dangling_images "$dangling_before_file"
-    success "镜像导入完成"
+    success "$(_m "镜像导入完成" "Image loaded successfully")"
     rm -f "$load_log" || true
     rm -f "$dangling_before_file" 2>/dev/null || true
     return 0
   fi
 
-  warn "docker load 失败，尝试流式解压导入"
+  warn "$(_m "docker load 失败，尝试流式解压导入" "docker load failed; trying streaming decompression import")"
   cat "$load_log" || true
   rm -f "$load_log" || true
   if command -v unpigz >/dev/null 2>&1; then
-    if unpigz -c "$f" | docker load; then tag_loaded_image_if_needed; cleanup_new_dangling_images "$dangling_before_file"; success "流式解压导入成功"; rm -f "$dangling_before_file" 2>/dev/null || true; return 0; fi
+    if unpigz -c "$f" | docker load; then tag_loaded_image_if_needed; cleanup_new_dangling_images "$dangling_before_file"; success "$(_m "流式解压导入成功" "Streaming decompression import succeeded")"; rm -f "$dangling_before_file" 2>/dev/null || true; return 0; fi
   elif command -v gunzip >/dev/null 2>&1; then
-    if gunzip -c "$f" | docker load; then tag_loaded_image_if_needed; cleanup_new_dangling_images "$dangling_before_file"; success "流式解压导入成功"; rm -f "$dangling_before_file" 2>/dev/null || true; return 0; fi
+    if gunzip -c "$f" | docker load; then tag_loaded_image_if_needed; cleanup_new_dangling_images "$dangling_before_file"; success "$(_m "流式解压导入成功" "Streaming decompression import succeeded")"; rm -f "$dangling_before_file" 2>/dev/null || true; return 0; fi
   fi
 
   cleanup_new_dangling_images "$dangling_before_file"
   rm -f "$dangling_before_file" 2>/dev/null || true
-  warn "本地镜像导入失败"
+  warn "$(_m "本地镜像导入失败" "Local image import failed")"
   return 1
 }
 
@@ -1137,9 +1143,9 @@ cleanup_replaced_image_from_load_log(){
   while IFS= read -r old_id; do
     [ -n "$old_id" ] || continue
     if docker image rm "$old_id" >/dev/null 2>&1; then
-      info "已清理被替换的旧镜像：$old_id"
+      info "$(_m "已清理被替换的旧镜像：$old_id" "Cleaned up replaced old image: $old_id")"
     else
-      warn "旧镜像仍被占用，跳过清理：$old_id"
+      warn "$(_m "旧镜像仍被占用，跳过清理：$old_id" "Old image still in use, skipping cleanup: $old_id")"
     fi
   done <<EOF
 $old_ids
@@ -1165,9 +1171,9 @@ cleanup_new_dangling_images(){
   while IFS= read -r old_id; do
     [ -n "$old_id" ] || continue
     if docker image rm "$old_id" >/dev/null 2>&1; then
-      info "已清理加载失败遗留的悬空镜像：$old_id"
+      info "$(_m "已清理加载失败遗留的悬空镜像：$old_id" "Cleaned up dangling image from failed load: $old_id")"
     else
-      warn "加载失败后发现悬空镜像仍被占用，跳过清理：$old_id"
+      warn "$(_m "加载失败后发现悬空镜像仍被占用，跳过清理：$old_id" "Dangling image still in use after failed load, skipping cleanup: $old_id")"
     fi
   done <<EOF
 $new_ids
@@ -1175,11 +1181,11 @@ EOF
 }
 
 pull_from_ghcr(){
-  info "尝试从 GHCR 拉取镜像（自动回退）"
+  info "$(_m "尝试从 GHCR 拉取镜像（自动回退）" "Trying to pull image from GHCR (automatic fallback)")"
   if [ -n "$TAG" ] && docker pull "ghcr.io/${GITHUB_REPO}:${TAG}-lite"; then
     docker tag "ghcr.io/${GITHUB_REPO}:${TAG}-lite" "$IMAGE_NAME" || true
     cleanup_local_lite_aliases || true
-    success "GHCR 拉取成功"; return 0
+    success "$(_m "GHCR 拉取成功" "GHCR pull succeeded")"; return 0
   fi
   if docker pull "ghcr.io/${GITHUB_REPO}:lite" 2>/dev/null || docker pull "ghcr.io/${GITHUB_REPO}:latest" 2>/dev/null; then
     if docker image inspect "ghcr.io/${GITHUB_REPO}:lite" >/dev/null 2>&1; then
@@ -1188,7 +1194,7 @@ pull_from_ghcr(){
       docker tag "ghcr.io/${GITHUB_REPO}:latest" "$IMAGE_NAME" || true
     fi
     cleanup_local_lite_aliases || true
-    success "GHCR 拉取成功"; return 0
+    success "$(_m "GHCR 拉取成功" "GHCR pull succeeded")"; return 0
   fi
   return 1
 }
@@ -1224,7 +1230,7 @@ cleanup_local_lite_aliases(){
   fi
 
   if [ "$alias_removed" = "true" ]; then
-    info "已移除本地 lite 标签，统一使用 ${IMAGE_NAME}"
+    info "$(_m "已移除本地 lite 标签，统一使用 ${IMAGE_NAME}" "Removed local lite tags, unified to ${IMAGE_NAME}")"
   fi
 }
 
@@ -1240,10 +1246,10 @@ generate_strong_password(){
 
 ensure_root_password(){
   if [ -n "$ROOT_PASS" ]; then
-    info "检测到 ROOT_PASS 环境变量"; return 0
+    info "$(_m "检测到 ROOT_PASS 环境变量" "ROOT_PASS environment variable detected")"; return 0
   fi
   ROOT_PASS=""
-  info "默认不生成 root 密码文件（SSH key-only）；如需设置请传入 ROOT_PASS"
+  info "$(_m "默认不生成 root 密码文件（SSH key-only）；如需设置请传入 ROOT_PASS" "No root password file generated by default (SSH key-only); pass ROOT_PASS to set one")"
 }
 
 ensure_container_host_user(){
@@ -1255,11 +1261,11 @@ ensure_container_host_user(){
   fi
 
   if ! [[ "$host_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-    warn "宿主机用户名格式无效，跳过容器普通用户创建：$host_user"
+    warn "$(_m "宿主机用户名格式无效，跳过容器普通用户创建：$host_user" "Invalid host username format, skipping container user creation: $host_user")"
     return 1
   fi
 
-  info "容器内未检测到用户 ${host_user}，执行兼容创建"
+  info "$(_m "容器内未检测到用户 ${host_user}，执行兼容创建" "User ${host_user} not found in container; creating")"
   docker exec "$CONTAINER_NAME" bash -c "
 set -e
 if [ -n '$host_gid' ] && [[ '$host_gid' =~ ^[0-9]+$ ]] && ! getent group '$host_gid' >/dev/null 2>&1; then
@@ -1377,7 +1383,7 @@ prompt_deploy_config(){
     # Gateway 内部端口固定 18789（仅容器内回环，不对外）
 
     HTTPS_ENABLED="true"
-    printf "HTTPS 域名 (可选，留空自动检测本机局域网IP并使用自签名HTTPS): " > "$TTY_IN"
+    printf "%s" "$(_m "HTTPS 域名 (可选，留空自动检测本机局域网IP并使用自签名HTTPS): " "HTTPS domain (optional; leave blank to auto-detect LAN IP with self-signed HTTPS): ")" > "$TTY_IN"
     IFS= read -r DOMAIN < "$TTY_IN" || true
     DOMAIN="${DOMAIN:-}"
 
@@ -1385,17 +1391,17 @@ prompt_deploy_config(){
       DOMAIN="$(detect_local_ip)"
       CERT_MODE="internal"
       HTTP_PORT=0
-      info "检测到 HTTPS IP：$DOMAIN"
-      info "域名留空，自动启用 IP 自签 HTTPS：$DOMAIN"
+      info "$(_m "检测到 HTTPS IP：$DOMAIN" "Detected HTTPS IP: $DOMAIN")"
+      info "$(_m "域名留空，自动启用 IP 自签 HTTPS：$DOMAIN" "Domain left blank; auto-enabled IP self-signed HTTPS: $DOMAIN")"
       if [ "$DOMAIN" = "127.0.0.1" ]; then
-        warn "未检测到可用局域网 IP，当前回退到 127.0.0.1；如需局域网访问，请手动输入域名或 IP"
+        warn "$(_m "未检测到可用局域网 IP，当前回退到 127.0.0.1；如需局域网访问，请手动输入域名或 IP" "No LAN IP detected, falling back to 127.0.0.1; for LAN access, manually enter a domain or IP")"
       fi
     elif echo "$DOMAIN" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
       CERT_MODE="internal"
       HTTP_PORT=0
     else
       if echo "$DOMAIN" | grep -Eq '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$'; then
-        t="$(prompt "证书模式 [1=Let's Encrypt, 2=自签名]（默认1）: ")"
+        t="$(prompt "$(_m "证书模式 [1=Let's Encrypt, 2=自签名]（默认1）: " "Certificate mode [1=Let's Encrypt, 2=self-signed] (default 1): ")")"
         if [ "$t" = "2" ]; then
           CERT_MODE="internal"
           HTTP_PORT=0
@@ -1404,7 +1410,7 @@ prompt_deploy_config(){
           HTTP_PORT="${HTTP_PORT:-80}"
         fi
       else
-        warn "域名格式无效，自动回退到 IP 自签名 HTTPS"
+        warn "$(_m "域名格式无效，自动回退到 IP 自签名 HTTPS" "Invalid domain format; falling back to IP self-signed HTTPS")"
         DOMAIN="$(detect_local_ip)"
         CERT_MODE="internal"
         HTTP_PORT=0
@@ -1429,14 +1435,14 @@ prompt_deploy_config(){
   HTTPS_PORT="${HTTPS_PORT:-443}"
   [ "$HTTPS_PORT" -eq 0 ] && HTTPS_PORT=443
   if has_tty; then
-    HTTPS_PORT="$(prompt_port_or_default "HTTPS 端口" "$HTTPS_PORT")"
+    HTTPS_PORT="$(prompt_port_or_default "$(_m "HTTPS 端口" "HTTPS port")" "$HTTPS_PORT")"
   fi
   HTTPS_PORT="$(find_available_port "$HTTPS_PORT" 8443 8499)"
 
   GW_TLS_PORT="${GW_TLS_PORT:-18790}"
   [ "$GW_TLS_PORT" -eq 0 ] && GW_TLS_PORT=18790
   if has_tty; then
-    GW_TLS_PORT="$(prompt_port_or_default "Gateway TLS 端口" "$GW_TLS_PORT")"
+    GW_TLS_PORT="$(prompt_port_or_default "$(_m "Gateway TLS 端口" "Gateway TLS port")" "$GW_TLS_PORT")"
   fi
   GW_TLS_PORT="$(find_available_port "$GW_TLS_PORT" 18800 18999)"
 
@@ -1449,18 +1455,18 @@ prompt_deploy_config(){
   [ -z "$BROWSER_BRIDGE_ENABLED" ] && BROWSER_BRIDGE_ENABLED="false"
 
   if [ "$CERT_MODE" = "internal" ] && echo "$DOMAIN" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-    info "当前将使用 IP 自签 HTTPS：$DOMAIN"
+    info "$(_m "当前将使用 IP 自签 HTTPS：$DOMAIN" "Using IP self-signed HTTPS: $DOMAIN")"
   else
-    info "当前 HTTPS 域名：$DOMAIN"
-    info "证书模式：$CERT_MODE"
+    info "$(_m "当前 HTTPS 域名：$DOMAIN" "HTTPS domain: $DOMAIN")"
+    info "$(_m "证书模式：$CERT_MODE" "Certificate mode: $CERT_MODE")"
   fi
 
-  info "最终端口映射（宿主机 → 容器）："
+  info "$(_m "最终端口映射（宿主机 → 容器）：" "Final port mapping (host → container):")"
   info "  Gateway TLS : ${GW_TLS_PORT} → 18790"
   info "  HTTPS       : ${HTTPS_PORT} → 443"
   info "  SSH         : ${SSH_PORT} → 22"
-  info "  Gateway     : 127.0.0.1:${GW_PORT} → 18789 (仅本机)"
-  info "  Web         : 127.0.0.1:${WEB_PORT} → 3000 (仅本机)"
+  info "  Gateway     : 127.0.0.1:${GW_PORT} → 18789 $(_m "(仅本机)" "(localhost only)")"
+  info "  Web         : 127.0.0.1:${WEB_PORT} → 3000 $(_m "(仅本机)" "(localhost only)")"
 }
 
 # ─── upgrade detection ────────────────────────────────────────
@@ -1477,13 +1483,13 @@ show_upgrade_detection(){
   fi
 
   if [ -z "$installed_tag" ]; then
-    info "升级检测：未发现已安装版本标记，将执行全量镜像更新。"
+    info "$(_m "升级检测：未发现已安装版本标记，将执行全量镜像更新。" "Upgrade check: no installed version tag found; performing full image update.")"
   elif [ -n "$TAG" ] && [ "$installed_tag" = "$TAG" ]; then
-    info "升级检测：当前版本 ${installed_tag} 与最新版本一致。"
+    info "$(_m "升级检测：当前版本 ${installed_tag} 与最新版本一致。" "Upgrade check: current version ${installed_tag} matches the latest.")"
   elif [ -n "$TAG" ]; then
-    info "升级检测：当前 ${installed_tag} → 最新 ${TAG}，将执行升级。"
+    info "$(_m "升级检测：当前 ${installed_tag} → 最新 ${TAG}，将执行升级。" "Upgrade check: current ${installed_tag} → latest ${TAG}; upgrading.")"
   else
-    info "升级检测：当前版本 ${installed_tag}（无法获取远程最新 tag）。"
+    info "$(_m "升级检测：当前版本 ${installed_tag}（无法获取远程最新 tag）。" "Upgrade check: current version ${installed_tag} (unable to fetch remote latest tag).")"
   fi
 }
 
@@ -1513,21 +1519,21 @@ prompt_hotpatch_first_if_applicable(){
   [ "$installed_tag" = "$TAG" ] && return 0
 
   if can_hotpatch_current_container; then
-    printf "\n💡 检测到新 Release 且可热更新（目标版本: %s，无需完整重装）\n" "$TAG" > "$TTY_IN"
-    printf "   当前版本: %s\n" "$installed_tag" > "$TTY_IN"
-    printf "   建议先在 Web 面板 → 系统更新 执行热更新。\n\n" > "$TTY_IN"
-    printf "推荐操作：\n" > "$TTY_IN"
-    printf "  [默认 N] 先执行 Web 热更新（推荐）\n" > "$TTY_IN"
-    printf "  [输入 y] 继续完整重装流程\n\n" > "$TTY_IN"
-    printf "⚠️  完整重装风险提示：\n" > "$TTY_IN"
-    printf "  - 将删除并重建容器（容器文件系统会重置）\n" > "$TTY_IN"
-    printf "  - 容器内手工安装的软件/临时文件可能丢失\n" > "$TTY_IN"
-    printf "  - 状态卷与配置会保留\n\n" > "$TTY_IN"
-    continue_install="$(prompt "是否继续执行安装重装流程？[y/N]: ")"
+    _mf "\n💡 检测到新 Release 且可热更新（目标版本: %s，无需完整重装）\n" "\n💡 New release detected and hot-update available (target: %s, no full reinstall needed)\n" "$TAG" > "$TTY_IN"
+    _mf "   当前版本: %s\n" "   Current version: %s\n" "$installed_tag" > "$TTY_IN"
+    printf "%s\n\n" "$(_m "   建议先在 Web 面板 → 系统更新 执行热更新。" "   Recommended: run hot-update from Web panel → System Update first.")" > "$TTY_IN"
+    printf "%s\n" "$(_m "推荐操作：" "Recommended action:")" > "$TTY_IN"
+    printf "%s\n" "$(_m "  [默认 N] 先执行 Web 热更新（推荐）" "  [default N] Run Web hot-update first (recommended)")" > "$TTY_IN"
+    printf "%s\n\n" "$(_m "  [输入 y] 继续完整重装流程" "  [enter y] Continue with full reinstall")" > "$TTY_IN"
+    printf "%s\n" "$(_m "⚠️  完整重装风险提示：" "⚠️  Full reinstall risks:")" > "$TTY_IN"
+    printf "%s\n" "$(_m "  - 将删除并重建容器（容器文件系统会重置）" "  - Container will be removed and recreated (filesystem reset)")" > "$TTY_IN"
+    printf "%s\n" "$(_m "  - 容器内手工安装的软件/临时文件可能丢失" "  - Manually installed software/temp files in container may be lost")" > "$TTY_IN"
+    printf "%s\n\n" "$(_m "  - 状态卷与配置会保留" "  - State volume and config will be preserved")" > "$TTY_IN"
+    continue_install="$(prompt "$(_m "是否继续执行安装重装流程？[y/N]: " "Continue with install/reinstall? [y/N]: ")")"
     continue_install="$(echo "$continue_install" | tr '[:upper:]' '[:lower:]')"
     if [ "$continue_install" != "y" ] && [ "$continue_install" != "yes" ]; then
-      warn "已取消本次安装流程，请在 Web 面板执行热更新。"
-      info "热更新后可再次运行安装脚本（如有需要）。"
+      warn "$(_m "已取消本次安装流程，请在 Web 面板执行热更新。" "Installation cancelled. Please run hot-update from the Web panel.")"
+      info "$(_m "热更新后可再次运行安装脚本（如有需要）。" "You may re-run the install script after hot-update if needed.")"
       exit 0
     fi
   fi
@@ -1543,7 +1549,7 @@ reset_persistent_state(){
     return 0
   fi
 
-  warn "普通权限删除旧版 home-data 失败，尝试通过 Docker 提权清理..."
+  warn "$(_m "普通权限删除旧版 home-data 失败，尝试通过 Docker 提权清理..." "Failed to remove legacy home-data with normal permissions; trying Docker-privileged cleanup...")"
   if docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     if docker run --rm --platform "$DOCKER_PLATFORM" -v "$BASE_DIR:/work" --entrypoint sh "$IMAGE_NAME" -lc 'rm -rf /work/home-data /work/system-data /work/user-*' >/dev/null 2>&1; then
       return 0
@@ -1557,7 +1563,7 @@ reset_persistent_state(){
     fi
   fi
 
-  warn "未能完全清理旧版 home-data（权限受限），目录将保留但后续不再使用。"
+  warn "$(_m "未能完全清理旧版 home-data（权限受限），目录将保留但后续不再使用。" "Could not fully clean up legacy home-data (permission denied); directory will remain but is no longer used.")"
 }
 
 
@@ -1571,12 +1577,12 @@ handle_existing_installation(){
   if [ -z "$exists" ]; then
     refresh_config_cache || true
     if [ -f "$CONFIG_CACHE_FILE" ] || [ -f "$CONFIG_FILE_LEGACY_ROOT" ] || [ -f "$CONFIG_FILE_LEGACY" ]; then
-      info "未发现已有容器，但检测到残留配置文件，将按全新安装处理。"
+      info "$(_m "未发现已有容器，但检测到残留配置文件，将按全新安装处理。" "No existing container found, but leftover config detected; treating as fresh install.")"
     fi
     return 0
   fi
 
-  warn "检测到已有安装（容器已存在）。"
+  warn "$(_m "检测到已有安装（容器已存在）。" "Existing installation detected (container exists).")"
   show_upgrade_detection
 
   installed_tag="$(get_installed_release_tag)"
@@ -1590,19 +1596,19 @@ handle_existing_installation(){
   fi
 
   if has_tty; then
-    printf "\n处理方式：\n" > "$TTY_IN"
+    printf "%s\n" "$(_m "\n处理方式：" "\nAction:")" > "$TTY_IN"
     if [ "$latest_matched" = "true" ]; then
-      printf "  [1] 重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）\n" > "$TTY_IN"
-      printf "  [2] 全新重建（删除旧容器和全部持久化数据，重新配置端口/HTTPS）\n" > "$TTY_IN"
-      printf "  [3] 退出\n" > "$TTY_IN"
-      choice="$(prompt "当前已是最新版本，请选择 1/2/3（默认1）: ")"
+      printf "%s\n" "$(_m "  [1] 重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）" "  [1] Rebuild (keep openclaw data, reconfigure ports/HTTPS)")" > "$TTY_IN"
+      printf "%s\n" "$(_m "  [2] 全新重建（删除旧容器和全部持久化数据，重新配置端口/HTTPS）" "  [2] Fresh rebuild (delete old container and all persistent data, reconfigure ports/HTTPS)")" > "$TTY_IN"
+      printf "%s\n" "$(_m "  [3] 退出" "  [3] Exit")" > "$TTY_IN"
+      choice="$(prompt "$(_m "当前已是最新版本，请选择 1/2/3（默认1）: " "Already on latest version. Choose 1/2/3 (default 1): ")")"
       [ -z "$choice" ] && choice="1"
     else
-      printf "  [1] 升级（保留 /root/.openclaw 中的 openclaw 相关数据与配置，沿用当前端口/HTTPS）\n" > "$TTY_IN"
-      printf "  [2] 升级重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）\n" > "$TTY_IN"
-      printf "  [3] 全新升级重建（删除旧容器和全部持久化数据，重新配置端口/HTTPS）\n" > "$TTY_IN"
-      printf "  [4] 退出\n" > "$TTY_IN"
-      choice="$(prompt "请选择 1/2/3/4（默认1）: ")"
+      printf "%s\n" "$(_m "  [1] 升级（保留 /root/.openclaw 中的 openclaw 相关数据与配置，沿用当前端口/HTTPS）" "  [1] Upgrade (keep /root/.openclaw data & config, reuse current ports/HTTPS)")" > "$TTY_IN"
+      printf "%s\n" "$(_m "  [2] 升级重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）" "  [2] Upgrade & rebuild (keep openclaw data, reconfigure ports/HTTPS)")" > "$TTY_IN"
+      printf "%s\n" "$(_m "  [3] 全新升级重建（删除旧容器和全部持久化数据，重新配置端口/HTTPS）" "  [3] Fresh upgrade rebuild (delete old container and all persistent data, reconfigure ports/HTTPS)")" > "$TTY_IN"
+      printf "%s\n" "$(_m "  [4] 退出" "  [4] Exit")" > "$TTY_IN"
+      choice="$(prompt "$(_m "请选择 1/2/3/4（默认1）: " "Choose 1/2/3/4 (default 1): ")")"
       [ -z "$choice" ] && choice="1"
     fi
   else
@@ -1611,26 +1617,26 @@ handle_existing_installation(){
 
   if [ "$latest_matched" = "true" ]; then
     case "${choice:-1}" in
-      3) warn "用户取消安装。"; exit 0 ;;
-      2) info "全新重建：删除旧容器，并清空 /root/.openclaw 持久化数据，随后重新配置端口/HTTPS"
+      3) warn "$(_m "用户取消安装。" "Installation cancelled by user.")"; exit 0 ;;
+      2) info "$(_m "全新重建：删除旧容器，并清空 /root/.openclaw 持久化数据，随后重新配置端口/HTTPS" "Fresh rebuild: removing old container, clearing /root/.openclaw persistent data, then reconfiguring ports/HTTPS")"
          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
          reset_persistent_state
          UPGRADE_MODE="false" ;;
-      *) info "重建：保留容器内 openclaw 相关数据，重新配置端口/HTTPS"
+      *) info "$(_m "重建：保留容器内 openclaw 相关数据，重新配置端口/HTTPS" "Rebuild: keeping openclaw data, reconfiguring ports/HTTPS")"
          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
          UPGRADE_MODE="false" ;;
     esac
   else
     case "${choice:-1}" in
-      4) warn "用户取消安装。"; exit 0 ;;
-      3) info "全新升级重建：删除旧容器，并清空 /root/.openclaw 持久化数据，随后切换到目标版本并重新配置端口/HTTPS"
+      4) warn "$(_m "用户取消安装。" "Installation cancelled by user.")"; exit 0 ;;
+      3) info "$(_m "全新升级重建：删除旧容器，并清空 /root/.openclaw 持久化数据，随后切换到目标版本并重新配置端口/HTTPS" "Fresh upgrade rebuild: removing old container, clearing /root/.openclaw persistent data, switching to target version, reconfiguring ports/HTTPS")"
          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
          reset_persistent_state
          UPGRADE_MODE="false" ;;
-      2) info "升级重建：保留容器内 openclaw 相关数据，切换到目标版本后重新配置端口/HTTPS"
+      2) info "$(_m "升级重建：保留容器内 openclaw 相关数据，切换到目标版本后重新配置端口/HTTPS" "Upgrade & rebuild: keeping openclaw data, switching to target version, reconfiguring ports/HTTPS")"
          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
          UPGRADE_MODE="false" ;;
-      *) info "升级：保留 /root/.openclaw 中的 openclaw 相关数据与配置，沿用当前端口/HTTPS"
+      *) info "$(_m "升级：保留 /root/.openclaw 中的 openclaw 相关数据与配置，沿用当前端口/HTTPS" "Upgrade: keeping /root/.openclaw data & config, reusing current ports/HTTPS")"
          load_existing_config || true
          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
          UPGRADE_MODE="true" ;;
@@ -1638,7 +1644,7 @@ handle_existing_installation(){
   fi
 
   if [ -n "$running" ]; then
-    info "已停止并替换运行中的容器：$CONTAINER_NAME"
+    info "$(_m "已停止并替换运行中的容器：$CONTAINER_NAME" "Stopped and replaced running container: $CONTAINER_NAME")"
   fi
   return 0
 }
@@ -1647,13 +1653,13 @@ handle_existing_installation(){
 
 configure_firewall_and_fail2ban(){
   if [ "$(id -u)" -ne 0 ]; then
-    warn "未以 root 运行，跳过宿主机 ufw/fail2ban 配置（不影响容器运行）。"
+    warn "$(_m "未以 root 运行，跳过宿主机 ufw/fail2ban 配置（不影响容器运行）。" "Not running as root; skipping host ufw/fail2ban config (container unaffected).")"
     return 0
   fi
 
   if [ -z "$DO_FIREWALL" ] && has_tty; then
     local ans
-    ans="$(prompt "是否自动配置防火墙和 fail2ban？[Y/n]: ")"
+    ans="$(prompt "$(_m "是否自动配置防火墙和 fail2ban？[Y/n]: " "Auto-configure firewall and fail2ban? [Y/n]: ")")"
     ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
     if [ -z "$ans" ] || [ "$ans" = "y" ] || [ "$ans" = "yes" ]; then
       DO_FIREWALL="y"
@@ -1662,11 +1668,11 @@ configure_firewall_and_fail2ban(){
     fi
   fi
   [ -z "$DO_FIREWALL" ] && DO_FIREWALL="y"
-  [ "$DO_FIREWALL" != "y" ] && { info "跳过防火墙配置"; return 0; }
+  [ "$DO_FIREWALL" != "y" ] && { info "$(_m "跳过防火墙配置" "Skipping firewall configuration")"; return 0; }
 
   # ufw
   if ! command -v ufw >/dev/null 2>&1; then
-    info "安装 ufw..."; apt-get update -y >/dev/null 2>&1 || true; apt-get install -y ufw >/dev/null 2>&1 || true
+    info "$(_m "安装 ufw..." "Installing ufw...")"; apt-get update -y >/dev/null 2>&1 || true; apt-get install -y ufw >/dev/null 2>&1 || true
   fi
   if command -v ufw >/dev/null 2>&1; then
     ufw default deny incoming  >/dev/null 2>&1 || true
@@ -1677,20 +1683,20 @@ configure_firewall_and_fail2ban(){
       [ "$HTTP_PORT"  -gt 0 ] 2>/dev/null && ufw allow "${HTTP_PORT}/tcp"  >/dev/null 2>&1 || true
       [ "$HTTPS_PORT" -gt 0 ] 2>/dev/null && ufw allow "${HTTPS_PORT}/tcp" >/dev/null 2>&1 || true
       [ "$GW_TLS_PORT" -gt 0 ] 2>/dev/null && ufw allow "${GW_TLS_PORT}/tcp" >/dev/null 2>&1 || true
-      success "ufw 放行: 22/${SSH_PORT}/${HTTP_PORT}/${HTTPS_PORT}/${GW_TLS_PORT}"
+      success "$(_m "ufw 放行: 22/${SSH_PORT}/${HTTP_PORT}/${HTTPS_PORT}/${GW_TLS_PORT}" "ufw allowed: 22/${SSH_PORT}/${HTTP_PORT}/${HTTPS_PORT}/${GW_TLS_PORT}")"
     else
       [ "$HTTPS_PORT" -gt 0 ] 2>/dev/null && ufw allow "${HTTPS_PORT}/tcp" >/dev/null 2>&1 || true
       [ "$GW_TLS_PORT" -gt 0 ] 2>/dev/null && ufw allow "${GW_TLS_PORT}/tcp" >/dev/null 2>&1 || true
-      success "ufw 放行: 22/${SSH_PORT}/${HTTPS_PORT}/${GW_TLS_PORT}"
+      success "$(_m "ufw 放行: 22/${SSH_PORT}/${HTTPS_PORT}/${GW_TLS_PORT}" "ufw allowed: 22/${SSH_PORT}/${HTTPS_PORT}/${GW_TLS_PORT}")"
     fi
     if [ "$BROWSER_BRIDGE_ENABLED" = "true" ] && [ "$BRIDGE_PORT" -gt 0 ] 2>/dev/null; then
       ufw allow "${BRIDGE_PORT}/tcp" >/dev/null 2>&1 || true
-      success "ufw 放行浏览器控制端口: ${BRIDGE_PORT}"
+      success "$(_m "ufw 放行浏览器控制端口: ${BRIDGE_PORT}" "ufw allowed browser bridge port: ${BRIDGE_PORT}")"
     fi
     ufw --force enable >/dev/null 2>&1 || true
-    success "ufw 防火墙已启用"
+    success "$(_m "ufw 防火墙已启用" "ufw firewall enabled")"
   else
-    warn "ufw 不可用，跳过防火墙配置"
+    warn "$(_m "ufw 不可用，跳过防火墙配置" "ufw not available; skipping firewall configuration")"
   fi
 
   # fail2ban
@@ -1707,9 +1713,9 @@ findtime = 10m
 bantime = 30m
 F2B
     systemctl enable --now fail2ban >/dev/null 2>&1 || true
-    success "fail2ban 已启用（sshd: 5 次失败封 30 分钟）"
+    success "$(_m "fail2ban 已启用（sshd: 5 次失败封 30 分钟）" "fail2ban enabled (sshd: ban 30 min after 5 failures)")"
   else
-    warn "fail2ban 不可用，跳过"
+    warn "$(_m "fail2ban 不可用，跳过" "fail2ban not available; skipped")"
   fi
 }
 
@@ -1770,7 +1776,7 @@ create_and_start(){
     fi
   done
 
-  info "创建容器..."
+  info "$(_m "创建容器..." "Creating container...")"
   docker create --name "$CONTAINER_NAME" \
     --platform "$DOCKER_PLATFORM" \
     --hostname openclaw \
@@ -1783,7 +1789,7 @@ create_and_start(){
     --restart unless-stopped \
     "$IMAGE_NAME"
 
-  info "启动容器..."
+  info "$(_m "启动容器..." "Starting container...")"
   docker start "$CONTAINER_NAME"
   sleep 3  # 等待容器启动和 start-services.sh 执行
 
@@ -1798,7 +1804,7 @@ create_and_start(){
   done
 
   if [ "$ssh_ready" != "true" ]; then
-    warn "SSH 服务状态未知，请检查容器日志"
+    warn "$(_m "SSH 服务状态未知，请检查容器日志" "SSH service status unknown; please check container logs")"
   fi
 
   if [ -n "$host_user" ] && [ "$host_user" != "root" ]; then
@@ -1856,21 +1862,21 @@ create_and_start(){
   if harden_container_sshd "$ssh_login_user"; then
     ssh_hardened="true"
   else
-    warn "SSH 安全配置加固失败，请检查容器内 /etc/ssh/sshd_config"
+    warn "$(_m "SSH 安全配置加固失败，请检查容器内 /etc/ssh/sshd_config" "SSH hardening failed; please check /etc/ssh/sshd_config in the container")"
   fi
 
   if [ "$ssh_hardened" = "true" ] && docker exec "$CONTAINER_NAME" bash -c "/usr/sbin/sshd -T 2>/dev/null | grep -q '^passwordauthentication no$'"; then
     ssh_password_disabled="true"
     if [ "$key_injected" = "true" ] && [ "$ssh_login_user" != "root" ]; then
-      success "SSH 已加固：已禁用密码登录和 root 登录，仅支持普通用户 ${ssh_login_user} 密钥登录"
+      success "$(_m "SSH 已加固：已禁用密码登录和 root 登录，仅支持普通用户 ${ssh_login_user} 密钥登录" "SSH hardened: password and root login disabled, key-only login for user ${ssh_login_user}")"
     fi
   else
-    warn "未确认 SSH 密码认证状态，建议执行: docker exec $CONTAINER_NAME /usr/sbin/sshd -T | grep passwordauthentication"
+    warn "$(_m "未确认 SSH 密码认证状态，建议执行: docker exec $CONTAINER_NAME /usr/sbin/sshd -T | grep passwordauthentication" "SSH password auth status unconfirmed; suggest running: docker exec $CONTAINER_NAME /usr/sbin/sshd -T | grep passwordauthentication")"
   fi
 
   configure_firewall_and_fail2ban
 
-  success "容器已部署并启动"
+  success "$(_m "容器已部署并启动" "Container deployed and started")"
   local url_suffix=""
   local main_url=""
   local ssh_target=""
@@ -1887,28 +1893,28 @@ create_and_start(){
   ssh_target="ssh ${ssh_user_display}@<host> -p ${SSH_PORT}"
 
   echo ""
-  printf '%b安装完成%b\n' "$GREEN" "$NC"
-  printf '  %b安装摘要%b\n' "$WHITE" "$NC"
-  print_summary_line "主站" "$main_url"
-  print_summary_line "容器" "$container_exec_hint"
+  printf '%b%s%b\n' "$GREEN" "$(_m "安装完成" "Installation complete")" "$NC"
+  printf '  %b%s%b\n' "$WHITE" "$(_m "安装摘要" "Installation summary")" "$NC"
+  print_summary_line "$(_m "主站" "Site")" "$main_url"
+  print_summary_line "$(_m "容器" "Container")" "$container_exec_hint"
   print_summary_line "SSH" "$ssh_target"
-  print_summary_line "目录" "$BASE_DIR"
-  print_summary_line "日志" "$LOG_FILE"
+  print_summary_line "$(_m "目录" "Directory")" "$BASE_DIR"
+  print_summary_line "$(_m "日志" "Log")" "$LOG_FILE"
   if [ -n "$host_user" ] && [ "$host_user" != "root" ] && [ "$ssh_user_display" = "$host_user" ]; then
-    print_summary_line "提权" "ssh 登录后执行 sudo -i"
+    print_summary_line "$(_m "提权" "Elevate")" "$(_m "ssh 登录后执行 sudo -i" "Run sudo -i after SSH login")"
   fi
   echo ""
-  printf '  %b升级命令%b\n' "$WHITE" "$NC"
+  printf '  %b%s%b\n' "$WHITE" "$(_m "升级命令" "Upgrade command")" "$NC"
   printf '     %b%s%b\n' "$CYAN" "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh | bash" "$NC"
   echo ""
-  printf '  %b完整日志: %s%b\n' "$DIM" "$LOG_FILE" "$NC"
+  printf '  %b%s: %s%b\n' "$DIM" "$(_m "完整日志" "Full log")" "$LOG_FILE" "$NC"
 
   if [ "$key_injected" != "true" ] || [ "$ssh_login_user" = "root" ]; then
     echo ""
-    warn "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）"
+    warn "$(_m "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）" "Remote SSH login requires manual public key injection (use docker exec to access the container)")"
   fi
   if [ "$ssh_hardened" != "true" ]; then
-    warn "SSH 密码认证状态未确认，请手动检查容器内 sshd 配置"
+    warn "$(_m "SSH 密码认证状态未确认，请手动检查容器内 sshd 配置" "SSH password auth status unconfirmed; please manually check sshd config in the container")"
   fi
 }
 
@@ -1920,27 +1926,27 @@ main(){
   ensure_docker
   ensure_latest_tag
 
-  info "Image-only 安装（仅下载 release 镜像，不克隆源码）"
-  info "工作目录：$BASE_DIR"
+  info "$(_m "Image-only 安装（仅下载 release 镜像，不克隆源码）" "Image-only install (download release image only, no source clone)")"
+  info "$(_m "工作目录：$BASE_DIR" "Working directory: $BASE_DIR")"
 
   handle_existing_installation
   ensure_root_password
 
   if [ "$UPGRADE_MODE" = "true" ]; then
-    info "升级模式：沿用已有配置（可通过环境变量覆盖端口/域名）"
+    info "$(_m "升级模式：沿用已有配置（可通过环境变量覆盖端口/域名）" "Upgrade mode: reusing existing config (override ports/domain via env vars)")"
     apply_port_conflicts
   else
     prompt_deploy_config
   fi
 
   if ! load_image; then
-    warn "本地镜像不可用，开始自动下载修复"
+    warn "$(_m "本地镜像不可用，开始自动下载修复" "Local image unavailable; starting automatic download")"
     if download_tarball && load_image; then
-      info "自动下载修复成功"
+      info "$(_m "自动下载修复成功" "Automatic download succeeded")"
     else
-      warn "自动下载修复失败，尝试 GHCR 回退"
+      warn "$(_m "自动下载修复失败，尝试 GHCR 回退" "Automatic download failed; trying GHCR fallback")"
       if ! pull_from_ghcr; then
-        warn "GHCR 回退也失败，请检查网络后重试"
+        warn "$(_m "GHCR 回退也失败，请检查网络后重试" "GHCR fallback also failed; please check your network and retry")"
         exit 1
       fi
     fi

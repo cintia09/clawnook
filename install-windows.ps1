@@ -62,6 +62,11 @@ $script:deployedContainerName = ""
 $script:wslDefaultUser = ""
 $script:wslDefaultHome = ""
 
+# ── i18n: detect system language ──
+$_LANG = if ((Get-Culture).Name -like "zh-*" -or "$env:LANG" -like "zh*" -or "$env:LC_ALL" -like "zh*") { "zh" } else { "en" }
+function _m($zh, $en) { if ($_LANG -eq "zh") { $zh } else { $en } }
+
+
 function Get-PreferredWslUserName {
     $candidate = if ($env:USERNAME) { $env:USERNAME.ToLowerInvariant() } else { "openclaw" }
     $candidate = $candidate -replace '[^a-z0-9_-]', ''
@@ -159,13 +164,13 @@ function Sync-WslWindowsPortAccess {
 
     $wslIp = Get-WslPrimaryIPv4 -DistroName $DistroName
     if (-not $wslIp) {
-        Write-Warn "未能识别 WSL 内网 IP，跳过 Windows 端口转发配置"
+        Write-Warn (_m "未能识别 WSL 内网 IP，跳过 Windows 端口转发配置" "Failed to detect WSL internal IP, skipping Windows port forwarding configuration")
         return $false
     }
 
     $deployConfig = Get-WslDeployConfig -DistroName $DistroName -WslUser $WslUser
     if (-not $deployConfig) {
-        Write-Warn "未能读取 WSL 部署端口配置，跳过 Windows 端口转发配置"
+        Write-Warn (_m "未能读取 WSL 部署端口配置，跳过 Windows 端口转发配置" "Failed to read WSL deployment port configuration, skipping Windows port forwarding configuration")
         return $false
     }
 
@@ -182,7 +187,7 @@ function Sync-WslWindowsPortAccess {
 
     $ports = $portList | Sort-Object -Unique
     if (-not $ports -or $ports.Count -eq 0) {
-        Write-Warn "WSL 部署未返回可转发端口，跳过 Windows 端口转发配置"
+        Write-Warn (_m "WSL 部署未返回可转发端口，跳过 Windows 端口转发配置" "WSL deployment returned no forwardable ports, skipping Windows port forwarding configuration")
         return $false
     }
 
@@ -191,7 +196,7 @@ function Sync-WslWindowsPortAccess {
         & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>$null | Out-Null
         & netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$port connectaddress=$wslIp connectport=$port 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Windows 端口转发配置失败: $port -> ${wslIp}:$port"
+            Write-Warn (_m "Windows 端口转发配置失败: $port -> ${wslIp}:$port" "Windows port forwarding failed: $port -> ${wslIp}:$port")
             return $false
         }
     }
@@ -199,11 +204,11 @@ function Sync-WslWindowsPortAccess {
     & netsh advfirewall firewall delete rule name="OpenClaw-WSL" 2>$null | Out-Null
     & netsh advfirewall firewall add rule name="OpenClaw-WSL" dir=in action=allow protocol=tcp localport=$portText 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Windows 防火墙开放失败，请手动放行端口: $portText"
+        Write-Warn (_m "Windows 防火墙开放失败，请手动放行端口: $portText" "Failed to open Windows firewall, please manually allow port: $portText")
         return $false
     }
 
-    Write-OK "WSL NAT 端口已映射到 Windows: $portText -> $wslIp"
+    Write-OK (_m "WSL NAT 端口已映射到 Windows: $portText -> $wslIp" "WSL NAT ports mapped to Windows: $portText -> $wslIp")
     return $true
 }
 
@@ -243,7 +248,7 @@ function Ensure-LocalDeployDir {
             $item.Attributes = $item.Attributes -bor [System.IO.FileAttributes]::Hidden
         }
     } catch {
-        Write-Log "无法设置隐藏目录属性: $Path ($_)" "WARN"
+        Write-Log (_m "无法设置隐藏目录属性: $Path ($_)" "Failed to set hidden directory attribute: $Path ($_)") "WARN"
     }
 }
 
@@ -497,7 +502,7 @@ function Write-ProgressBar {
     <#
     .SYNOPSIS
         Draws an ASCII progress bar inline.
-        Usage: Write-ProgressBar -Percent 45 -Label "下载中"
+        Usage: Write-ProgressBar -Percent 45 -Label (_m "下载中" "Downloading")
     #>
     param(
         [int]$Percent,
@@ -564,7 +569,7 @@ function Invoke-JobWithTimeout {
         [object[]]$ArgumentList = @(),
         [int]$TimeoutSec = 8,
         $DefaultResult = $null,
-        [string]$TimeoutLabel = "后台操作"
+        [string]$TimeoutLabel = (_m "后台操作" "Background operation")
     )
 
     $job = $null
@@ -606,7 +611,7 @@ function Get-AppxPackageFast {
         -ArgumentList @($Name, $FamilyPrefix) `
         -TimeoutSec $TimeoutSec `
         -DefaultResult $null `
-        -TimeoutLabel "Appx 查询" `
+        -TimeoutLabel (_m "Appx 查询" "Appx query") `
         -ScriptBlock {
             param($PackageName, $PackageFamilyPrefix)
 
@@ -698,24 +703,24 @@ function Test-IsAdministrator {
 
 function Assert-Administrator {
     if (Test-IsAdministrator) {
-        Write-OK "已以管理员权限运行"
+        Write-OK (_m "已以管理员权限运行" "Running with administrator privileges")
         return
     }
 
     Write-Host ""
-    Write-Host "  ❌ 此脚本需要管理员权限运行" -ForegroundColor Red
+    Write-Host (_m "  ❌ 此脚本需要管理员权限运行" "  ❌ This script requires administrator privileges") -ForegroundColor Red
     Write-Host ""
-    Write-Host "  安装 WSL2 和 Docker 需要管理员权限，请以管理员身份重新运行。" -ForegroundColor Yellow
+    Write-Host (_m "  安装 WSL2 和 Docker 需要管理员权限，请以管理员身份重新运行。" "  Installing WSL2 and Docker requires administrator privileges. Please re-run as administrator.") -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  💡 操作方法:" -ForegroundColor Cyan
-    Write-Host "     1. 右键点击 '开始' 菜单 → 'Windows PowerShell (管理员)'" -ForegroundColor White
-    Write-Host "        或搜索 PowerShell → 右键 → 以管理员身份运行" -ForegroundColor Gray
-    Write-Host "     2. 运行以下命令:" -ForegroundColor White
+    Write-Host (_m "  💡 操作方法:" "  💡 How to:") -ForegroundColor Cyan
+    Write-Host (_m "     1. 右键点击 '开始' 菜单 → 'Windows PowerShell (管理员)'" "     1. Right-click 'Start' menu → 'Windows PowerShell (Admin)'") -ForegroundColor White
+    Write-Host (_m "        或搜索 PowerShell → 右键 → 以管理员身份运行" "        or search PowerShell → right-click → Run as administrator") -ForegroundColor Gray
+    Write-Host (_m "     2. 运行以下命令:" "     2. Run the following command:") -ForegroundColor White
     Write-Host '        irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows-bootstrap.ps1 | iex' -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "     如果已下载 install-windows.bat，可右键 → 以管理员身份运行" -ForegroundColor Gray
+    Write-Host (_m "     如果已下载 install-windows.bat，可右键 → 以管理员身份运行" "     If you have downloaded install-windows.bat, right-click → Run as administrator") -ForegroundColor Gray
     Write-Host ""
-    Read-Host "按回车退出"
+    Read-Host (_m "按回车退出" "Press Enter to exit")
     return
 }
 
@@ -729,17 +734,17 @@ function Test-WindowsVersion {
     $caption = $os.Caption
     $build   = [int]$os.BuildNumber
 
-    Write-Info "操作系统: $caption (Build $build)"
+    Write-Info (_m "操作系统: $caption (Build $build)" "OS: $caption (Build $build)")
 
     # Win11: build >= 22000; Win10 2004: build >= 19041
     if ($build -lt 19041) {
-        Write-Err "Windows 版本过低 (Build $build)"
-        Write-Suggestion "WSL2 需要 Windows 10 版本 2004 (Build 19041) 或更高版本 / Windows 11"
-        Write-Suggestion "请前往 Windows Update 升级系统后重试"
+        Write-Err (_m "Windows 版本过低 (Build $build)" "Windows version too old (Build $build)")
+        Write-Suggestion (_m "WSL2 需要 Windows 10 版本 2004 (Build 19041) 或更高版本 / Windows 11" "WSL2 requires Windows 10 version 2004 (Build 19041) or later / Windows 11")
+        Write-Suggestion (_m "请前往 Windows Update 升级系统后重试" "Please upgrade via Windows Update and try again")
         return
     }
 
-    Write-OK "Windows 版本符合要求"
+    Write-OK (_m "Windows 版本符合要求" "Windows version meets requirements")
     return $build
 }
 
@@ -751,7 +756,7 @@ function Test-WindowsFeatureEnabled {
         -ArgumentList @($FeatureName) `
         -TimeoutSec 8 `
         -DefaultResult $false `
-        -TimeoutLabel "Windows 功能检测: $FeatureName" `
+        -TimeoutLabel (_m "Windows 功能检测: $FeatureName" "Windows feature check: $FeatureName") `
         -ScriptBlock {
             param($TargetFeatureName)
 
@@ -885,7 +890,7 @@ function Test-Wsl2Installed {
 function Test-UbuntuInstalled {
     foreach ($d in (Get-RegisteredWslDistros)) {
         if ($d -match "Ubuntu") {
-            Write-Info "已找到 Ubuntu 发行版: $d"
+            Write-Info (_m "已找到 Ubuntu 发行版: $d" "Found Ubuntu distribution: $d")
             return $true
         }
     }
@@ -943,8 +948,8 @@ function Install-UbuntuOfflinePackage {
         "https://publicwsldistros.blob.core.windows.net/wsldistrostorage/Ubuntu2404-240425.AppxBundle"
     )
 
-    Write-Warn "正在切换到离线 Ubuntu 包安装..."
-    Write-Info "将直接下载 Ubuntu 24.04 官方 AppxBundle 包"
+    Write-Warn (_m "正在切换到离线 Ubuntu 包安装..." "Switching to offline Ubuntu package installation...")
+    Write-Info (_m "将直接下载 Ubuntu 24.04 官方 AppxBundle 包" "Will download official Ubuntu 24.04 AppxBundle package directly")
 
     $expectedSize = Get-RemoteFileSize -Urls $downloadUrls
     $downloadOk = $false
@@ -960,7 +965,7 @@ function Install-UbuntuOfflinePackage {
     if (-not $downloadOk) {
         foreach ($url in $downloadUrls) {
             try {
-                Write-Info "尝试下载离线包镜像..."
+                Write-Info (_m "尝试下载离线包镜像..." "Attempting to download offline package image...")
                 Invoke-WebRequest -Uri $url -OutFile $packageFile -UseBasicParsing -TimeoutSec 180 -ErrorAction Stop
                 if ((Test-Path $packageFile) -and ((Get-Item $packageFile).Length -gt 100MB)) {
                     $downloadOk = $true
@@ -994,7 +999,7 @@ function Install-UbuntuOfflinePackage {
     }
 
     if (Test-UbuntuPackageInstalled) {
-        Write-Info "离线包已安装，正在通过 Ubuntu 启动器注册发行版..."
+        Write-Info (_m "离线包已安装，正在通过 Ubuntu 启动器注册发行版..." "Offline package installed, registering distribution via Ubuntu launcher...")
 
         # Find the Ubuntu launcher executable from the installed Appx package
         $ubuntuExe = $null
@@ -1038,7 +1043,7 @@ function Install-UbuntuOfflinePackage {
 
         if ($ubuntuExe) {
             Write-Log "Found Ubuntu launcher: $ubuntuExe"
-            Write-Info "正在通过 $([System.IO.Path]::GetFileName($ubuntuExe)) install --root 注册发行版..."
+            Write-Info (_m "正在通过 $([System.IO.Path]::GetFileName($ubuntuExe)) install --root 注册发行版..." "Registering distribution via $([System.IO.Path]::GetFileName($ubuntuExe)) install --root...")
             try {
                 $systemEncoding = Get-SystemOemEncoding
                 $pinfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -1130,25 +1135,25 @@ function Test-DockerDesktopRunning {
 function Show-DockerDesktopRequiredMessage {
     Write-Host ""
     Write-Host "  ==================================================" -ForegroundColor Yellow
-    Write-Host "         未检测到 Docker Desktop" -ForegroundColor Yellow
+    Write-Host (_m "         未检测到 Docker Desktop" "         Docker Desktop not detected") -ForegroundColor Yellow
     Write-Host "  ==================================================" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  Windows 安装当前仅保留 Docker Desktop 方案。" -ForegroundColor White
-    Write-Host "  请先安装并启动 Docker Desktop，再重新运行安装脚本。" -ForegroundColor White
+    Write-Host (_m "  Windows 安装当前仅保留 Docker Desktop 方案。" "  Windows installation currently only supports the Docker Desktop approach.") -ForegroundColor White
+    Write-Host (_m "  请先安装并启动 Docker Desktop，再重新运行安装脚本。" "  Please install and start Docker Desktop first, then re-run the install script.") -ForegroundColor White
     Write-Host ""
-    Write-Host "  下载地址:" -ForegroundColor Yellow
+    Write-Host (_m "  下载地址:" "  Download link:") -ForegroundColor Yellow
     Write-Host "    https://www.docker.com/products/docker-desktop/" -ForegroundColor Cyan
     Write-Host ""
 
     try {
         Start-Process "https://www.docker.com/products/docker-desktop/"
-        Write-OK "已自动打开 Docker Desktop 下载页面"
+        Write-OK (_m "已自动打开 Docker Desktop 下载页面" "Docker Desktop download page opened automatically")
     } catch {
-        Write-Info "请手动打开上述链接下载安装 Docker Desktop"
+        Write-Info (_m "请手动打开上述链接下载安装 Docker Desktop" "Please manually open the link above to download and install Docker Desktop")
     }
 
     Write-Host ""
-    Read-Host "安装完成后按回车退出，然后重新运行此脚本"
+    Read-Host (_m "安装完成后按回车退出，然后重新运行此脚本" "Press Enter to exit after installation, then re-run this script")
 }
 
 # 保留旧的 WSL 安装/恢复逻辑，当前 Windows 主流程不再进入这些函数。
@@ -1171,10 +1176,10 @@ function Register-ResumeTask {
         Unregister-ScheduledTask -TaskName $TASK_NAME -Confirm:$false -ErrorAction SilentlyContinue
         Register-ScheduledTask -TaskName $TASK_NAME -Action $action -Trigger $trigger `
             -Settings $settings -RunLevel Highest -Force | Out-Null
-        Write-OK "已创建计划任务 '$TASK_NAME'，重启后自动继续安装"
+        Write-OK (_m "已创建计划任务 '$TASK_NAME'，重启后自动继续安装" "Scheduled task '$TASK_NAME' created; installation will resume after reboot")
     } catch {
-        Write-Warn "无法创建计划任务: $_"
-        Write-Suggestion "重启后请手动再次运行 install-windows.bat 继续安装"
+        Write-Warn (_m "无法创建计划任务: $_" "Failed to create scheduled task: $_")
+        Write-Suggestion (_m "重启后请手动再次运行 install-windows.bat 继续安装" "After reboot, please manually run install-windows.bat again to continue")
     }
 }
 
@@ -1189,15 +1194,15 @@ function Install-Wsl2 {
     $installingDistroOnly = ($hadWslBeforeInstall -and -not $hadUbuntuBeforeInstall)
 
     if ($installingDistroOnly) {
-        Write-Info "正在安装 $UBUNTU_DISTRO..."
-        Write-Info "首次安装约需 3-5 分钟（需要下载 Ubuntu 镜像）"
+        Write-Info (_m "正在安装 $UBUNTU_DISTRO..." "Installing $UBUNTU_DISTRO...")
+        Write-Info (_m "首次安装约需 3-5 分钟（需要下载 Ubuntu 镜像）" "First-time installation takes about 3-5 minutes (Ubuntu image download required)")
         Write-Host ""
-        $steps = @("检查 WSL 运行环境", "下载 $UBUNTU_DISTRO 镜像", "安装并配置")
+        $steps = @((_m "检查 WSL 运行环境" "Check WSL runtime environment"), (_m "下载 $UBUNTU_DISTRO 镜像" "Download $UBUNTU_DISTRO image"), (_m "安装并配置" "Install and configure"))
     } else {
-        Write-Info "正在安装 WSL2 和 $UBUNTU_DISTRO..."
-        Write-Info "首次安装约需 3-5 分钟（需要下载 Ubuntu 镜像）"
+        Write-Info (_m "正在安装 WSL2 和 $UBUNTU_DISTRO..." "Installing WSL2 and $UBUNTU_DISTRO...")
+        Write-Info (_m "首次安装约需 3-5 分钟（需要下载 Ubuntu 镜像）" "First-time installation takes about 3-5 minutes (Ubuntu image download required)")
         Write-Host ""
-        $steps = @("启用 WSL 功能", "下载 $UBUNTU_DISTRO 镜像", "安装并配置")
+        $steps = @((_m "启用 WSL 功能" "Enable WSL feature"), (_m "下载 $UBUNTU_DISTRO 镜像" "Download $UBUNTU_DISTRO image"), (_m "安装并配置" "Install and configure"))
     }
 
     Show-StepProgress -Steps $steps -CurrentStep 0
@@ -1209,10 +1214,10 @@ function Install-Wsl2 {
         $distro = $UBUNTU_DISTRO
         $systemEncoding = Get-SystemOemEncoding
         $installAttempts = @(
-            [PSCustomObject]@{ Label = "默认下载源"; Arguments = "--install -d $distro --no-launch" }
+            [PSCustomObject]@{ Label = (_m "默认下载源" "Default download source"); Arguments = "--install -d $distro --no-launch" }
         )
         if ($installingDistroOnly) {
-            $installAttempts += [PSCustomObject]@{ Label = "WSL Web 下载"; Arguments = "--install -d $distro --web-download --no-launch" }
+            $installAttempts += [PSCustomObject]@{ Label = (_m "WSL Web 下载" "WSL Web download"); Arguments = "--install -d $distro --web-download --no-launch" }
         }
 
         $combinedOutput = ""
@@ -1229,7 +1234,7 @@ function Install-Wsl2 {
             $lastHeartbeatSecond = -15
 
             if ($installAttemptIndex -gt 0) {
-                Write-Warn "上一种下载方式未成功，正在尝试：$($attempt.Label)"
+                Write-Warn (_m "上一种下载方式未成功，正在尝试：$($attempt.Label)" "Previous download method failed, trying: $($attempt.Label)")
             }
 
             $pinfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -1243,7 +1248,7 @@ function Install-Wsl2 {
             $pinfo.StandardErrorEncoding = $systemEncoding
 
             $proc = [System.Diagnostics.Process]::Start($pinfo)
-            Write-Info "正在后台执行 wsl $($attempt.Arguments)，请稍候..."
+            Write-Info (_m "正在后台执行 wsl $($attempt.Arguments)，请稍候..." "Running wsl $($attempt.Arguments) in background, please wait...")
 
             while (-not $proc.HasExited) {
                 $elapsed = $sw.Elapsed.ToString("mm\:ss")
@@ -1258,12 +1263,12 @@ function Install-Wsl2 {
                 }
 
                 if ($phase -ne $lastPhase) {
-                    Write-Info "当前阶段: $phase"
+                    Write-Info (_m "当前阶段: $phase" "Current phase: $phase")
                     $lastPhase = $phase
                 }
 
                 if (($elapsedSeconds - $lastHeartbeatSecond) -ge 15) {
-                    Write-Info "WSL 安装进行中，已耗时 $elapsed"
+                    Write-Info (_m "WSL 安装进行中，已耗时 $elapsed" "WSL installation in progress, elapsed $elapsed")
                     $lastHeartbeatSecond = $elapsedSeconds
                 }
                 Start-Sleep -Seconds 1
@@ -1285,7 +1290,7 @@ function Install-Wsl2 {
 
             # If exit code is non-zero and Ubuntu still not present, retry next method
             if ($exitCode -ne 0 -and $installingDistroOnly -and -not (Test-UbuntuInstalled) -and $installAttemptIndex -lt ($installAttempts.Count - 1)) {
-                Write-Warn "Ubuntu 下载失败 (exit=$exitCode)，准备切换下载方式重试"
+                Write-Warn (_m "Ubuntu 下载失败 (exit=$exitCode)，准备切换下载方式重试" "Ubuntu download failed (exit=$exitCode), switching download method to retry")
                 continue
             }
 
@@ -1303,7 +1308,7 @@ function Install-Wsl2 {
             if ($usedOfflineUbuntuPackage) {
                 $exitCode = 0
                 $combinedOutput = ($combinedOutput + " [offline-package-success]").Trim()
-                Write-Info "已切换为离线 Ubuntu 包安装并完成"
+                Write-Info (_m "已切换为离线 Ubuntu 包安装并完成" "Switched to offline Ubuntu package installation and completed")
             }
         }
 
@@ -1340,77 +1345,77 @@ function Install-Wsl2 {
         if ($exitCode -eq 0) {
             if (-not $wslInstalledAfterInstall -or -not $ubuntuPresentAfterInstall) {
                 if ($rebootPendingAfterInstall) {
-                    Write-Host "     ⚠️  安装并配置 — 需要重启" -ForegroundColor Yellow
+                    Write-Host (_m "     ⚠️  安装并配置 — 需要重启" "     ⚠️  Install and configure — reboot required") -ForegroundColor Yellow
                     Write-Host ""
-                    Write-Info "安装耗时: $elapsed"
+                    Write-Info (_m "安装耗时: $elapsed" "Installation elapsed: $elapsed")
                     return "reboot"
                 }
-                Write-Warn "WSL 安装命令已完成，但系统状态尚未完全就绪，请稍后重新运行"
-                Write-Host "     ⏳ 安装并配置 — 后台处理中" -ForegroundColor Yellow
+                Write-Warn (_m "WSL 安装命令已完成，但系统状态尚未完全就绪，请稍后重新运行" "WSL install command completed, but system not fully ready; please re-run later")
+                Write-Host (_m "     ⏳ 安装并配置 — 后台处理中" "     ⏳ Install and configure — processing in background") -ForegroundColor Yellow
                 Write-Host ""
-                Write-Info "安装耗时: $elapsed"
+                Write-Info (_m "安装耗时: $elapsed" "Installation elapsed: $elapsed")
                 return "pending"
             }
-            Write-Host "     ✅ 安装并配置 ($elapsed)" -ForegroundColor Green
+            Write-Host (_m "     ✅ 安装并配置 ($elapsed)" "     ✅ Install and configure ($elapsed)") -ForegroundColor Green
             Write-Host ""
             return "ok"
         } elseif ($exitCode -eq 1) {
             if ($wslInstalledAfterInstall -and $ubuntuPresentAfterInstall) {
-                Write-Warn "wsl --install 返回代码 1，但检测到 WSL2 和 Ubuntu 已安装，继续后续步骤"
-                Write-Host "     ✅ 安装并配置 ($elapsed)" -ForegroundColor Green
+                Write-Warn (_m "wsl --install 返回代码 1，但检测到 WSL2 和 Ubuntu 已安装，继续后续步骤" "wsl --install returned code 1, but WSL2 and Ubuntu detected as installed; continuing")
+                Write-Host (_m "     ✅ 安装并配置 ($elapsed)" "     ✅ Install and configure ($elapsed)") -ForegroundColor Green
                 Write-Host ""
                 return "ok"
             }
             if ($installingDistroOnly -and -not $ubuntuPresentAfterInstall) {
-                Write-Err "Ubuntu 发行版安装失败（所有下载方式均未成功）"
-                Write-Info "输出: $combinedOutput"
+                Write-Err (_m "Ubuntu 发行版安装失败（所有下载方式均未成功）" "Ubuntu distribution installation failed (all download methods unsuccessful)")
+                Write-Info (_m "输出: $combinedOutput" "Output: $combinedOutput")
                 return "distro-download-error"
             }
             if ($rebootPendingAfterInstall) {
-                Write-Host "     ⚠️  安装并配置 — 需要重启" -ForegroundColor Yellow
+                Write-Host (_m "     ⚠️  安装并配置 — 需要重启" "     ⚠️  Install and configure — reboot required") -ForegroundColor Yellow
                 Write-Host ""
-                Write-Info "安装耗时: $elapsed"
+                Write-Info (_m "安装耗时: $elapsed" "Installation elapsed: $elapsed")
                 return "reboot"
             }
             if ($combinedOutput -match "restart|reboot|重启|重新启动") {
-                Write-Host "     ⚠️  安装并配置 — 需要重启" -ForegroundColor Yellow
+                Write-Host (_m "     ⚠️  安装并配置 — 需要重启" "     ⚠️  Install and configure — reboot required") -ForegroundColor Yellow
                 Write-Host ""
-                Write-Info "安装耗时: $elapsed"
+                Write-Info (_m "安装耗时: $elapsed" "Installation elapsed: $elapsed")
                 return "reboot"
             }
-            Write-Warn "wsl --install 返回代码 $exitCode，但当前未检测到待重启状态；可能仍在后台完成安装"
-            Write-Info "输出: $combinedOutput"
+            Write-Warn (_m "wsl --install 返回代码 $exitCode，但当前未检测到待重启状态；可能仍在后台完成安装" "wsl --install returned code $exitCode, but no pending reboot detected; installation may still be completing in background")
+            Write-Info (_m "输出: $combinedOutput" "Output: $combinedOutput")
             return "pending"
         } else {
             if ($wslInstalledAfterInstall -and $ubuntuPresentAfterInstall) {
-                Write-Warn "wsl --install 返回代码 $exitCode，但检测到 WSL2 和 Ubuntu 已安装，继续后续步骤"
-                Write-Host "     ✅ 安装并配置 ($elapsed)" -ForegroundColor Green
+                Write-Warn (_m "wsl --install 返回代码 $exitCode，但检测到 WSL2 和 Ubuntu 已安装，继续后续步骤" "wsl --install returned code $exitCode, but WSL2 and Ubuntu detected as installed; continuing")
+                Write-Host (_m "     ✅ 安装并配置 ($elapsed)" "     ✅ Install and configure ($elapsed)") -ForegroundColor Green
                 Write-Host ""
                 return "ok"
             }
             if ($installingDistroOnly -and -not $ubuntuPresentAfterInstall) {
-                Write-Err "Ubuntu 发行版安装失败（所有下载方式均未成功）"
-                Write-Info "输出: $combinedOutput"
+                Write-Err (_m "Ubuntu 发行版安装失败（所有下载方式均未成功）" "Ubuntu distribution installation failed (all download methods unsuccessful)")
+                Write-Info (_m "输出: $combinedOutput" "Output: $combinedOutput")
                 return "distro-download-error"
             }
             if ($rebootPendingAfterInstall) {
-                Write-Warn "WSL 安装返回代码 $exitCode，系统检测到待重启状态"
-                Write-Host "     ⚠️  安装并配置 — 需要重启" -ForegroundColor Yellow
+                Write-Warn (_m "WSL 安装返回代码 $exitCode，系统检测到待重启状态" "WSL install returned code $exitCode, pending reboot detected")
+                Write-Host (_m "     ⚠️  安装并配置 — 需要重启" "     ⚠️  Install and configure — reboot required") -ForegroundColor Yellow
                 Write-Host ""
                 return "reboot"
             }
             if ($installingDistroOnly) {
-                Write-Err "Ubuntu 发行版安装失败（所有下载方式均未成功）"
-                Write-Info "输出: $combinedOutput"
+                Write-Err (_m "Ubuntu 发行版安装失败（所有下载方式均未成功）" "Ubuntu distribution installation failed (all download methods unsuccessful)")
+                Write-Info (_m "输出: $combinedOutput" "Output: $combinedOutput")
                 return "distro-download-error"
             }
-            Write-Warn "WSL 安装返回代码 $exitCode，但未检测到待重启状态；请稍后重新运行"
-            Write-Host "     ⏳ 安装并配置 — 后台处理中" -ForegroundColor Yellow
+            Write-Warn (_m "WSL 安装返回代码 $exitCode，但未检测到待重启状态；请稍后重新运行" "WSL install returned code $exitCode, but no pending reboot detected; please re-run later")
+            Write-Host (_m "     ⏳ 安装并配置 — 后台处理中" "     ⏳ Install and configure — processing in background") -ForegroundColor Yellow
             Write-Host ""
             return "pending"
         }
     } catch {
-        Write-Err "WSL 安装异常: $_"
+        Write-Err (_m "WSL 安装异常: $_" "WSL installation error: $_")
         return "error"
     }
 }
@@ -1419,24 +1424,24 @@ function Install-Wsl2 {
 function Wait-WslReady {
     param([string]$DistroName, [int]$MaxWaitSeconds = 120)
 
-    Write-Info "等待 $DistroName 就绪..."
+    Write-Info (_m "等待 $DistroName 就绪..." "Waiting for $DistroName to be ready...")
     $elapsed = 0
     while ($elapsed -lt $MaxWaitSeconds) {
         try {
             $test = & wsl -d $DistroName --exec echo "ready" 2>$null
             if ($test -match "ready") {
                 Write-Host "`r$(' ' * 70)`r" -NoNewline
-                Write-OK "$DistroName 已就绪"
+                Write-OK (_m "$DistroName 已就绪" "$DistroName is ready")
                 return $true
             }
         } catch { }
         Start-Sleep -Seconds 5
         $elapsed += 5
         $pct = [math]::Min(99, [int]($elapsed * 100 / $MaxWaitSeconds))
-        Write-ProgressBar -Percent $pct -Label "等待就绪" -Width 20
+        Write-ProgressBar -Percent $pct -Label (_m "等待就绪" "Waiting for ready") -Width 20
     }
     Write-Host ""
-    Write-Err "$DistroName 启动超时"
+    Write-Err (_m "$DistroName 启动超时" "$DistroName startup timeout")
     return $false
 }
 
@@ -1559,16 +1564,16 @@ echo "OPENCLAW_WSL_HOME=$home_dir"
                 }
 
                 if (-not $script:wslDefaultUser) {
-                        throw "未能识别 WSL 默认用户"
+                        throw (_m "未能识别 WSL 默认用户" "Failed to detect WSL default user")
                 }
                 if (-not $script:wslDefaultHome) {
                         $script:wslDefaultHome = "/home/$($script:wslDefaultUser)"
                 }
 
-                Write-OK "WSL 默认用户已设为: $($script:wslDefaultUser)"
+                Write-OK (_m "WSL 默认用户已设为: $($script:wslDefaultUser)" "WSL default user set to: $($script:wslDefaultUser)")
                 return $true
         } catch {
-                Write-Err "配置 WSL 普通用户失败: $_"
+                Write-Err (_m "配置 WSL 普通用户失败: $_" "Failed to configure WSL regular user: $_")
                 return $false
         } finally {
                 Remove-Item $tmpScript -Force -ErrorAction SilentlyContinue
@@ -1582,17 +1587,17 @@ function Install-DockerInWsl {
                 [string]$WslUser
         )
 
-    Write-Info "在 $DistroName 中安装 Docker Engine..."
-    Write-Info "预计需要 5-10 分钟..."
+    Write-Info (_m "在 $DistroName 中安装 Docker Engine..." "Installing Docker Engine in $DistroName...")
+    Write-Info (_m "预计需要 5-10 分钟..." "Estimated 5-10 minutes...")
     Write-Host ""
 
     $dockerSteps = @(
-        "更新软件包列表",
-        "安装依赖组件",
-        "添加 Docker 软件源",
-        "下载并安装 Docker Engine",
-        "启动 Docker 服务",
-        "验证安装"
+        (_m "更新软件包列表" "Update package list"),
+        (_m "安装依赖组件" "Install dependencies"),
+        (_m "添加 Docker 软件源" "Add Docker repository"),
+        (_m "下载并安装 Docker Engine" "Download and install Docker Engine"),
+        (_m "启动 Docker 服务" "Start Docker service"),
+        (_m "验证安装" "Verify installation")
     )
     Show-StepProgress -Steps $dockerSteps -CurrentStep 0
 
@@ -1721,17 +1726,17 @@ echo "DOCKER_INSTALL_COMPLETE"
                 Write-Host "     ✅ $($dockerSteps[$i])" -ForegroundColor Green
             }
             Write-Host ""
-            Write-OK "Docker Engine 安装完成 ($totalTime)"
+            Write-OK (_m "Docker Engine 安装完成 ($totalTime)" "Docker Engine installation complete ($totalTime)")
             Remove-Item $tmpScript -Force -ErrorAction SilentlyContinue
             return $true
         } else {
-            Write-Err "Docker 安装可能未完成"
-            Write-Info "最后几行输出:"
+            Write-Err (_m "Docker 安装可能未完成" "Docker installation may not be complete")
+            Write-Info (_m "最后几行输出:" "Last few lines of output:")
             $allOutput -split "`n" | Select-Object -Last 10 | ForEach-Object { Write-Info "  $_" }
             return $false
         }
     } catch {
-        Write-Err "Docker 安装失败: $_"
+        Write-Err (_m "Docker 安装失败: $_" "Docker installation failed: $_")
         return $false
     }
 }
@@ -1811,7 +1816,7 @@ function Start-WslImageOnlyDeploy {
         [string]$WslUser
     )
 
-    Write-Info "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..."
+    Write-Info (_m "WSL 环境与 Linux 服务器等价，使用 install-imageonly.sh 部署..." "WSL environment is equivalent to a Linux server, deploying via install-imageonly.sh...")
 
     $hostLanIp = Get-PreferredHostIPv4
     # Check Windows host ports, but tolerate WSL relay processes (wslrelay/wslhost)
@@ -1823,7 +1828,7 @@ function Start-WslImageOnlyDeploy {
     $defaultGwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18800 -RangeEnd 18899 -AllowReservedWslRelay
 
     Write-Log "WSL host port hints: HTTP=$defaultHttpPort HTTPS=$defaultHttpsPort SSH=$defaultSshPort GW_TLS=$defaultGwTlsPort"
-    Write-Info "正在启动 WSL 环境并下载安装脚本，请稍候..."
+    Write-Info (_m "正在启动 WSL 环境并下载安装脚本，请稍候..." "Starting WSL environment and downloading install script, please wait...")
 
     # Download install-imageonly.sh inside WSL, then launch in a new terminal window
     $bootstrapScript = @"
@@ -1844,36 +1849,39 @@ export GW_TLS_PORT="$defaultGwTlsPort"
 SCRIPT_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/install-imageonly.sh"
 TMP_SCRIPT="/tmp/openclaw-install-imageonly.sh"
 
+_LANG_="${_LANG}"
+_m() { if [ "$_LANG_" = "zh" ]; then printf '%s' "$1"; else printf '%s' "$2"; fi; }
+
 echo ""
 echo "=========================================="
-echo "  ClawNook — WSL 安装向导"
-echo "  (与 Linux 安装流程一致)"
+echo "$(_m "  ClawNook — WSL 安装向导" "  ClawNook — WSL Installation Wizard")"
+echo "$(_m "  (与 Linux 安装流程一致)" "  (Same as Linux installation flow)")"
 echo "=========================================="
 echo ""
 
-echo "[INFO] 正在确保 Docker 服务已启动..."
+echo "$(_m "[INFO] 正在确保 Docker 服务已启动..." "[INFO] Ensuring Docker service is running...")"
 sudo service docker start >/dev/null 2>&1 || true
-echo "[INFO] Docker 已就绪"
+echo "$(_m "[INFO] Docker 已就绪" "[INFO] Docker is ready")"
 
 # Download with cache-busting
-echo "[INFO] 正在下载安装脚本（从 GitHub）..."
+echo "$(_m "[INFO] 正在下载安装脚本（从 GitHub）..." "[INFO] Downloading install script (from GitHub)...")"
 for i in 1 2 3; do
     if curl --noproxy '*' -fsSL --connect-timeout 15 --retry 2 "`$SCRIPT_URL?ts=`$(date +%s)" -o "`$TMP_SCRIPT"; then
-        echo "[INFO] 安装脚本下载成功"
+        echo "$(_m "[INFO] 安装脚本下载成功" "[INFO] Install script downloaded successfully")"
         break
     fi
-    echo "[WARN] 下载失败，重试 (`$i/3)..."
+    echo "$(_m "[WARN] 下载失败，重试 (`$i/3)..." "[WARN] Download failed, retrying (`$i/3)...")"
     sleep 3
 done
 
 if [ ! -s "`$TMP_SCRIPT" ]; then
-    echo "[ERROR] 无法下载安装脚本"
-    echo "  请手动执行: curl -fsSL `$SCRIPT_URL | bash"
+    echo "$(_m "[ERROR] 无法下载安装脚本" "[ERROR] Failed to download install script")"
+    echo "$(_m "  请手动执行: curl -fsSL `$SCRIPT_URL | bash" "  Please run manually: curl -fsSL `$SCRIPT_URL | bash")"
     exit 1
 fi
 
 chmod +x "`$TMP_SCRIPT"
-echo "[INFO] 启动安装脚本..."
+echo "$(_m "[INFO] 启动安装脚本..." "[INFO] Starting install script...")"
 echo ""
 
 exec bash "`$TMP_SCRIPT"
@@ -1885,7 +1893,7 @@ exec bash "`$TMP_SCRIPT"
     [System.IO.File]::WriteAllText($tmpDeploy, $bootstrapScriptLf, $utf8NoBom)
     $wslTmpDeploy = Convert-WindowsPathToWslPath -WindowsPath $tmpDeploy
     if (-not $wslTmpDeploy) {
-        Write-Err "无法转换临时脚本路径到 WSL 路径: $tmpDeploy"
+        Write-Err (_m "无法转换临时脚本路径到 WSL 路径: $tmpDeploy" "Failed to convert temp script path to WSL path: $tmpDeploy")
         return $false
     }
 
@@ -1900,14 +1908,14 @@ exec bash "`$TMP_SCRIPT"
         [Console]::OutputEncoding = $utf8Encoding
 
         $warmupStart = Get-Date
-        Write-Info "正在进入 WSL 用户会话（首次或冷启动通常需要几秒到几十秒）..."
+        Write-Info (_m "正在进入 WSL 用户会话（首次或冷启动通常需要几秒到几十秒）..." "Entering WSL user session (first or cold start usually takes a few seconds to tens of seconds)...")
         if ($WslUser) {
-            & wsl -d $DistroName -u $WslUser -- sh -c "printf '[INFO] WSL 用户会话已就绪\\n'" 2>$null
+            & wsl -d $DistroName -u $WslUser -- sh -c (_m "printf '[INFO] WSL 用户会话已就绪\\n'" "printf '[INFO] WSL user session is ready\\n'") 2>$null
         } else {
-            & wsl -d $DistroName -- sh -c "printf '[INFO] WSL 用户会话已就绪\\n'" 2>$null
+            & wsl -d $DistroName -- sh -c (_m "printf '[INFO] WSL 用户会话已就绪\\n'" "printf '[INFO] WSL user session is ready\\n'") 2>$null
         }
         $warmupSeconds = [Math]::Round(((Get-Date) - $warmupStart).TotalSeconds, 1)
-        Write-Info "WSL 已就绪，准备启动安装脚本（耗时 ${warmupSeconds}s）..."
+        Write-Info (_m "WSL 已就绪，准备启动安装脚本（耗时 ${warmupSeconds}s）..." "WSL is ready, preparing to launch install script (elapsed ${warmupSeconds}s)...")
 
         if ($WslUser) {
             & wsl -d $DistroName -u $WslUser -- bash $wslTmpDeploy
@@ -1916,8 +1924,8 @@ exec bash "`$TMP_SCRIPT"
         }
         return ($LASTEXITCODE -eq 0)
     } catch {
-        Write-Err "WSL 交互安装失败: $_"
-        Write-Suggestion "请手动打开 WSL 终端，执行以下命令完成安装："
+        Write-Err (_m "WSL 交互安装失败: $_" "WSL interactive installation failed: $_")
+        Write-Suggestion (_m "请手动打开 WSL 终端，执行以下命令完成安装：" "Please open a WSL terminal manually and run the following commands to complete installation:")
         Write-Host ""
         if ($WslUser) {
             Write-Host "    wsl -d $DistroName -u $WslUser" -ForegroundColor White
@@ -1962,9 +1970,9 @@ function Remove-ReplacedImageIdsFromLoadOutput {
     foreach ($oldId in $oldImageIds) {
         try { & docker image rm $oldId 2>$null | Out-Null } catch { }
         if ($LASTEXITCODE -eq 0) {
-            Write-Info "已清理被替换的旧镜像：$oldId"
+            Write-Info (_m "已清理被替换的旧镜像：$oldId" "Cleaned up replaced old image: $oldId")
         } else {
-            Write-Warn "旧镜像仍被占用，跳过清理：$oldId"
+            Write-Warn (_m "旧镜像仍被占用，跳过清理：$oldId" "Old image still in use, skipping cleanup: $oldId")
         }
     }
 }
@@ -2000,9 +2008,9 @@ function Remove-NewDanglingImages {
         if ($beforeSet.Contains($trimmedId)) { continue }
         try { & docker image rm $trimmedId 2>$null | Out-Null } catch { }
         if ($LASTEXITCODE -eq 0) {
-            Write-Info "已清理本次加载产生的悬空镜像：$trimmedId"
+            Write-Info (_m "已清理本次加载产生的悬空镜像：$trimmedId" "Cleaned up dangling image from this load: $trimmedId")
         } else {
-            Write-Warn "本次加载产生的悬空镜像仍被占用，跳过清理：$trimmedId"
+            Write-Warn (_m "本次加载产生的悬空镜像仍被占用，跳过清理：$trimmedId" "Dangling image from this load still in use, skipping cleanup: $trimmedId")
         }
     }
 }
@@ -2080,14 +2088,14 @@ function Get-PortProcess {
                 $cName = ($line -split '\|')[0]
                 $portsPart = ($line -split '\|', 2)[1]
                 if ($portsPart -match ":${Port}->") {
-                    return "Docker 容器: $cName"
+                    return (_m "Docker 容器: $cName" "Docker container: $cName")
                 }
                 $rangeMatches = [regex]::Matches($portsPart, ':(\d+)-(\d+)->')
                 foreach ($m in $rangeMatches) {
                     $rs = [int]$m.Groups[1].Value
                     $re = [int]$m.Groups[2].Value
                     if ($Port -ge $rs -and $Port -le $re) {
-                        return "Docker 容器: $cName (端口范围 ${rs}-${re})"
+                        return (_m "Docker 容器: $cName (端口范围 ${rs}-${re})" "Docker container: $cName (port range ${rs}-${re})")
                     }
                 }
             }
@@ -2109,17 +2117,17 @@ function Find-AvailablePort {
         return $PreferredPort
     }
 
-    Write-Warn "端口 $PreferredPort 已被占用，正在寻找可用端口..."
+    Write-Warn (_m "端口 $PreferredPort 已被占用，正在寻找可用端口..." "Port $PreferredPort is in use, searching for available port...")
     $procInfo = Get-PortProcess $PreferredPort
     if ($procInfo) {
-        Write-Host "     占用进程: $procInfo" -ForegroundColor DarkGray
+        Write-Host (_m "     占用进程: $procInfo" "     Process in use: $procInfo") -ForegroundColor DarkGray
     }
 
     # Search in range
     for ($p = $RangeStart; $p -le $RangeEnd; $p++) {
         if ($p -eq $PreferredPort) { continue }
         if (Test-PortAvailable -Port $p -AllowReservedWslRelay:$AllowReservedWslRelay) {
-            Write-OK "找到可用端口: $p"
+            Write-OK (_m "找到可用端口: $p" "Found available port: $p")
             return $p
         }
     }
@@ -2129,7 +2137,7 @@ function Find-AvailablePort {
     $listener.Start()
     $port = $listener.LocalEndpoint.Port
     $listener.Stop()
-    Write-OK "使用系统分配端口: $port"
+    Write-OK (_m "使用系统分配端口: $port" "Using system-assigned port: $port")
     return $port
 }
 
@@ -2323,11 +2331,11 @@ function Download-Robust {
     }
     if (-not $selectedUrl) {
         $selectedUrl = $Urls[0]
-        Write-Warn "未探测到明确支持 Range 的下载源，仍尝试首个源进行下载"
+        Write-Warn (_m "未探测到明确支持 Range 的下载源，仍尝试首个源进行下载" "No download source with confirmed Range support detected; trying first source anyway")
     }
     if ($Urls.Count -gt 1 -and $selectedUrl) {
         $shortSelected = if ($selectedUrl.Length -gt 70) { $selectedUrl.Substring(0, 67) + "..." } else { $selectedUrl }
-        Write-Info "已锁定下载源: $shortSelected"
+        Write-Info (_m "已锁定下载源: $shortSelected" "Download source locked: $shortSelected")
         Write-Log "Download-Robust source locked: $selectedUrl"
     } elseif ($selectedUrl) {
         Write-Log "Download-Robust source locked(single): $selectedUrl"
@@ -2390,12 +2398,12 @@ function Download-Robust {
             }
             $oldCount = $oldSet.Count
             if ($oldCount -gt 0) {
-                Write-Warn "目标文件已失效（被删除或版本变更），旧进度 ${oldCount} 块作废，将重新下载"
+                Write-Warn (_m "目标文件已失效（被删除或版本变更），旧进度 ${oldCount} 块作废，将重新下载" "Target file invalidated (deleted or version changed); old progress ${oldCount} chunks discarded, re-downloading")
             }
         }
         $completedSet.Clear()
         if (Test-Path $progressFile) { Remove-Item $progressFile -Force -ErrorAction SilentlyContinue }
-        Write-Info "预分配 ${totalMB}MB 磁盘空间..."
+        Write-Info (_m "预分配 ${totalMB}MB 磁盘空间..." "Pre-allocating ${totalMB}MB disk space...")
         $preallocOk = $false
         for ($pa = 1; $pa -le 12 -and -not $preallocOk; $pa++) {
             $fs = $null
@@ -2414,7 +2422,7 @@ function Download-Robust {
             }
         }
         if (-not $preallocOk) {
-            Write-Warn "预分配文件失败（文件可能被占用），请稍后重试"
+            Write-Warn (_m "预分配文件失败（文件可能被占用），请稍后重试" "Failed to pre-allocate file (file may be in use); please try again later")
             return $false
         }
         # 写入 SIZE 头
@@ -2427,13 +2435,13 @@ function Download-Robust {
     # 显示续传状态
     if ($completedSet.Count -gt 0) {
         $doneMB = [math]::Round([math]::Min([long]$completedSet.Count * $chunkSize, $ExpectedSize) / 1MB, 1)
-        Write-Info "续传下载，已完成 $($completedSet.Count)/${totalChunks} 块 (${doneMB}MB / ${totalMB}MB)"
+        Write-Info (_m "续传下载，已完成 $($completedSet.Count)/${totalChunks} 块 (${doneMB}MB / ${totalMB}MB)" "Resuming download, completed $($completedSet.Count)/${totalChunks} chunks (${doneMB}MB / ${totalMB}MB)")
     }
 
     # 全部完成 + 文件大小正确 → 跳过
     if ($completedSet.Count -ge $totalChunks) {
         if ((Test-Path $OutFile) -and (Get-Item $OutFile).Length -eq $ExpectedSize) {
-            Write-OK "镜像文件已完整下载 (${totalMB}MB)"
+            Write-OK (_m "镜像文件已完整下载 (${totalMB}MB)" "Image file fully downloaded (${totalMB}MB)")
             Remove-Item $progressFile -Force -ErrorAction SilentlyContinue
             return $true
         }
@@ -2449,7 +2457,7 @@ function Download-Robust {
         }
     }
     if ($pendingCount -eq 0) {
-        Write-OK "所有块已下载完成"
+        Write-OK (_m "所有块已下载完成" "All chunks downloaded")
         Remove-Item $progressFile -Force -ErrorAction SilentlyContinue
         return $true
     }
@@ -2459,7 +2467,7 @@ function Download-Robust {
 
     # 实际线程数不超过待下载块数
     $actualThreads = [math]::Min($Threads, $pendingCount)
-    Write-Info "${actualThreads} 线程并行下载: ${pendingCount} 块 x ${ChunkSizeMB}MB (断线自动续传)"
+    Write-Info (_m "${actualThreads} 线程并行下载: ${pendingCount} 块 x ${ChunkSizeMB}MB (断线自动续传)" "${actualThreads}-thread parallel download: ${pendingCount} chunks x ${ChunkSizeMB}MB (auto-resume on disconnect)")
 
     # -- Worker 脚本（每个 Runspace 执行）--
     $workerScript = {
@@ -2603,7 +2611,7 @@ function Download-Robust {
                 $eta = " ETA ${etaMin}m${etaS}s"
             }
         }
-        Write-Host "`r  ${actualThreads}线程下载: ${dlMB}MB / ${totalMB}MB (${pct}%) ${speedMBps}MB/s${eta} [${doneNow}/${totalChunks}块]    " -NoNewline -ForegroundColor Cyan
+        Write-Host (_m "`r  ${actualThreads}线程下载: ${dlMB}MB / ${totalMB}MB (${pct}%) ${speedMBps}MB/s${eta} [${doneNow}/${totalChunks}块]    " "`r  ${actualThreads}-thread download: ${dlMB}MB / ${totalMB}MB (${pct}%) ${speedMBps}MB/s${eta} [${doneNow}/${totalChunks} chunks]    ") -NoNewline -ForegroundColor Cyan
     }
     Write-Host ""
 
@@ -2619,8 +2627,8 @@ function Download-Robust {
     if ($failedChunks.Count -gt 0) {
         $failList = @()
         foreach ($fc in $failedChunks) { $failList += $fc }
-        Write-Warn "$($failedChunks.Count) 个块下载失败 (块号: $($failList[0..([math]::Min(9, $failList.Count-1))] -join ', '))"
-        Write-Warn "重新运行脚本即可自动续传剩余块"
+        Write-Warn (_m "$($failedChunks.Count) 个块下载失败 (块号: $($failList[0..([math]::Min(9, $failList.Count-1))] -join ', '))" "$($failedChunks.Count) chunks failed to download (chunk #: $($failList[0..([math]::Min(9, $failList.Count-1))] -join ', '))")
+        Write-Warn (_m "重新运行脚本即可自动续传剩余块" "Re-run the script to automatically resume remaining chunks")
         return $false
     }
 
@@ -2630,7 +2638,7 @@ function Download-Robust {
         Remove-Item $progressFile -Force -ErrorAction SilentlyContinue
         return $true
     } else {
-        Write-Warn "文件大小不匹配: ${finalSize} / ${ExpectedSize} 字节"
+        Write-Warn (_m "文件大小不匹配: ${finalSize} / ${ExpectedSize} 字节" "File size mismatch: ${finalSize} / ${ExpectedSize} bytes")
         return $false
     }
 }
@@ -2747,11 +2755,11 @@ function Get-DeployConfig {
 
     # 2. HTTPS 域名
     Write-Host ""
-    Write-Host "  💡 输入域名可启用 HTTPS（自动申请 Let's Encrypt 证书）" -ForegroundColor DarkGray
-    Write-Host "     需要域名已解析到本机IP，且 80/443 端口可从外网访问" -ForegroundColor DarkGray
-    Write-Host "     留空将自动使用 IP + 自签名 HTTPS（局域网/本机访问）" -ForegroundColor DarkGray
+    Write-Host (_m "  💡 输入域名可启用 HTTPS（自动申请 Let's Encrypt 证书）" "  💡 Enter a domain to enable HTTPS (auto-apply for Let's Encrypt certificate)") -ForegroundColor DarkGray
+    Write-Host (_m "     需要域名已解析到本机IP，且 80/443 端口可从外网访问" "     Requires domain resolved to this server's IP, with ports 80/443 accessible from the internet") -ForegroundColor DarkGray
+    Write-Host (_m "     留空将自动使用 IP + 自签名 HTTPS（局域网/本机访问）" "     Leave empty to use IP + self-signed HTTPS (LAN/localhost only)") -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  HTTPS 域名 (可选，留空使用IP自签名HTTPS): " -NoNewline -ForegroundColor White
+    Write-Host (_m "  HTTPS 域名 (可选，留空使用IP自签名HTTPS): " "  HTTPS domain (optional, leave empty for IP self-signed HTTPS): ") -NoNewline -ForegroundColor White
     $domain = (Read-Host).Trim()
 
     if ($domain -and $domain -match '^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$') {
@@ -2764,26 +2772,26 @@ function Get-DeployConfig {
             $config.HttpsEnabled = $true
             $config.CertMode = "internal"
             Write-Host ""
-            Write-Host "  🔐 检测到 IP 地址，将使用自签证书 HTTPS 模式" -ForegroundColor Yellow
-            Write-Host "     访问时浏览器会提示「不安全」，点击「继续访问」即可正常使用" -ForegroundColor DarkGray
-            Write-Host "     如需受信任的证书，请使用域名并选择 Let's Encrypt" -ForegroundColor DarkGray
+            Write-Host (_m "  🔐 检测到 IP 地址，将使用自签证书 HTTPS 模式" "  🔐 IP address detected; will use self-signed certificate HTTPS mode") -ForegroundColor Yellow
+            Write-Host (_m "     访问时浏览器会提示「不安全」，点击「继续访问」即可正常使用" "     Browser will show 'Not Secure' warning; click 'Continue' to proceed normally") -ForegroundColor DarkGray
+            Write-Host (_m "     如需受信任的证书，请使用域名并选择 Let's Encrypt" "     For a trusted certificate, use a domain and select Let's Encrypt") -ForegroundColor DarkGray
         } else {
             $config.Domain = $domain
             $config.HttpsEnabled = $true
 
             Write-Host ""
-            Write-Host "  🔐 证书模式:" -ForegroundColor White
-            Write-Host "     [1] Let's Encrypt 公网证书（默认，需公网DNS+80/443可达）" -ForegroundColor Gray
-            Write-Host "     [2] 自签证书（Caddy Internal，适合局域网测试）" -ForegroundColor Gray
+            Write-Host (_m "  🔐 证书模式:" "  🔐 Certificate mode:") -ForegroundColor White
+            Write-Host (_m "     [1] Let's Encrypt 公网证书（默认，需公网DNS+80/443可达）" "     [1] Let's Encrypt public certificate (default, requires public DNS + ports 80/443 reachable)") -ForegroundColor Gray
+            Write-Host (_m "     [2] 自签证书（Caddy Internal，适合局域网测试）" "     [2] Self-signed certificate (Caddy Internal, for LAN testing)") -ForegroundColor Gray
             Write-Host ""
-            Write-Host "  请选择证书模式 [1/2，默认1]: " -NoNewline -ForegroundColor White
+            Write-Host (_m "  请选择证书模式 [1/2，默认1]: " "  Select certificate mode [1/2, default 1]: ") -NoNewline -ForegroundColor White
             $certChoice = (Read-Host).Trim()
             if ($certChoice -eq '2') {
                 $config.CertMode = "internal"
-                Write-Info "已选择自签证书模式（Caddy Internal）"
+                Write-Info (_m "已选择自签证书模式（Caddy Internal）" "Selected self-signed certificate mode (Caddy Internal)")
             } else {
                 $config.CertMode = "letsencrypt"
-                Write-Info "已选择 Let's Encrypt 公网证书模式"
+                Write-Info (_m "已选择 Let's Encrypt 公网证书模式" "Selected Let's Encrypt public certificate mode")
             }
         }
 
@@ -2791,11 +2799,11 @@ function Get-DeployConfig {
         $httpPort = [int]$DEFAULT_HTTP_PORT
         if (-not (Test-PortAvailable $httpPort)) {
             $httpPort = Find-AvailablePort -PreferredPort 8080 -RangeStart 8080 -RangeEnd 8099
-            Write-Warn "端口 80 已被占用，HTTP 使用端口 $httpPort"
+            Write-Warn (_m "端口 80 已被占用，HTTP 使用端口 $httpPort" "Port 80 is in use, HTTP using port $httpPort")
             if ($config.CertMode -eq "letsencrypt") {
-                Write-Warn "Let's Encrypt 需要 80 端口，非标准端口可能导致证书申请失败"
+                Write-Warn (_m "Let's Encrypt 需要 80 端口，非标准端口可能导致证书申请失败" "Let's Encrypt requires port 80; non-standard ports may cause certificate issuance to fail")
             } else {
-                Write-Info "自签证书模式不依赖公网 ACME 验证，可继续"
+                Write-Info (_m "自签证书模式不依赖公网 ACME 验证，可继续" "Self-signed certificate mode does not require public ACME validation; continuing")
             }
         }
         $config.HttpPort = $httpPort
@@ -2804,7 +2812,7 @@ function Get-DeployConfig {
         $httpsPort = [int]$DEFAULT_HTTPS_PORT
         if (-not (Test-PortAvailable $httpsPort)) {
             $httpsPort = Find-AvailablePort -PreferredPort 8443 -RangeStart 8443 -RangeEnd 8499
-            Write-Warn "端口 443 已被占用，HTTPS 使用端口 $httpsPort"
+            Write-Warn (_m "端口 443 已被占用，HTTPS 使用端口 $httpsPort" "Port 443 is in use, HTTPS using port $httpsPort")
         }
         $config.HttpsPort = $httpsPort
 
@@ -2830,14 +2838,14 @@ function Get-DeployConfig {
         }
     } else {
         if ($domain) {
-            Write-Warn "域名格式无效，将自动使用 IP 自签名 HTTPS"
+            Write-Warn (_m "域名格式无效，将自动使用 IP 自签名 HTTPS" "Invalid domain format; will use IP self-signed HTTPS")
         }
 
         # 域名为空或无效 — 自动启用 IP 自签名 HTTPS
         Write-Host ""
-        Write-Host "  🔒 将启用 HTTPS（自签证书 + 本机 IP）" -ForegroundColor White
-        Write-Host "     无需域名，Caddy 自动为本机 IP 生成自签名证书" -ForegroundColor DarkGray
-        Write-Host "     浏览器会提示「不安全」，点击「继续访问」即可" -ForegroundColor DarkGray
+        Write-Host (_m "  🔒 将启用 HTTPS（自签证书 + 本机 IP）" "  🔒 HTTPS will be enabled (self-signed certificate + local IP)") -ForegroundColor White
+        Write-Host (_m "     无需域名，Caddy 自动为本机 IP 生成自签名证书" "     No domain needed; Caddy will auto-generate a self-signed certificate for local IP") -ForegroundColor DarkGray
+        Write-Host (_m "     浏览器会提示「不安全」，点击「继续访问」即可" "     Browser will show 'Not Secure' warning; click 'Continue' to proceed") -ForegroundColor DarkGray
         # 获取本机局域网 IP（排除虚拟网卡：WSL, Docker, Hyper-V, VPN 等）
         $localIp = ""
         try {
@@ -2882,39 +2890,39 @@ function Get-DeployConfig {
             } catch { }
         }
         if ($localIp) {
-            Write-Host "  检测到本机 IP: $localIp" -ForegroundColor Cyan
+            Write-Host (_m "  检测到本机 IP: $localIp" "  Detected local IP: $localIp") -ForegroundColor Cyan
             # Prompt for IP confirmation; accept Enter or 'y' to confirm, or allow entering a new IP.
             $chosenIp = $null
             while ($true) {
-                Write-Host "  使用此 IP？按回车或输入 'y' 确认，或输入其他 IP: " -NoNewline -ForegroundColor White
+                Write-Host (_m "  使用此 IP？按回车或输入 'y' 确认，或输入其他 IP: " "  Use this IP? Press Enter or type 'y' to confirm, or enter another IP: ") -NoNewline -ForegroundColor White
                 $customIp = (Read-Host).Trim()
                 if (-not $customIp -or $customIp.ToLower() -eq 'y') { $chosenIp = $localIp; break }
                 if ($customIp -match '^\d{1,3}(?:\.\d{1,3}){3}$') {
                     $valid = $true
                     foreach ($octet in ($customIp -split '\.')) { if ([int]$octet -lt 0 -or [int]$octet -gt 255) { $valid = $false } }
-                    if ($valid) { $chosenIp = $customIp; break } else { Write-Warn "IP 段必须在 0-255 之间，请重试" }
+                    if ($valid) { $chosenIp = $customIp; break } else { Write-Warn (_m "IP 段必须在 0-255 之间，请重试" "IP octets must be between 0-255; please try again") }
                 } else {
-                    Write-Warn "输入不是有效的 IP 地址，请重试，或按回车确认使用 $localIp"
+                    Write-Warn (_m "输入不是有效的 IP 地址，请重试，或按回车确认使用 $localIp" "Input is not a valid IP address; please try again, or press Enter to use $localIp")
                 }
             }
             $localIp = $chosenIp
             $config.Domain = $localIp
             $config.HttpsEnabled = $true
             $config.CertMode = "internal"
-            Write-OK "已启用 IP 自签名 HTTPS: $localIp"
+            Write-OK (_m "已启用 IP 自签名 HTTPS: $localIp" "IP self-signed HTTPS enabled: $localIp")
         } else {
-            Write-Host "  请输入本机 IP 地址: " -NoNewline -ForegroundColor White
+            Write-Host (_m "  请输入本机 IP 地址: " "  Enter local IP address: ") -NoNewline -ForegroundColor White
             $manualIp = (Read-Host).Trim()
             if ($manualIp -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
                 $config.Domain = $manualIp
                 $config.HttpsEnabled = $true
                 $config.CertMode = "internal"
-                Write-OK "已启用 IP 自签名 HTTPS: $manualIp"
+                Write-OK (_m "已启用 IP 自签名 HTTPS: $manualIp" "IP self-signed HTTPS enabled: $manualIp")
             } else {
                 $config.Domain = '127.0.0.1'
                 $config.HttpsEnabled = $true
                 $config.CertMode = "internal"
-                Write-Warn "IP 格式无效，已回退到 127.0.0.1 自签名 HTTPS"
+                Write-Warn (_m "IP 格式无效，已回退到 127.0.0.1 自签名 HTTPS" "Invalid IP format; fallback to 127.0.0.1 self-signed HTTPS")
             }
         }
 
@@ -2923,14 +2931,14 @@ function Get-DeployConfig {
             $httpPort = [int]$DEFAULT_HTTP_PORT
             if (-not (Test-PortAvailable $httpPort)) {
                 $httpPort = Find-AvailablePort -PreferredPort 8080 -RangeStart 8080 -RangeEnd 8099
-                Write-Warn "端口 80 已被占用，HTTP 使用端口 $httpPort"
+                Write-Warn (_m "端口 80 已被占用，HTTP 使用端口 $httpPort" "Port 80 is in use, HTTP using port $httpPort")
             }
             $config.HttpPort = $httpPort
 
             $httpsPort = [int]$DEFAULT_HTTPS_PORT
             if (-not (Test-PortAvailable $httpsPort)) {
                 $httpsPort = Find-AvailablePort -PreferredPort 8443 -RangeStart 8443 -RangeEnd 8499
-                Write-Warn "端口 443 已被占用，HTTPS 使用端口 $httpsPort"
+                Write-Warn (_m "端口 443 已被占用，HTTPS 使用端口 $httpsPort" "Port 443 is in use, HTTPS using port $httpsPort")
             }
             $config.HttpsPort = $httpsPort
 
@@ -2948,14 +2956,14 @@ function Get-DeployConfig {
     }
 
     if (-not $config.HttpsEnabled) {
-        throw "部署配置错误：HTTPS 未启用。请重新运行安装器。"
+        throw (_m "部署配置错误：HTTPS 未启用。请重新运行安装器。" "Deployment configuration error: HTTPS not enabled. Please re-run the installer.")
     }
 
     # SSH 端口（所有模式通用）
     $sshPort = 2222
     if (-not (Test-PortAvailable $sshPort)) {
         $sshPort = Find-AvailablePort -PreferredPort 2223 -RangeStart 2223 -RangeEnd 2299
-        Write-Warn "端口 2222 已被占用，SSH 使用端口 $sshPort"
+        Write-Warn (_m "端口 2222 已被占用，SSH 使用端口 $sshPort" "Port 2222 is in use, SSH using port $sshPort")
     }
     $config.SshPort = $sshPort
     $config.PortArgs += @("-p", "$($config.SshPort):22")
@@ -2963,15 +2971,15 @@ function Get-DeployConfig {
     # Gateway TLS 端口（Node 远程接入，所有 HTTPS 模式通用）
     $gwTlsPort = Find-AvailablePort -PreferredPort 18790 -RangeStart 18790 -RangeEnd 18899
     Write-Host ""
-    Write-Host "  💡 Gateway TLS 端口用于远端 Node 通过 TLS 加密连接到 Gateway（宿主机端口 → 容器 18790）" -ForegroundColor DarkGray
-    Write-Host "  Gateway TLS 端口（宿主机 → 容器 18790）[默认 ${gwTlsPort}]: " -NoNewline -ForegroundColor White
+    Write-Host (_m "  💡 Gateway TLS 端口用于远端 Node 通过 TLS 加密连接到 Gateway（宿主机端口 → 容器 18790）" "  💡 Gateway TLS port is used for remote Nodes to connect to Gateway via TLS (host port → container 18790)") -ForegroundColor DarkGray
+    Write-Host (_m "  Gateway TLS 端口（宿主机 → 容器 18790）[默认 ${gwTlsPort}]: " "  Gateway TLS port (host → container 18790) [default ${gwTlsPort}]: ") -NoNewline -ForegroundColor White
     $customGwTls = Read-Host
     if ($customGwTls -match '^\d+$' -and [int]$customGwTls -ge 1 -and [int]$customGwTls -le 65535) {
         $gwTlsPort = [int]$customGwTls
         if (-not (Test-PortAvailable $gwTlsPort)) {
             $procInfo = Get-PortProcess $gwTlsPort
             $procLabel = if ($procInfo) { " ($procInfo)" } else { "" }
-            Write-Warn "端口 $gwTlsPort 已被占用${procLabel}"
+            Write-Warn (_m "端口 $gwTlsPort 已被占用${procLabel}" "Port $gwTlsPort is in use${procLabel}")
             $gwTlsPort = Find-AvailablePort -PreferredPort $gwTlsPort -RangeStart 18790 -RangeEnd 18899
         }
     }
@@ -2981,25 +2989,25 @@ function Get-DeployConfig {
     # 显示配置摘要
     Write-Host ""
     Write-Host "  -------------------------------------------------" -ForegroundColor DarkGray
-    Write-Host "  📝 端口映射:" -ForegroundColor White
+    Write-Host (_m "  📝 端口映射:" "  📝 Port mapping:") -ForegroundColor White
     if ($config.CertMode -eq 'letsencrypt') {
-        Write-Host "     HTTP   $($config.HttpPort) → 容器 80  (证书验证+跳转)" -ForegroundColor Gray
+        Write-Host (_m "     HTTP   $($config.HttpPort) → 容器 80  (证书验证+跳转)" "     HTTP   $($config.HttpPort) → container 80  (cert validation + redirect)") -ForegroundColor Gray
     }
-    Write-Host "     HTTPS  $($config.HttpsPort) → 容器 443 (主入口)" -ForegroundColor Gray
-    Write-Host "     GW-TLS $($config.GatewayTlsPort) → 容器 18790 (Node远程接入)" -ForegroundColor Gray
-    Write-Host "     SSH    $($config.SshPort) → 容器 22  (远程登录)" -ForegroundColor Gray
+    Write-Host (_m "     HTTPS  $($config.HttpsPort) → 容器 443 (主入口)" "     HTTPS  $($config.HttpsPort) → container 443 (main entry)") -ForegroundColor Gray
+    Write-Host (_m "     GW-TLS $($config.GatewayTlsPort) → 容器 18790 (Node远程接入)" "     GW-TLS $($config.GatewayTlsPort) → container 18790 (Node remote access)") -ForegroundColor Gray
+    Write-Host (_m "     SSH    $($config.SshPort) → 容器 22  (远程登录)" "     SSH    $($config.SshPort) → container 22  (remote login)") -ForegroundColor Gray
     if ($config.CertMode -eq "internal") {
-        Write-Host "     证书: 自签证书（Caddy Internal）" -ForegroundColor Yellow
+        Write-Host (_m "     证书: 自签证书（Caddy Internal）" "     Cert: Self-signed certificate (Caddy Internal)") -ForegroundColor Yellow
     } else {
-        Write-Host "     证书: Let's Encrypt 公网证书" -ForegroundColor Gray
+        Write-Host (_m "     证书: Let's Encrypt 公网证书" "     Cert: Let's Encrypt public certificate") -ForegroundColor Gray
     }
-    Write-Host "     Gateway/Web 面板: 仅容器内部访问（不占宿主机端口）" -ForegroundColor Gray
+    Write-Host (_m "     Gateway/Web 面板: 仅容器内部访问（不占宿主机端口）" "     Gateway/Web panel: container-internal only (no host port)") -ForegroundColor Gray
     $isIpDomain = ($config.Domain -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
     if ($isIpDomain) {
-        Write-Host "     IP: $($config.Domain) (自签名 HTTPS)" -ForegroundColor Cyan
-        Write-Host "     ⚠️  浏览器会提示不安全，点击「继续访问」即可" -ForegroundColor Yellow
+        Write-Host (_m "     IP: $($config.Domain) (自签名 HTTPS)" "     IP: $($config.Domain) (self-signed HTTPS)") -ForegroundColor Cyan
+        Write-Host (_m "     ⚠️  浏览器会提示不安全，点击「继续访问」即可" "     ⚠️  Browser will show 'Not Secure' warning; click 'Continue' to proceed") -ForegroundColor Yellow
     } else {
-        Write-Host "     域名: $($config.Domain)" -ForegroundColor Cyan
+        Write-Host (_m "     域名: $($config.Domain)" "     Domain: $($config.Domain)") -ForegroundColor Cyan
     }
     Write-Host "  -------------------------------------------------" -ForegroundColor DarkGray
     Write-Host ""
@@ -3016,8 +3024,8 @@ function Get-DeployConfig {
     $fwPortsText = ($fwPortList | Sort-Object -Unique) -join ','
     $defaultAutoOpen = "Y"
     $defaultHint = "Y/n"
-    Write-Host "  🛡️  防火墙设置（目标端口: ${fwPortsText}）" -ForegroundColor White
-    Write-Host "     是否自动开放上述端口？[${defaultHint}] : " -NoNewline -ForegroundColor White
+    Write-Host (_m "  🛡️  防火墙设置（目标端口: ${fwPortsText}）" "  🛡️  Firewall settings (target ports: ${fwPortsText})") -ForegroundColor White
+    Write-Host (_m "     是否自动开放上述端口？[${defaultHint}] : " "     Auto-allow the above ports? [${defaultHint}] : ") -NoNewline -ForegroundColor White
     $fwChoice = (Read-Host).Trim().ToLower()
     if (-not $fwChoice) {
         $config.AutoOpenFirewall = ($defaultAutoOpen -eq "Y")
@@ -3025,9 +3033,9 @@ function Get-DeployConfig {
         $config.AutoOpenFirewall = ($fwChoice -eq "y" -or $fwChoice -eq "yes")
     }
     if ($config.AutoOpenFirewall) {
-        Write-Info "已选择自动开放防火墙端口 (${fwPortsText})"
+        Write-Info (_m "已选择自动开放防火墙端口 (${fwPortsText})" "Selected to auto-allow firewall ports (${fwPortsText})")
     } else {
-        Write-Info "已选择不自动开放防火墙端口，可在完成页复制手动命令"
+        Write-Info (_m "已选择不自动开放防火墙端口，可在完成页复制手动命令" "Selected not to auto-allow firewall ports; manual commands available on the summary page")
     }
 
     return $config
@@ -3053,33 +3061,33 @@ function Write-LaunchAccessSummary {
         Write-Host "  ✅ Ubuntu ($UBUNTU_DISTRO)" -ForegroundColor Green
         Write-Host "  ✅ Docker Engine" -ForegroundColor Green
     }
-    Write-Host "  🚀 ClawNook 容器已启动" -ForegroundColor Cyan
+    Write-Host (_m "  🚀 ClawNook 容器已启动" "  🚀 ClawNook container started") -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "  📝 端口映射:" -ForegroundColor White
+    Write-Host (_m "  📝 端口映射:" "  📝 Port mapping:") -ForegroundColor White
     if ($CertMode -eq "letsencrypt") {
-        Write-Host "     HTTP   ${HttpPort} → 证书验证 + 跳转HTTPS" -ForegroundColor Gray
+        Write-Host (_m "     HTTP   ${HttpPort} → 证书验证 + 跳转HTTPS" "     HTTP   ${HttpPort} → cert validation + redirect to HTTPS") -ForegroundColor Gray
     }
-    Write-Host "     HTTPS  ${HttpsPort} → 主入口（Caddy 反代）" -ForegroundColor Gray
-    Write-Host "     SSH    ${SshPort} → 远程登录（密钥认证）" -ForegroundColor Gray
+    Write-Host (_m "     HTTPS  ${HttpsPort} → 主入口（Caddy 反代）" "     HTTPS  ${HttpsPort} → main entry (Caddy reverse proxy)") -ForegroundColor Gray
+    Write-Host (_m "     SSH    ${SshPort} → 远程登录（密钥认证）" "     SSH    ${SshPort} → remote login (key authentication)") -ForegroundColor Gray
     if ($BrowserBridgeEnabled) {
-        Write-Host "     浏览器控制: 已开启（通过 HTTPS/WSS）" -ForegroundColor Gray
+        Write-Host (_m "     浏览器控制: 已开启（通过 HTTPS/WSS）" "     Browser control: enabled (via HTTPS/WSS)") -ForegroundColor Gray
     }
     if ($CertMode -eq "internal") {
-        Write-Host "     证书模式: 自签证书（局域网测试）" -ForegroundColor Yellow
-        Write-Host "     ⚠️  首次访问浏览器会提示「不安全」，点击「继续访问」/「高级」即可" -ForegroundColor Yellow
+        Write-Host (_m "     证书模式: 自签证书（局域网测试）" "     Cert mode: Self-signed certificate (LAN testing)") -ForegroundColor Yellow
+        Write-Host (_m "     ⚠️  首次访问浏览器会提示「不安全」，点击「继续访问」/「高级」即可" "     ⚠️  On first visit, browser will show 'Not Secure' warning; click 'Continue'/'Advanced' to proceed") -ForegroundColor Yellow
     } else {
-        Write-Host "     证书模式: Let's Encrypt 公网证书" -ForegroundColor Gray
+        Write-Host (_m "     证书模式: Let's Encrypt 公网证书" "     Cert mode: Let's Encrypt public certificate") -ForegroundColor Gray
     }
-    Write-Host "     Gateway/Web 面板 → 仅容器内部（不占宿主机端口）" -ForegroundColor Gray
+    Write-Host (_m "     Gateway/Web 面板 → 仅容器内部（不占宿主机端口）" "     Gateway/Web panel → container-internal only (no host port)") -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  🌐 访问地址:" -ForegroundColor White
+    Write-Host (_m "  🌐 访问地址:" "  🌐 Access URL:") -ForegroundColor White
     $httpsDomain = if ($Domain) { $Domain } else { "localhost" }
     $httpsUrl = if ($HttpsPort -eq 443) { "https://${httpsDomain}" } else { "https://${httpsDomain}:${HttpsPort}" }
-    Write-Host "     🔗 主站:     $httpsUrl" -ForegroundColor Cyan
+    Write-Host (_m "     🔗 主站:     $httpsUrl" "     🔗 Main site:  $httpsUrl") -ForegroundColor Cyan
     Write-Host "" 
-    Write-Host "  ⏳ 访问提示: 服务启动后通常需等待 30-120 秒；首次安装可能需要 3-5 分钟" -ForegroundColor Yellow
-    Write-Host "     若暂时无法访问，请稍等后刷新页面" -ForegroundColor DarkGray
+    Write-Host (_m "  ⏳ 访问提示: 服务启动后通常需等待 30-120 秒；首次安装可能需要 3-5 分钟" "  ⏳ Access note: services usually need 30-120 seconds after start; first install may take 3-5 minutes") -ForegroundColor Yellow
+    Write-Host (_m "     若暂时无法访问，请稍等后刷新页面" "     If temporarily inaccessible, please wait and refresh the page") -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -3101,14 +3109,14 @@ function Show-Completion {
     )
 
     Write-Host ""
-    $completionTitle = if ($script:upgradeMode) { "🎉 升级完成" } else { "🎉 安装完成" }
+    $completionTitle = if ($script:upgradeMode) { (_m "🎉 升级完成" "🎉 Upgrade complete") } else { (_m "🎉 安装完成" "🎉 Installation complete") }
     if ($DeployLaunched) {
         Write-Host "  ==================================================" -ForegroundColor Green
         Write-Host "                $completionTitle" -ForegroundColor Green
         Write-Host "  ==================================================" -ForegroundColor Green
     } else {
         Write-Host "  ==================================================" -ForegroundColor Yellow
-        Write-Host "             ⚠️  安装未完成" -ForegroundColor Yellow
+        Write-Host (_m "             ⚠️  安装未完成" "             ⚠️  Installation incomplete") -ForegroundColor Yellow
         Write-Host "  ==================================================" -ForegroundColor Yellow
     }
     Write-Host ""
@@ -3123,89 +3131,89 @@ function Show-Completion {
         $httpsDomain = if ($Domain) { $Domain } else { "localhost" }
         $httpsUrl = if ($HttpsPort -eq 443) { "https://${httpsDomain}" } else { "https://${httpsDomain}:${HttpsPort}" }
         $sshCmd = if ($sshUser -and $sshUser -ne "administrator") { "ssh ${sshUser}@<host> -p ${SshPort}" } else { "ssh root@<host> -p ${SshPort}" }
-        Write-Host "  安装摘要" -ForegroundColor White
-        Write-SummaryLine "主站" $httpsUrl
-        Write-SummaryLine "容器" $execCmd
+        Write-Host (_m "  安装摘要" "  Installation summary") -ForegroundColor White
+        Write-SummaryLine (_m "主站" "Main site") $httpsUrl
+        Write-SummaryLine (_m "容器" "Container") $execCmd
         Write-SummaryLine "SSH" $sshCmd
-        if ($HomeBaseDir) { Write-SummaryLine "目录" $HomeBaseDir }
-        Write-SummaryLine "日志" $LOG_FILE
+        if ($HomeBaseDir) { Write-SummaryLine (_m "目录" "Directory") $HomeBaseDir }
+        Write-SummaryLine (_m "日志" "Logs") $LOG_FILE
         if ($sshUser -and $sshUser -ne "root" -and $sshUser -ne "administrator") {
-            Write-SummaryLine "提权" "ssh 登录后执行 sudo -i"
+            Write-SummaryLine (_m "提权" "Elevate") (_m "ssh 登录后执行 sudo -i" "Run sudo -i after SSH login")
             if ($script:sshRootFallback) {
-                Write-Warn "公钥已暂存到 root，容器健康检查会自动同步到 $sshUser；若无法立即登录，请稍后再试"
+                Write-Warn (_m "公钥已暂存到 root，容器健康检查会自动同步到 $sshUser；若无法立即登录，请稍后再试" "Public key staged for root; container health check will auto-sync to $sshUser. If unable to login immediately, please try again later")
             }
         }
 
-        Write-Warn "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）"
+        Write-Warn (_m "远程 SSH 登录需手动注入公钥（宿主机可通过 docker exec 进入容器）" "Remote SSH login requires manual public key injection (host can access container via docker exec)")
         Write-Host "" 
-        Write-Host "  升级命令" -ForegroundColor White
+        Write-Host (_m "  升级命令" "  Upgrade command") -ForegroundColor White
         Write-Host '     irm https://raw.githubusercontent.com/cintia09/clawnook/main/install-windows-bootstrap.ps1 | iex' -ForegroundColor Cyan
     } else {
         Write-Host ""
         Write-Host "  -------------------------------------------------" -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host "  📍 可能的原因:" -ForegroundColor Cyan
-        Write-Host "     • 端口被其他程序占用（重新运行脚本选择其他端口）" -ForegroundColor Gray
-        Write-Host "     • Docker 镜像获取失败（网络问题）" -ForegroundColor Gray
+        Write-Host (_m "  📍 可能的原因:" "  📍 Possible causes:") -ForegroundColor Cyan
+        Write-Host (_m "     • 端口被其他程序占用（重新运行脚本选择其他端口）" "     • Port in use by another program (re-run script to select a different port)") -ForegroundColor Gray
+        Write-Host (_m "     • Docker 镜像获取失败（网络问题）" "     • Docker image pull failed (network issue)") -ForegroundColor Gray
         Write-Host ""
-        Write-Host "  🔍 排查步骤:" -ForegroundColor Cyan
-        Write-Host "     docker ps -a                   # 检查所有容器" -ForegroundColor Gray
-        Write-Host "     docker logs clawnook       # 查看日志" -ForegroundColor Gray
-        Write-Host "     netstat -ano | findstr :18789  # 检查端口占用" -ForegroundColor Gray
+        Write-Host (_m "  🔍 排查步骤:" "  🔍 Troubleshooting steps:") -ForegroundColor Cyan
+        Write-Host (_m "     docker ps -a                   # 检查所有容器" "     docker ps -a                   # Check all containers") -ForegroundColor Gray
+        Write-Host (_m "     docker logs clawnook       # 查看日志" "     docker logs clawnook       # View logs") -ForegroundColor Gray
+        Write-Host (_m "     netstat -ano | findstr :18789  # 检查端口占用" "     netstat -ano | findstr :18789  # Check port usage") -ForegroundColor Gray
         Write-Host ""
 
         # 检查镜像是否已存在
         $imageCheck = & docker image inspect clawnook 2>$null
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "  ✅ 镜像已加载，重新运行脚本即可（会跳过下载）" -ForegroundColor Green
+            Write-Host (_m "  ✅ 镜像已加载，重新运行脚本即可（会跳过下载）" "  ✅ Image loaded; re-run the script to continue (download will be skipped)") -ForegroundColor Green
         } else {
-        Write-Host "  📥 手动获取镜像:" -ForegroundColor Cyan
+        Write-Host (_m "  📥 手动获取镜像:" "  📥 Manually obtain image:") -ForegroundColor Cyan
         Write-Host ""
-        Write-Host "     方式1: 浏览器下载（推荐）" -ForegroundColor Yellow
+        Write-Host (_m "     方式1: 浏览器下载（推荐）" "     Option 1: Browser download (recommended)") -ForegroundColor Yellow
         $manualTag = if ($script:latestReleaseTag) { $script:latestReleaseTag } elseif ($latestReleaseTag) { $latestReleaseTag } else { "v1.0.0" }
-        Write-Host "     Lite版 (~250MB): https://github.com/$GITHUB_REPO/releases/download/${manualTag}/clawnook-image-lite.tar.gz" -ForegroundColor Cyan
+        Write-Host (_m "     Lite版 (~250MB): https://github.com/$GITHUB_REPO/releases/download/${manualTag}/clawnook-image-lite.tar.gz" "     Lite (~250MB): https://github.com/$GITHUB_REPO/releases/download/${manualTag}/clawnook-image-lite.tar.gz") -ForegroundColor Cyan
         Write-Host ""
-        Write-Host "     方式2: aria2c 多线程下载（推荐，需先安装 aria2）" -ForegroundColor Yellow
-        Write-Host "     aria2c -x 8 -s 8 -k 2M --continue=true --retry-wait=3 --max-tries=0 <上述URL>" -ForegroundColor White
+        Write-Host (_m "     方式2: aria2c 多线程下载（推荐，需先安装 aria2）" "     Option 2: aria2c multi-threaded download (recommended, requires aria2)") -ForegroundColor Yellow
+        Write-Host (_m "     aria2c -x 8 -s 8 -k 2M --continue=true --retry-wait=3 --max-tries=0 <上述URL>" "     aria2c -x 8 -s 8 -k 2M --continue=true --retry-wait=3 --max-tries=0 <URL above>") -ForegroundColor White
         Write-Host ""
-        Write-Host "     方式3: curl 命令行（网络不稳定时可能失败）" -ForegroundColor Yellow
-        Write-Host "     curl.exe -L -C - --retry 200 --retry-all-errors --retry-delay 3 -o <文件名> <上述URL>" -ForegroundColor White
+        Write-Host (_m "     方式3: curl 命令行（网络不稳定时可能失败）" "     Option 3: curl command line (may fail on unstable networks)") -ForegroundColor Yellow
+        Write-Host (_m "     curl.exe -L -C - --retry 200 --retry-all-errors --retry-delay 3 -o <文件名> <上述URL>" "     curl.exe -L -C - --retry 200 --retry-all-errors --retry-delay 3 -o <filename> <URL above>") -ForegroundColor White
         Write-Host ""
-        Write-Host "     下载完成后执行:" -ForegroundColor Yellow
-        Write-Host "     docker load -i <下载的.tar.gz文件>" -ForegroundColor White
-        Write-Host "     然后重新运行安装脚本即可（会自动检测已加载的镜像）" -ForegroundColor Gray
+        Write-Host (_m "     下载完成后执行:" "     After download, run:") -ForegroundColor Yellow
+        Write-Host (_m "     docker load -i <下载的.tar.gz文件>" "     docker load -i <downloaded .tar.gz file>") -ForegroundColor White
+        Write-Host (_m "     然后重新运行安装脚本即可（会自动检测已加载的镜像）" "     Then re-run the install script (loaded image will be auto-detected)") -ForegroundColor Gray
         }
     }
 
     Write-Host ""
-    Write-Host "  完整日志: $LOG_FILE" -ForegroundColor DarkGray
+    Write-Host (_m "  完整日志: $LOG_FILE" "  Full log: $LOG_FILE") -ForegroundColor DarkGray
     Write-Host ""
 }
 
 function Show-RebootMessage {
     Write-Host ""
     Write-Host "  ==================================================" -ForegroundColor Yellow
-    Write-Host "             需要重启计算机" -ForegroundColor Yellow
+    Write-Host (_m "             需要重启计算机" "             Reboot required") -ForegroundColor Yellow
     Write-Host "  ==================================================" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  WSL2 安装完成，需要重启才能继续。" -ForegroundColor White
+    Write-Host (_m "  WSL2 安装完成，需要重启才能继续。" "  WSL2 installation complete; reboot required to continue.") -ForegroundColor White
     Write-Host ""
-    Write-Host "  重启后安装程序将自动继续（已创建计划任务）。" -ForegroundColor White
+    Write-Host (_m "  重启后安装程序将自动继续（已创建计划任务）。" "  Installation will resume automatically after reboot (scheduled task created).") -ForegroundColor White
     Write-Host ""
     Write-Host "  -------------------------------------------------" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  [Y] 立即重启    [N] 稍后手动重启" -ForegroundColor Cyan
+    Write-Host (_m "  [Y] 立即重启    [N] 稍后手动重启" "  [Y] Reboot now    [N] Reboot later manually") -ForegroundColor Cyan
     Write-Host ""
 
-    $choice = Read-Host "  请选择"
+    $choice = Read-Host (_m "  请选择" "  Please choose")
     if ($choice -eq "Y" -or $choice -eq "y") {
-        Write-Host "  正在重启..." -ForegroundColor Yellow
+        Write-Host (_m "  正在重启..." "  Rebooting...") -ForegroundColor Yellow
         Start-Sleep -Seconds 3
         Restart-Computer -Force
     } else {
         Write-Host ""
-        Write-Warn "请记得重启后安装程序会自动继续"
-        Write-Suggestion "如果重启后未自动运行，请再次双击 install-windows.bat"
+        Write-Warn (_m "请记得重启后安装程序会自动继续" "Remember: installation will resume automatically after reboot")
+        Write-Suggestion (_m "如果重启后未自动运行，请再次双击 install-windows.bat" "If it does not auto-run after reboot, double-click install-windows.bat again")
         Write-Host ""
     }
 }
@@ -3215,21 +3223,21 @@ function Show-Error {
 
     Write-Host ""
     Write-Host "  ==================================================" -ForegroundColor Red
-    Write-Host "             ❌ 安装失败" -ForegroundColor Red
+    Write-Host (_m "             ❌ 安装失败" "             ❌ Installation failed") -ForegroundColor Red
     Write-Host "  ==================================================" -ForegroundColor Red
     Write-Host ""
-    Write-Host "  失败步骤: $Step" -ForegroundColor Red
+    Write-Host (_m "  失败步骤: $Step" "  Failed step: $Step") -ForegroundColor Red
     if ($Detail) {
-        Write-Host "  详细信息: $Detail" -ForegroundColor Yellow
+        Write-Host (_m "  详细信息: $Detail" "  Details: $Detail") -ForegroundColor Yellow
     }
     if ($Suggestion) {
         Write-Host ""
-        Write-Host "  💡 建议: $Suggestion" -ForegroundColor Cyan
+        Write-Host (_m "  💡 建议: $Suggestion" "  💡 Suggestion: $Suggestion") -ForegroundColor Cyan
     }
     Write-Host ""
-    Write-Host "  📄 完整日志: $LOG_FILE" -ForegroundColor DarkGray
+    Write-Host (_m "  📄 完整日志: $LOG_FILE" "  📄 Full log: $LOG_FILE") -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  如需帮助，请将日志文件发送给技术支持。" -ForegroundColor Gray
+    Write-Host (_m "  如需帮助，请将日志文件发送给技术支持。" "  For assistance, please send the log file to technical support.") -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -3243,31 +3251,31 @@ function Main {
 
     # Show logo
     Show-Logo
-    Write-Host "  脚本版本: v$SCRIPT_VERSION" -ForegroundColor DarkGray
+    Write-Host (_m "  脚本版本: v$SCRIPT_VERSION" "  Script version: v$SCRIPT_VERSION") -ForegroundColor DarkGray
     Write-Host ""
 
     if ($Resume) {
-        Write-Host "  [续] 重启后自动继续安装..." -ForegroundColor Cyan
+        Write-Host (_m "  [续] 重启后自动继续安装..." "  [Resumed] Continuing installation after reboot...") -ForegroundColor Cyan
         Write-Host ""
     }
 
     $state = Get-InstallState
 
     # -- Phase 1: Environment Detection ----------------------------------------
-    Write-Step 1 5 "检测环境..."
+    Write-Step 1 5 (_m "检测环境..." "Detecting environment...")
 
-    $phase1Activity = "OpenClaw 安装 - 环境检测"
-    Write-InstallProgress -Activity $phase1Activity -Status "检查管理员权限" -Percent 5
+    $phase1Activity = (_m "OpenClaw 安装 - 环境检测" "OpenClaw Install - Environment Check")
+    Write-InstallProgress -Activity $phase1Activity -Status (_m "检查管理员权限" "Check administrator privileges") -Percent 5
     Assert-Administrator
 
-    Write-InstallProgress -Activity $phase1Activity -Status "检查 Windows 版本" -Percent 15
+    Write-InstallProgress -Activity $phase1Activity -Status (_m "检查 Windows 版本" "Check Windows version") -Percent 15
     $buildNumber = Test-WindowsVersion
 
-    Write-Info "正在检测 Docker Desktop..."
+    Write-Info (_m "正在检测 Docker Desktop..." "Detecting Docker Desktop...")
 
     # Detect Docker Desktop only. The legacy WSL path remains in this file but
     # is intentionally hidden from the active Windows installer flow.
-    Write-InstallProgress -Activity $phase1Activity -Status "检测 Docker Desktop" -Percent 35
+    Write-InstallProgress -Activity $phase1Activity -Status (_m "检测 Docker Desktop" "Detect Docker Desktop") -Percent 35
     $hasDockerDesktop = Test-DockerDesktopInstalled
     $dockerDesktopMode = $true
     $wslInstalled = $false
@@ -3275,17 +3283,17 @@ function Main {
     $distroName = $null
 
     if ($hasDockerDesktop) {
-        Write-OK "检测到 Docker Desktop 已安装"
+        Write-OK (_m "检测到 Docker Desktop 已安装" "Docker Desktop detected as installed")
         if (Test-DockerDesktopRunning) {
-            Write-OK "Docker Desktop 正在运行"
+            Write-OK (_m "Docker Desktop 正在运行" "Docker Desktop is running")
         } else {
-            Write-Warn "Docker Desktop 已安装但未运行，安装流程会继续，但后续 Docker 命令可能失败"
+            Write-Warn (_m "Docker Desktop 已安装但未运行，安装流程会继续，但后续 Docker 命令可能失败" "Docker Desktop is installed but not running; installation will continue, but Docker commands may fail")
         }
     } else {
-        Write-Warn "未检测到 Docker Desktop"
+        Write-Warn (_m "未检测到 Docker Desktop" "Docker Desktop not detected")
     }
 
-    Write-InstallProgress -Activity $phase1Activity -Status "环境检测完成" -Percent 100
+    Write-InstallProgress -Activity $phase1Activity -Status (_m "环境检测完成" "Environment check complete") -Percent 100
     Write-InstallProgress -Activity $phase1Activity -Completed
 
     if (-not $hasDockerDesktop) {
@@ -3294,34 +3302,34 @@ function Main {
     }
 
     Write-Host ""
-    Write-Host "  安装模式: Docker Desktop (本地)" -ForegroundColor Green
+    Write-Host (_m "  安装模式: Docker Desktop (本地)" "  Install mode: Docker Desktop (local)") -ForegroundColor Green
 
     Write-Log "State: hasDockerDesktop=$hasDockerDesktop, dockerDesktopMode=$dockerDesktopMode"
 
     # -- Phase 2: Validate Docker Desktop path ---------------------------------
-    Write-Step 2 5 "检查 Docker Desktop..."
-    Write-OK "Windows 安装当前仅使用 Docker Desktop 路径"
+    Write-Step 2 5 (_m "检查 Docker Desktop..." "Checking Docker Desktop...")
+    Write-OK (_m "Windows 安装当前仅使用 Docker Desktop 路径" "Windows installation currently uses Docker Desktop path only")
     if (-not (Test-DockerDesktopRunning)) {
-        Write-Suggestion "建议先启动 Docker Desktop，并等待状态变为 Running"
+        Write-Suggestion (_m "建议先启动 Docker Desktop，并等待状态变为 Running" "Please start Docker Desktop first and wait until status shows Running")
     }
 
     # -- Phase 3: Hide legacy WSL installer path --------------------------------
-    Write-Step 3 5 "准备 Docker 环境..."
-    Write-OK "已跳过 WSL 安装与 WSL 内 Docker Engine 配置"
+    Write-Step 3 5 (_m "准备 Docker 环境..." "Preparing Docker environment...")
+    Write-OK (_m "已跳过 WSL 安装与 WSL 内 Docker Engine 配置" "Skipped WSL installation and Docker Engine configuration in WSL")
 
     # -- Phase 4: Prepare container deployment ----------------------------------
-    Write-Step 4 5 "准备容器部署..."
+    Write-Step 4 5 (_m "准备容器部署..." "Preparing container deployment...")
 
     if ($dockerDesktopMode) {
         # Docker Desktop mode: default to explicit ImageOnly (no source/repo download)
         $ImageOnly = $true
         $ImageOnlyExplicit = $true
-        Write-Info "Docker Desktop 模式：仅部署容器（不拉取源码/部署包）..."
+        Write-Info (_m "Docker Desktop 模式：仅部署容器（不拉取源码/部署包）..." "Docker Desktop mode: deploying container only (no source/deployment package pull)...")
 
         $defaultLocalDeployDir = Resolve-LocalDeployDir -BasePath $HOME
         $localDeployDir = $defaultLocalDeployDir
         $homeBaseDir = $localDeployDir
-        Write-Info "Windows 本地工作目录固定为: $localDeployDir"
+        Write-Info (_m "Windows 本地工作目录固定为: $localDeployDir" "Windows local working directory set to: $localDeployDir")
         Ensure-LocalDeployDir -Path $localDeployDir
 
         # 统一目录策略：镜像文件、日志等工作文件都放在部署目录下（默认隐藏目录）
@@ -3397,12 +3405,12 @@ function Main {
                 } catch { }
             }
 
-            Write-OK "检测到本地部署包"
+            Write-OK (_m "检测到本地部署包" "Local deployment package detected")
             if ($localDeployVersion) {
-                Write-Info "本地部署包版本: $localDeployVersion"
+                Write-Info (_m "本地部署包版本: $localDeployVersion" "Local deployment package version: $localDeployVersion")
             }
             if ($localDeployCommitHash) {
-                Write-Info "本地 commit: $($localDeployCommitHash.Substring(0, [Math]::Min(12, $localDeployCommitHash.Length)))"
+                Write-Info (_m "本地 commit: $($localDeployCommitHash.Substring(0, [Math]::Min(12, $localDeployCommitHash.Length)))" "Local commit: $($localDeployCommitHash.Substring(0, [Math]::Min(12, $localDeployCommitHash.Length)))")
             }
 
             # 版本比较：tag + commit hash 双校验
@@ -3411,42 +3419,42 @@ function Main {
             if ($latestReleaseCommit -and $localDeployCommitHash) {
                 $deployCommitMatch = ($localDeployCommitHash.StartsWith($latestReleaseCommit) -or $latestReleaseCommit.StartsWith($localDeployCommitHash))
                 if (-not $deployCommitMatch) {
-                    Write-Warn "commit hash 不一致 (本地: $($localDeployCommitHash.Substring(0,7)) vs 远端: $($latestReleaseCommit.Substring(0,7)))，可能本地文件已被修改"
+                    Write-Warn (_m "commit hash 不一致 (本地: $($localDeployCommitHash.Substring(0,7)) vs 远端: $($latestReleaseCommit.Substring(0,7)))，可能本地文件已被修改" "Commit hash mismatch (local: $($localDeployCommitHash.Substring(0,7)) vs remote: $($latestReleaseCommit.Substring(0,7))); local files may have been modified")
                 }
             }
 
             if ($deployTagMatch -and $deployCommitMatch) {
                 Write-Host "" 
-                Write-Host "  本地部署包与远端版本一致 ($latestReleaseTag)" -ForegroundColor Green
-                Write-Host "  请选择部署包策略:" -ForegroundColor Cyan
-                Write-Host "     [1] 使用本地部署包（默认）" -ForegroundColor White
-                Write-Host "     [2] 重新更新部署包" -ForegroundColor White
+                Write-Host (_m "  本地部署包与远端版本一致 ($latestReleaseTag)" "  Local deployment package matches remote version ($latestReleaseTag)") -ForegroundColor Green
+                Write-Host (_m "  请选择部署包策略:" "  Select deployment package strategy:") -ForegroundColor Cyan
+                Write-Host (_m "     [1] 使用本地部署包（默认）" "     [1] Use local deployment package (default)") -ForegroundColor White
+                Write-Host (_m "     [2] 重新更新部署包" "     [2] Re-download deployment package") -ForegroundColor White
                 Write-Host "" 
-                Write-Host "  输入选择 [1/2，默认1]: " -NoNewline -ForegroundColor White
+                Write-Host (_m "  输入选择 [1/2，默认1]: " "  Enter choice [1/2, default 1]: ") -NoNewline -ForegroundColor White
                 $deployChoice = (Read-Host).Trim()
                 if ($deployChoice -eq '2') {
                     $needDeployPackageDownload = $true
-                    Write-Info "已选择更新部署包"
+                    Write-Info (_m "已选择更新部署包" "Selected to update deployment package")
                 }
             } else {
                 Write-Host "" 
-                Write-Host "  发现部署包版本可能落后" -ForegroundColor Yellow
+                Write-Host (_m "  发现部署包版本可能落后" "  Deployment package version may be outdated") -ForegroundColor Yellow
                 if ($latestReleaseTag) {
-                    Write-Host "     远端最新: $latestReleaseTag" -ForegroundColor DarkGray
+                    Write-Host (_m "     远端最新: $latestReleaseTag" "     Remote latest: $latestReleaseTag") -ForegroundColor DarkGray
                 }
                 if ($localDeployVersion) {
-                    Write-Host "     本地版本: $localDeployVersion" -ForegroundColor DarkGray
+                    Write-Host (_m "     本地版本: $localDeployVersion" "     Local version: $localDeployVersion") -ForegroundColor DarkGray
                 }
                 if (-not ($ImageOnly -and $ImageOnlyExplicit)) {
-                    Write-Host "  请选择部署包策略:" -ForegroundColor Cyan
-                    Write-Host "     [1] 使用本地部署包" -ForegroundColor White
-                    Write-Host "     [2] 更新到最新部署包（默认）" -ForegroundColor White
+                    Write-Host (_m "  请选择部署包策略:" "  Select deployment package strategy:") -ForegroundColor Cyan
+                    Write-Host (_m "     [1] 使用本地部署包" "     [1] Use local deployment package") -ForegroundColor White
+                    Write-Host (_m "     [2] 更新到最新部署包（默认）" "     [2] Update to latest deployment package (default)") -ForegroundColor White
                     Write-Host "" 
-                    Write-Host "  输入选择 [1/2，默认2]: " -NoNewline -ForegroundColor White
+                    Write-Host (_m "  输入选择 [1/2，默认2]: " "  Enter choice [1/2, default 2]: ") -NoNewline -ForegroundColor White
                     $deployChoice = (Read-Host).Trim()
                     if ($deployChoice -ne '1') {
                         $needDeployPackageDownload = $true
-                        Write-Info "已选择更新部署包"
+                        Write-Info (_m "已选择更新部署包" "Selected to update deployment package")
                     }
                 } else {
                     # Explicit ImageOnly: skip deploy package strategy selection (silent)
@@ -3455,14 +3463,14 @@ function Main {
         }
 
         if ($needDeployPackageDownload) {
-            Write-Info "正在下载部署包到 $localDeployDir ..."
+            Write-Info (_m "正在下载部署包到 $localDeployDir ..." "Downloading deployment package to $localDeployDir ...")
 
             # Prefer git if available, otherwise download ZIP from GitHub
             $hasGit = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 
             if ($hasGit) {
                 if (Test-Path "$localDeployDir\.git") {
-                    Write-Info "检测到本地 git 仓库，正在更新..."
+                    Write-Info (_m "检测到本地 git 仓库，正在更新..." "Local git repository detected, updating...")
                     try {
                         $pushedLocal = $false
                         if (Test-Path $localDeployDir) { try { Push-Location $localDeployDir; $pushedLocal = $true } catch { $pushedLocal = $false } }
@@ -3470,10 +3478,10 @@ function Main {
                         $latestTag = if ($latestReleaseTag) { $latestReleaseTag } else { (& git tag --sort=-v:refname 2>$null | Select-Object -First 1) }
                         if ($latestTag) {
                             & git checkout $latestTag 2>&1 | Out-Null
-                            Write-OK "仓库更新完成 (Release: $latestTag)"
+                            Write-OK (_m "仓库更新完成 (Release: $latestTag)" "Repository updated (Release: $latestTag)")
                         } else {
                             & git pull --ff-only 2>&1 | Out-Null
-                            Write-OK "仓库更新完成 (main 分支)"
+                            Write-OK (_m "仓库更新完成 (main 分支)" "Repository updated (main branch)")
                         }
                         if ($latestTag) {
                             $latestTag | Set-Content (Join-Path $localDeployDir ".release-version") -Force
@@ -3487,12 +3495,12 @@ function Main {
                         } catch { }
                         Pop-Location
                     } catch {
-                        Write-Warn "git 仓库更新失败，尝试 ZIP 下载..."
+                        Write-Warn (_m "git 仓库更新失败，尝试 ZIP 下载..." "Git repository update failed, trying ZIP download...")
                         Pop-Location -ErrorAction SilentlyContinue
                         $hasGit = $false
                     }
                 } else {
-                    Write-Info "使用 git clone 下载..."
+                    Write-Info (_m "使用 git clone 下载..." "Downloading via git clone...")
                     try {
                         if (Test-Path $localDeployDir) {
                             Remove-Item $localDeployDir -Recurse -Force
@@ -3509,9 +3517,9 @@ function Main {
                             if ($latestTag) {
                                 & git checkout $latestTag 2>&1 | Out-Null
                                 $latestTag | Set-Content (Join-Path $localDeployDir ".release-version") -Force
-                                Write-OK "仓库克隆完成 (Release: $latestTag)"
+                                Write-OK (_m "仓库克隆完成 (Release: $latestTag)" "Repository cloned (Release: $latestTag)")
                             } else {
-                                Write-OK "仓库克隆完成 (main 分支)"
+                                Write-OK (_m "仓库克隆完成 (main 分支)" "Repository cloned (main branch)")
                             }
                             # 保存 commit hash 用于完整性校验
                             try {
@@ -3522,11 +3530,11 @@ function Main {
                             } catch { }
                             Pop-Location
                         } catch {
-                            Write-OK "仓库克隆完成 (main 分支)"
+                            Write-OK (_m "仓库克隆完成 (main 分支)" "Repository cloned (main branch)")
                             Pop-Location -ErrorAction SilentlyContinue
                         }
                     } catch {
-                        Write-Warn "git clone 失败，尝试 ZIP 下载..."
+                        Write-Warn (_m "git clone 失败，尝试 ZIP 下载..." "git clone failed, trying ZIP download...")
                         $hasGit = $false
                     }
                 }
@@ -3539,15 +3547,15 @@ function Main {
 
                 try {
                     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                    Write-Info "正在查询最新 Release 版本..."
+                    Write-Info (_m "正在查询最新 Release 版本..." "Querying latest Release version...")
                     $releaseApi = "https://api.github.com/repos/cintia09/clawnook/releases/latest"
                     try {
                         $releaseJson = Invoke-RestMethod -Uri $releaseApi -TimeoutSec 10 -ErrorAction Stop
                         $zipUrl = $releaseJson.zipball_url
                         $relTag = $releaseJson.tag_name
-                        Write-OK "找到最新 Release: $relTag"
+                        Write-OK (_m "找到最新 Release: $relTag" "Found latest Release: $relTag")
                     } catch {
-                        Write-Info "未找到 Release 版本，使用 main 分支"
+                        Write-Info (_m "未找到 Release 版本，使用 main 分支" "No Release version found, using main branch")
                         $zipUrl = "https://github.com/cintia09/clawnook/archive/refs/heads/main.zip"
                     }
 
@@ -3556,7 +3564,7 @@ function Main {
                     if (Test-Path $zipFile) {
                         $existingSize = (Get-Item $zipFile).Length
                         if ($existingSize -gt 0) {
-                            Write-Info "发现未完成的下载 ($([math]::Round($existingSize / 1MB, 1))MB)，尝试断点续传..."
+                            Write-Info (_m "发现未完成的下载 ($([math]::Round($existingSize / 1MB, 1))MB)，尝试断点续传..." "Incomplete download found ($([math]::Round($existingSize / 1MB, 1))MB), attempting to resume...")
                         }
                     }
 
@@ -3585,19 +3593,19 @@ function Main {
                         # Server supports resume — 206 Partial Content
                         $totalSize = $existingSize + $response.ContentLength
                         $resumed = $true
-                        Write-OK "服务器支持续传，从 $([math]::Round($existingSize / 1MB, 1))MB 处继续"
+                        Write-OK (_m "服务器支持续传，从 $([math]::Round($existingSize / 1MB, 1))MB 处继续" "Server supports resume, continuing from $([math]::Round($existingSize / 1MB, 1))MB")
                     } elseif ($statusCode -eq 200) {
                         if ($existingSize -gt 0) {
-                            Write-Warn "服务器不支持续传，将重新下载"
+                            Write-Warn (_m "服务器不支持续传，将重新下载" "Server does not support resume, re-downloading")
                         }
                         $existingSize = 0  # re-download from start
                         $totalSize = $response.ContentLength
                     }
 
                     if ($totalSize -gt 0) {
-                        Write-Info "正在下载部署包... (总计 $([math]::Round($totalSize / 1MB, 1))MB)"
+                        Write-Info (_m "正在下载部署包... (总计 $([math]::Round($totalSize / 1MB, 1))MB)" "Downloading deployment package... (total $([math]::Round($totalSize / 1MB, 1))MB)")
                     } else {
-                        Write-Info "正在下载部署包..."
+                        Write-Info (_m "正在下载部署包..." "Downloading deployment package...")
                     }
 
                     $stream = $response.GetResponseStream()
@@ -3626,7 +3634,7 @@ function Main {
                                 Write-Host "`r  $frame $bar ${dlMB}MB / ${totMB}MB (${pct}%) $elapsed  " -NoNewline -ForegroundColor Cyan
                             } else {
                                 $dlMB = [math]::Round($totalDownloaded / 1MB, 1)
-                                Write-Host "`r  $frame 下载中: ${dlMB}MB ($elapsed)         " -NoNewline -ForegroundColor Yellow
+                                Write-Host (_m "`r  $frame 下载中: ${dlMB}MB ($elapsed)         " "`r  $frame Downloading: ${dlMB}MB ($elapsed)         ") -NoNewline -ForegroundColor Yellow
                             }
                         }
                     } finally {
@@ -3638,23 +3646,23 @@ function Main {
 
                     $zipSize = [math]::Round((Get-Item $zipFile).Length / 1MB, 1)
                     if ($resumed) {
-                        Write-OK "续传下载完成 (${zipSize}MB)"
+                        Write-OK (_m "续传下载完成 (${zipSize}MB)" "Resume download complete (${zipSize}MB)")
                     } else {
-                        Write-OK "下载完成 (${zipSize}MB)"
+                        Write-OK (_m "下载完成 (${zipSize}MB)" "Download complete (${zipSize}MB)")
                     }
 
                     # -- File integrity check --
-                    Write-Info "正在验证文件完整性..."
+                    Write-Info (_m "正在验证文件完整性..." "Verifying file integrity...")
                     try {
                         # 1. Basic size check
                         if ((Get-Item $zipFile).Length -lt 1024) {
-                            throw "文件过小 (< 1KB)，可能下载不完整"
+                            throw (_m "文件过小 (< 1KB)，可能下载不完整" "File too small (< 1KB), download may be incomplete")
                         }
 
                         # 2. ZIP magic number check (PK)
                         $header = [byte[]](Get-Content $zipFile -Encoding Byte -TotalCount 4)
                         if ($header[0] -ne 0x50 -or $header[1] -ne 0x4B -or $header[2] -ne 0x03 -or $header[3] -ne 0x04) {
-                            throw "文件不是有效的 ZIP 格式（文件头校验失败）"
+                            throw (_m "文件不是有效的 ZIP 格式（文件头校验失败）" "File is not a valid ZIP format (header validation failed)")
                         }
 
                         # 3. Try opening as ZIP archive to validate structure
@@ -3664,7 +3672,7 @@ function Main {
                         $zip.Dispose()
 
                         if ($entryCount -eq 0) {
-                            throw "ZIP 文件为空，无任何条目"
+                            throw (_m "ZIP 文件为空，无任何条目" "ZIP file is empty, no entries found")
                         }
 
                         # 4. Check for Dockerfile.lite in the archive
@@ -3679,21 +3687,21 @@ function Main {
                         $zip.Dispose()
 
                         if (-not $hasDockerfile) {
-                            Write-Warn "ZIP 包中未找到 Dockerfile.lite，可能是错误的包"
+                            Write-Warn (_m "ZIP 包中未找到 Dockerfile.lite，可能是错误的包" "Dockerfile.lite not found in ZIP, may be the wrong package")
                         }
 
                         $hash = (Get-FileHash $zipFile -Algorithm SHA256).Hash.Substring(0, 12)
-                        Write-OK "完整性验证通过 ($entryCount 个文件, SHA256: ${hash}...)"
+                        Write-OK (_m "完整性验证通过 ($entryCount 个文件, SHA256: ${hash}...)" "Integrity verification passed ($entryCount files, SHA256: ${hash}...)")
                     } catch {
-                        Write-Err "文件完整性检查失败: $_"
-                        Write-Info "删除损坏的下载文件，请重新运行安装命令"
+                        Write-Err (_m "文件完整性检查失败: $_" "File integrity check failed: $_")
+                        Write-Info (_m "删除损坏的下载文件，请重新运行安装命令" "Deleted corrupted download file, please re-run the install command")
                         Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-                        Read-Host "按回车退出"
+                        Read-Host (_m "按回车退出" "Press Enter to exit")
                         return
                     }
 
                     # Extract ZIP（状态已迁移到 Docker volume，无需备份旧宿主机目录）
-                    Write-Info "正在解压..."
+                    Write-Info (_m "正在解压..." "Extracting...")
                     if (Test-Path $localDeployDir) {
                         Remove-Item $localDeployDir -Recurse -Force
                     }
@@ -3724,27 +3732,27 @@ function Main {
                             $latestReleaseCommit | Set-Content (Join-Path $localDeployDir ".release-commit") -Force
                         }
                     } else {
-                        throw "解压后未找到部署目录"
+                        throw (_m "解压后未找到部署目录" "Deployment directory not found after extraction")
                     }
 
-                    Write-OK "解压完成"
+                    Write-OK (_m "解压完成" "Extraction complete")
                     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
                 } catch {
-                    Write-Err "下载失败: $_"
+                    Write-Err (_m "下载失败: $_" "Download failed: $_")
                     Write-Host ""
-                    Write-Host "  💡 请手动下载并解压:" -ForegroundColor Cyan
-                    Write-Host "     1. 浏览器打开: https://github.com/cintia09/clawnook/releases/latest" -ForegroundColor White
-                    Write-Host "     2. 解压到当前目录，重命名为 clawnook" -ForegroundColor White
-                    Write-Host "     3. 重新运行此脚本" -ForegroundColor White
+                    Write-Host (_m "  💡 请手动下载并解压:" "  💡 Please download and extract manually:") -ForegroundColor Cyan
+                    Write-Host (_m "     1. 浏览器打开: https://github.com/cintia09/clawnook/releases/latest" "     1. Open in browser: https://github.com/cintia09/clawnook/releases/latest") -ForegroundColor White
+                    Write-Host (_m "     2. 解压到当前目录，重命名为 clawnook" "     2. Extract to current directory and rename to clawnook") -ForegroundColor White
+                    Write-Host (_m "     3. 重新运行此脚本" "     3. Re-run this script") -ForegroundColor White
                     Write-Host ""
-                    Read-Host "按回车退出"
+                    Read-Host (_m "按回车退出" "Press Enter to exit")
                     return
                 }
             }
         }
 
         # Build and run with Docker
-        Write-Step 5 5 "启动 OpenClaw..."
+        Write-Step 5 5 (_m "启动 OpenClaw..." "Starting OpenClaw...")
         Remove-ResumeTask
         Remove-InstallState
 
@@ -3773,13 +3781,13 @@ function Main {
         # 清理已停止的容器
         foreach ($sc in $stoppedContainers) {
             $scName = ($sc -split '\|')[0]
-            Write-Info "清理已停止的容器: $scName"
+            Write-Info (_m "清理已停止的容器: $scName" "Cleaning up stopped container: $scName")
             & docker rm -f $scName 2>&1 | Out-Null
         }
 
         if ($runningContainers.Count -gt 0) {
             Write-Host "" 
-            Write-Host "  ⚠️  发现正在运行的 OpenClaw 容器:" -ForegroundColor Yellow
+            Write-Host (_m "  ⚠️  发现正在运行的 OpenClaw 容器:" "  ⚠️  Found running OpenClaw container(s):") -ForegroundColor Yellow
             Write-Host ""
             $runningContainerMeta = @()
             foreach ($rc in $runningContainers) {
@@ -3789,7 +3797,7 @@ function Main {
                 $rcPorts = if ($parts.Count -ge 3) { $parts[2] } else { "" }
                 Write-Log "RunningContainer found: name=$rcName status='$rcStatus' ports='$rcPorts'"
                 $rcVersion = Get-ContainerReleaseVersion -ContainerName $rcName -HomeBaseDir $homeBaseDir
-                $rcVersionText = if ($rcVersion) { $rcVersion } else { "未知" }
+                $rcVersionText = if ($rcVersion) { $rcVersion } else { (_m "未知" "Unknown") }
                 $runningContainerMeta += @{
                     Name = $rcName
                     Status = $rcStatus
@@ -3798,7 +3806,7 @@ function Main {
                     VersionNorm = (Normalize-ReleaseVersion $rcVersion)
                 }
                 Write-Log "RunningContainer version resolved: name=$rcName raw='$rcVersion' norm='$(Normalize-ReleaseVersion $rcVersion)'"
-                Write-Host "     容器: ${rcName}  版本: ${rcVersionText}  状态: ${rcStatus}  端口: ${rcPorts}" -ForegroundColor DarkGray
+                Write-Host (_m "     容器: ${rcName}  版本: ${rcVersionText}  状态: ${rcStatus}  端口: ${rcPorts}" "     Container: ${rcName}  Version: ${rcVersionText}  Status: ${rcStatus}  Ports: ${rcPorts}") -ForegroundColor DarkGray
             }
             Write-Host ""
 
@@ -3817,8 +3825,8 @@ function Main {
                 })
                 if ($runningContainerMeta.Count -gt 0 -and $unknownVersion.Count -eq 0 -and $sameVersion.Count -eq $runningContainerMeta.Count) {
                     $allSameAsTarget = $true
-                    Write-Host "  ✅ 检测到运行中容器版本已与远端一致（目标版本: $latestReleaseTag）" -ForegroundColor Green
-                    Write-Host "     如无异常，通常无需重装；如需修复运行环境，可继续选择 [1]/[2]。" -ForegroundColor DarkGray
+                    Write-Host (_m "  ✅ 检测到运行中容器版本已与远端一致（目标版本: $latestReleaseTag）" "  ✅ Running container version matches remote (target: $latestReleaseTag)") -ForegroundColor Green
+                    Write-Host (_m "     如无异常，通常无需重装；如需修复运行环境，可继续选择 [1]/[2]。" "     No reinstall needed if everything is normal; to repair the environment, choose [1]/[2].") -ForegroundColor DarkGray
                     Write-Host ""
                 }
                 if ($outdated.Count -gt 0) {
@@ -3870,41 +3878,41 @@ function Main {
                     }
 
                     if ($hotUpdateEligible.Count -gt 0) {
-                        Write-Host "  💡 检测到新 Release 且可热更新（目标版本: $latestReleaseTag，无需完整重装）:" -ForegroundColor Cyan
+                        Write-Host (_m "  💡 检测到新 Release 且可热更新（目标版本: $latestReleaseTag，无需完整重装）:" "  💡 New Release detected and hot update available (target: $latestReleaseTag, no full reinstall needed):") -ForegroundColor Cyan
                         foreach ($item in $hotUpdateEligible) {
-                            $oldV = if ($item.VersionRaw) { $item.VersionRaw } else { "未知" }
-                            Write-Host "     $($item.Name): $oldV -> $latestReleaseTag，建议先在 Web 面板 → 系统更新 执行热更新" -ForegroundColor DarkGray
+                            $oldV = if ($item.VersionRaw) { $item.VersionRaw } else { (_m "未知" "Unknown") }
+                            Write-Host (_m "     $($item.Name): $oldV -> $latestReleaseTag，建议先在 Web 面板 → 系统更新 执行热更新" "     $($item.Name): $oldV -> $latestReleaseTag, recommend running hot update via Web Panel → System Update first") -ForegroundColor DarkGray
                         }
                         Write-Host ""
-                        Write-Host "  推荐操作:" -ForegroundColor Cyan
-                        Write-Host "     [默认 N] 先执行 Web 热更新（推荐）" -ForegroundColor White
-                        Write-Host "     [输入 y] 继续安装流程，仍可再选升级重建/全新升级重建" -ForegroundColor White
+                        Write-Host (_m "  推荐操作:" "  Recommended action:") -ForegroundColor Cyan
+                        Write-Host (_m "     [默认 N] 先执行 Web 热更新（推荐）" "     [Default N] Run Web hot update first (recommended)") -ForegroundColor White
+                        Write-Host (_m "     [输入 y] 继续安装流程，仍可再选升级重建/全新升级重建" "     [Enter y] Continue install, you can still choose upgrade rebuild/full upgrade rebuild") -ForegroundColor White
                         Write-Host "" 
-                        Write-Host "  ⚠️  重建容器风险提示:" -ForegroundColor Yellow
-                        Write-Host "     - 将删除并重建容器（容器文件系统会重置）" -ForegroundColor Yellow
-                        Write-Host "     - 容器内手动安装的软件/临时文件可能丢失" -ForegroundColor Yellow
-                        Write-Host "     - 状态卷与配置会保留" -ForegroundColor Green
+                        Write-Host (_m "  ⚠️  重建容器风险提示:" "  ⚠️  Container rebuild risk warning:") -ForegroundColor Yellow
+                        Write-Host (_m "     - 将删除并重建容器（容器文件系统会重置）" "     - Container will be deleted and rebuilt (container filesystem will be reset)") -ForegroundColor Yellow
+                        Write-Host (_m "     - 容器内手动安装的软件/临时文件可能丢失" "     - Manually installed software/temporary files in the container may be lost") -ForegroundColor Yellow
+                        Write-Host (_m "     - 状态卷与配置会保留" "     - State volume and configuration will be preserved") -ForegroundColor Green
                         Write-Host ""
-                        Write-Host "  是否继续进入安装流程？[y/N]: " -NoNewline -ForegroundColor White
+                        Write-Host (_m "  是否继续进入安装流程？[y/N]: " "  Continue to install flow? [y/N]: ") -NoNewline -ForegroundColor White
                         $continueInstall = (Read-Host).Trim().ToLower()
                         if ($continueInstall -ne 'y' -and $continueInstall -ne 'yes') {
                             Write-Host ""
-                            Write-Host "  已取消本次安装流程，请在 Web 面板执行热更新。" -ForegroundColor Yellow
-                            Write-Host "  热更新后可再次运行安装脚本（如有需要）。" -ForegroundColor DarkGray
+                            Write-Host (_m "  已取消本次安装流程，请在 Web 面板执行热更新。" "  Install canceled. Please run hot update from the Web Panel.") -ForegroundColor Yellow
+                            Write-Host (_m "  热更新后可再次运行安装脚本（如有需要）。" "  You can re-run the install script after hot update (if needed).") -ForegroundColor DarkGray
                             return
                         }
                         $hotUpdateReinstallConfirmed = $true
                     }
 
-                    Write-Warn "检测到容器版本与目标版本不匹配（目标: $latestReleaseTag）"
+                    Write-Warn (_m "检测到容器版本与目标版本不匹配（目标: $latestReleaseTag）" "Container version does not match target (target: $latestReleaseTag)")
                     foreach ($item in $outdated) {
-                        $oldV = if ($item.VersionRaw) { $item.VersionRaw } else { "未知" }
+                        $oldV = if ($item.VersionRaw) { $item.VersionRaw } else { (_m "未知" "Unknown") }
                         Write-Host "     $($item.Name): $oldV -> $latestReleaseTag" -ForegroundColor Yellow
                     }
                     Write-Host ""
                     $doReinstall = $hotUpdateReinstallConfirmed
                     if (-not $doReinstall) {
-                        Write-Host "  是否先执行升级（删除旧容器，保留状态卷与配置，并切换到目标版本）？[Y/n]: " -NoNewline -ForegroundColor White
+                        Write-Host (_m "  是否先执行升级（删除旧容器，保留状态卷与配置，并切换到目标版本）？[Y/n]: " "  Upgrade first (delete old container, keep state volume and config, switch to target version)? [Y/n]: ") -NoNewline -ForegroundColor White
                         $upgradeFirst = (Read-Host).Trim().ToLower()
                         if (-not $upgradeFirst -or $upgradeFirst -eq 'y' -or $upgradeFirst -eq 'yes') {
                             $doReinstall = $true
@@ -3917,14 +3925,14 @@ function Main {
                             $preferredUpgradeContainer = $outdated[0].Name
                         } else {
                             Write-Host ""
-                            Write-Host "  请选择要升级的容器:" -ForegroundColor Cyan
+                            Write-Host (_m "  请选择要升级的容器:" "  Select the container to upgrade:") -ForegroundColor Cyan
                             for ($i = 0; $i -lt $outdated.Count; $i++) {
                                 $item = $outdated[$i]
-                                $oldV = if ($item.VersionRaw) { $item.VersionRaw } else { "未知" }
-                                Write-Host "     [$($i + 1)] $($item.Name)  (版本: $oldV  端口: $($item.Ports))" -ForegroundColor White
+                                $oldV = if ($item.VersionRaw) { $item.VersionRaw } else { (_m "未知" "Unknown") }
+                                Write-Host (_m "     [$($i + 1)] $($item.Name)  (版本: $oldV  端口: $($item.Ports))" "     [$($i + 1)] $($item.Name)  (Version: $oldV  Ports: $($item.Ports))") -ForegroundColor White
                             }
                             Write-Host ""
-                            Write-Host "  输入选择 [默认1]: " -NoNewline -ForegroundColor White
+                            Write-Host (_m "  输入选择 [默认1]: " "  Enter choice [default 1]: ") -NoNewline -ForegroundColor White
                             $upIdx = (Read-Host).Trim()
                             if ($upIdx -match '^\d+$' -and [int]$upIdx -ge 1 -and [int]$upIdx -le $outdated.Count) {
                                 $preferredUpgradeContainer = $outdated[[int]$upIdx - 1].Name
@@ -3934,37 +3942,37 @@ function Main {
                         }
                         $preferredStateVolume = Get-StateVolumeName -ContainerName $preferredUpgradeContainer
                         Write-Host ""
-                        Write-Info "已预选升级容器: $preferredUpgradeContainer（状态卷: $preferredStateVolume）"
-                        Write-Host "  💡 接下来请选择操作方式（升级重建 或 全新升级重建）" -ForegroundColor Cyan
+                        Write-Info (_m "已预选升级容器: $preferredUpgradeContainer（状态卷: $preferredStateVolume）" "Pre-selected upgrade container: $preferredUpgradeContainer (state volume: $preferredStateVolume)")
+                        Write-Host (_m "  💡 接下来请选择操作方式（升级重建 或 全新升级重建）" "  💡 Please select operation mode (upgrade rebuild or full upgrade rebuild)") -ForegroundColor Cyan
                     }
                 }
             }
 
             if (-not $choice) {
                 Write-Host ""
-                Write-Host "  请选择操作:" -ForegroundColor White
+                Write-Host (_m "  请选择操作:" "  Select operation:") -ForegroundColor White
                 if ($hasOutdatedContainers) {
-                    Write-Host "     [1] 升级（保留状态卷中的 openclaw 相关数据与配置，沿用当前端口/HTTPS）" -ForegroundColor Gray
-                    Write-Host "     [2] 升级重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）" -ForegroundColor Gray
-                    Write-Host "     [3] 全新升级重建（删除旧容器 + 配置 + 状态卷数据，重新配置端口/HTTPS）" -ForegroundColor Gray
-                    Write-Host "     [4] 退出" -ForegroundColor Gray
+                    Write-Host (_m "     [1] 升级（保留状态卷中的 openclaw 相关数据与配置，沿用当前端口/HTTPS）" "     [1] Upgrade (keep openclaw data and config in state volume, retain current ports/HTTPS)") -ForegroundColor Gray
+                    Write-Host (_m "     [2] 升级重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）" "     [2] Upgrade rebuild (keep openclaw data in container, reconfigure ports/HTTPS)") -ForegroundColor Gray
+                    Write-Host (_m "     [3] 全新升级重建（删除旧容器 + 配置 + 状态卷数据，重新配置端口/HTTPS）" "     [3] Full upgrade rebuild (delete old container + config + state volume data, reconfigure ports/HTTPS)") -ForegroundColor Gray
+                    Write-Host (_m "     [4] 退出" "     [4] Exit") -ForegroundColor Gray
                     Write-Host ""
-                    Write-Host "  输入选择 [1]: " -NoNewline -ForegroundColor White
+                    Write-Host (_m "  输入选择 [1]: " "  Enter choice [1]: ") -NoNewline -ForegroundColor White
                     $choice = (Read-Host).Trim()
                     if (-not $choice) { $choice = '1' }
                     if ($choice -eq '4') {
-                        Write-Host ""; Write-Host "  已取消。" -ForegroundColor Yellow; return
+                        Write-Host ""; Write-Host (_m "  已取消。" "  Canceled.") -ForegroundColor Yellow; return
                     }
                 } else {
-                    Write-Host "     [1] 重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）" -ForegroundColor Gray
-                    Write-Host "     [2] 全新重建（删除旧容器 + 配置 + 状态卷数据，重新配置端口/HTTPS）" -ForegroundColor Gray
-                    Write-Host "     [3] 退出" -ForegroundColor Gray
+                    Write-Host (_m "     [1] 重建（保留容器内 openclaw 相关数据，重新配置端口/HTTPS）" "     [1] Rebuild (keep openclaw data in container, reconfigure ports/HTTPS)") -ForegroundColor Gray
+                    Write-Host (_m "     [2] 全新重建（删除旧容器 + 配置 + 状态卷数据，重新配置端口/HTTPS）" "     [2] Full rebuild (delete old container + config + state volume data, reconfigure ports/HTTPS)") -ForegroundColor Gray
+                    Write-Host (_m "     [3] 退出" "     [3] Exit") -ForegroundColor Gray
                     Write-Host ""
-                    Write-Host "  输入选择 [1]: " -NoNewline -ForegroundColor White
+                    Write-Host (_m "  输入选择 [1]: " "  Enter choice [1]: ") -NoNewline -ForegroundColor White
                     $choice = (Read-Host).Trim()
                     if (-not $choice) { $choice = '1' }
                     if ($choice -eq '3') {
-                        Write-Host ""; Write-Host "  已取消。" -ForegroundColor Yellow; return
+                        Write-Host ""; Write-Host (_m "  已取消。" "  Canceled.") -ForegroundColor Yellow; return
                     }
                     # Map same-version choices: [1]rebuild→'2', [2]full rebuild→'3'
                     # so downstream logic uses unified numbering: 1=upgrade, 2=rebuild, 3=full rebuild
@@ -3976,17 +3984,17 @@ function Main {
             if ($choice -eq '1' -or $choice -eq '2' -or $choice -eq '3') {
                 Write-Host ""
                 if ($choice -eq '3') {
-                    Write-Host "  ⚠️  高风险操作：将删除旧容器、配置和状态卷数据（不可恢复）" -ForegroundColor Yellow
+                    Write-Host (_m "  ⚠️  高风险操作：将删除旧容器、配置和状态卷数据（不可恢复）" "  ⚠️  High-risk operation: old container, config, and state volume data will be deleted (irreversible)") -ForegroundColor Yellow
                 } elseif ($choice -eq '2') {
-                    Write-Host "  ⚠️  将删除并重建旧容器；状态卷中的 openclaw 相关数据保留，端口/HTTPS 会重新配置" -ForegroundColor Yellow
+                    Write-Host (_m "  ⚠️  将删除并重建旧容器；状态卷中的 openclaw 相关数据保留，端口/HTTPS 会重新配置" "  ⚠️  Old container will be deleted and rebuilt; openclaw data in state volume preserved, ports/HTTPS will be reconfigured") -ForegroundColor Yellow
                 } else {
-                    Write-Host "  ⚠️  将删除并重建旧容器；状态卷中的 openclaw 相关数据与配置均保留" -ForegroundColor Yellow
+                    Write-Host (_m "  ⚠️  将删除并重建旧容器；状态卷中的 openclaw 相关数据与配置均保留" "  ⚠️  Old container will be deleted and rebuilt; openclaw data and config in state volume preserved") -ForegroundColor Yellow
                 }
-                Write-Host "  请输入 YES 确认继续: " -NoNewline -ForegroundColor White
+                Write-Host (_m "  请输入 YES 确认继续: " "  Enter YES to confirm: ") -NoNewline -ForegroundColor White
                 $confirmReinstall = (Read-Host).Trim()
                 if ($confirmReinstall.ToUpperInvariant() -ne 'YES') {
                     Write-Host ""
-                    Write-Host "  未输入 YES，已取消本次操作。" -ForegroundColor Yellow
+                    Write-Host (_m "  未输入 YES，已取消本次操作。" "  YES not entered, operation canceled.") -ForegroundColor Yellow
                     return
                 }
             }
@@ -4000,19 +4008,19 @@ function Main {
                     $upgradeContainerName = ($runningContainers[0] -split '\|')[0]
                 } else {
                     Write-Host ""
-                    Write-Host "  请选择要升级的容器:" -ForegroundColor Cyan
+                    Write-Host (_m "  请选择要升级的容器:" "  Select the container to upgrade:") -ForegroundColor Cyan
                     $menuSource = if ($runningContainerMeta -and $runningContainerMeta.Count -gt 0) { $runningContainerMeta } else { $runningContainers }
                     for ($i = 0; $i -lt $menuSource.Count; $i++) {
                         if ($menuSource[$i] -is [hashtable]) {
-                            $mv = if ($menuSource[$i].VersionRaw) { $menuSource[$i].VersionRaw } else { "未知" }
-                            Write-Host "     [$($i + 1)] $($menuSource[$i].Name)  (版本: $mv  状态: $($menuSource[$i].Status)  端口: $($menuSource[$i].Ports))" -ForegroundColor White
+                            $mv = if ($menuSource[$i].VersionRaw) { $menuSource[$i].VersionRaw } else { (_m "未知" "Unknown") }
+                            Write-Host (_m "     [$($i + 1)] $($menuSource[$i].Name)  (版本: $mv  状态: $($menuSource[$i].Status)  端口: $($menuSource[$i].Ports))" "     [$($i + 1)] $($menuSource[$i].Name)  (Version: $mv  Status: $($menuSource[$i].Status)  Ports: $($menuSource[$i].Ports))") -ForegroundColor White
                         } else {
                             $parts = $menuSource[$i] -split '\|'
-                            Write-Host "     [$($i + 1)] $($parts[0])  (状态: $($parts[1])  端口: $($parts[2]))" -ForegroundColor White
+                            Write-Host (_m "     [$($i + 1)] $($parts[0])  (状态: $($parts[1])  端口: $($parts[2]))" "     [$($i + 1)] $($parts[0])  (Status: $($parts[1])  Ports: $($parts[2]))") -ForegroundColor White
                         }
                     }
                     Write-Host ""
-                    Write-Host "  输入选择 [默认1]: " -NoNewline -ForegroundColor White
+                    Write-Host (_m "  输入选择 [默认1]: " "  Enter choice [default 1]: ") -NoNewline -ForegroundColor White
                     $upChoice = (Read-Host).Trim()
                     if ($upChoice -match '^\d+$' -and [int]$upChoice -ge 1 -and [int]$upChoice -le $menuSource.Count) {
                         if ($menuSource[[int]$upChoice - 1] -is [hashtable]) {
@@ -4038,41 +4046,41 @@ function Main {
                 if ($upgradeConfigText) {
                     try {
                         $upgradeConfig = $upgradeConfigText | ConvertFrom-Json
-                        Write-OK "读取到旧容器配置: ${upgradeStateVolume}:/root/.openclaw/docker-config.json"
+                        Write-OK (_m "读取到旧容器配置: ${upgradeStateVolume}:/root/.openclaw/docker-config.json" "Loaded old container config: ${upgradeStateVolume}:/root/.openclaw/docker-config.json")
                     } catch {
-                        Write-Warn "读取旧配置失败，将重新配置"
+                        Write-Warn (_m "读取旧配置失败，将重新配置" "Failed to read old config, will reconfigure")
                     }
                 } else {
-                    Write-Warn "未找到可复用的旧配置文件，将进入部署配置交互"
+                    Write-Warn (_m "未找到可复用的旧配置文件，将进入部署配置交互" "No reusable old config found, entering deployment configuration")
                     Write-Log "Upgrade config not found in state volume: $upgradeStateVolume"
                 }
 
                 if ($upgradeConfig) {
                     # 显示旧配置让用户确认
                     Write-Host ""
-                    Write-Host "  当前配置（将沿用）:" -ForegroundColor Cyan
+                    Write-Host (_m "  当前配置（将沿用）:" "  Current configuration (will be retained):") -ForegroundColor Cyan
                     if ($upgradeConfig.domain) {
                         $isIpDom = ($upgradeConfig.domain -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
                         if ($isIpDom) {
-                            Write-Host "     IP: $($upgradeConfig.domain) (自签名 HTTPS)" -ForegroundColor White
+                            Write-Host (_m "     IP: $($upgradeConfig.domain) (自签名 HTTPS)" "     IP: $($upgradeConfig.domain) (self-signed HTTPS)") -ForegroundColor White
                         } else {
-                            Write-Host "     域名: $($upgradeConfig.domain)" -ForegroundColor White
+                            Write-Host (_m "     域名: $($upgradeConfig.domain)" "     Domain: $($upgradeConfig.domain)") -ForegroundColor White
                         }
-                        Write-Host "     证书: $(if ($upgradeConfig.cert_mode -eq 'internal') { '自签证书' } else { 'Let''s Encrypt' })" -ForegroundColor White
+                        Write-Host (_m "     证书: $(if ($upgradeConfig.cert_mode -eq 'internal') { '自签证书' } else { 'Let''s Encrypt' })" "     Certificate: $(if ($upgradeConfig.cert_mode -eq 'internal') { 'Self-signed certificate' } else { 'Let''s Encrypt' })") -ForegroundColor White
                         if ($upgradeConfig.cert_mode -eq 'letsencrypt') {
                             Write-Host "     HTTP: $($upgradeConfig.http_port)  HTTPS: $($upgradeConfig.https_port)" -ForegroundColor White
                         } else {
                             Write-Host "     HTTPS: $($upgradeConfig.https_port)" -ForegroundColor White
                         }
                     } else {
-                        Write-Host "     Gateway 端口: $($upgradeConfig.port)" -ForegroundColor White
-                        Write-Host "     Web面板端口: $($upgradeConfig.web_port)" -ForegroundColor White
+                        Write-Host (_m "     Gateway 端口: $($upgradeConfig.port)" "     Gateway port: $($upgradeConfig.port)") -ForegroundColor White
+                        Write-Host (_m "     Web面板端口: $($upgradeConfig.web_port)" "     Web Panel port: $($upgradeConfig.web_port)") -ForegroundColor White
                     }
-                    Write-Host "     状态卷: $upgradeStateVolume" -ForegroundColor White
+                    Write-Host (_m "     状态卷: $upgradeStateVolume" "     State volume: $upgradeStateVolume") -ForegroundColor White
                     $upgradeSshPort = if ($upgradeConfig.ssh_port) { $upgradeConfig.ssh_port } else { 2222 }
-                    Write-Host "     SSH 端口: $upgradeSshPort" -ForegroundColor White
+                    Write-Host (_m "     SSH 端口: $upgradeSshPort" "     SSH port: $upgradeSshPort") -ForegroundColor White
                     if ($upgradeConfig.browser_bridge_enabled) {
-                        Write-Host "     浏览器控制: 已开启（通过 HTTPS/WSS）" -ForegroundColor White
+                        Write-Host (_m "     浏览器控制: 已开启（通过 HTTPS/WSS）" "     Browser control: enabled (via HTTPS/WSS)") -ForegroundColor White
                     }
                     Write-Host ""
 
@@ -4125,12 +4133,12 @@ function Main {
                 }
 
                 # 停止并删除旧容器
-                Write-Info "停止并删除: $containerName"
+                Write-Info (_m "停止并删除: $containerName" "Stopping and deleting: $containerName")
                 & docker rm -f $containerName 2>&1 | Out-Null
                 Start-Sleep -Seconds 2
-                Write-OK "旧容器已删除"
-                Write-Info "💡 状态卷 ($upgradeStateVolume) 不会被删除，原有 openclaw 相关数据与配置均保留"
-                Write-Info "   如需彻底删除数据，可手动执行: docker volume rm $upgradeStateVolume"
+                Write-OK (_m "旧容器已删除" "Old container deleted")
+                Write-Info (_m "💡 状态卷 ($upgradeStateVolume) 不会被删除，原有 openclaw 相关数据与配置均保留" "💡 State volume ($upgradeStateVolume) will not be deleted; existing openclaw data and config preserved")
+                Write-Info (_m "   如需彻底删除数据，可手动执行: docker volume rm $upgradeStateVolume" "   To completely delete data, run manually: docker volume rm $upgradeStateVolume")
             } elseif ($choice -eq '2') {
                 # -- 重建模式：删除旧容器但保留状态卷，重新配置端口/HTTPS --
                 $rebuildContainerName = ""
@@ -4140,19 +4148,19 @@ function Main {
                     $rebuildContainerName = ($runningContainers[0] -split '\|')[0]
                 } else {
                     Write-Host ""
-                    Write-Host "  请选择要重建的容器:" -ForegroundColor Cyan
+                    Write-Host (_m "  请选择要重建的容器:" "  Select the container to rebuild:") -ForegroundColor Cyan
                     $menuSource = if ($runningContainerMeta -and $runningContainerMeta.Count -gt 0) { $runningContainerMeta } else { $runningContainers }
                     for ($i = 0; $i -lt $menuSource.Count; $i++) {
                         if ($menuSource[$i] -is [hashtable]) {
-                            $mv = if ($menuSource[$i].VersionRaw) { $menuSource[$i].VersionRaw } else { "未知" }
-                            Write-Host "     [$($i + 1)] $($menuSource[$i].Name)  (版本: $mv  状态: $($menuSource[$i].Status)  端口: $($menuSource[$i].Ports))" -ForegroundColor White
+                            $mv = if ($menuSource[$i].VersionRaw) { $menuSource[$i].VersionRaw } else { (_m "未知" "Unknown") }
+                            Write-Host (_m "     [$($i + 1)] $($menuSource[$i].Name)  (版本: $mv  状态: $($menuSource[$i].Status)  端口: $($menuSource[$i].Ports))" "     [$($i + 1)] $($menuSource[$i].Name)  (Version: $mv  Status: $($menuSource[$i].Status)  Ports: $($menuSource[$i].Ports))") -ForegroundColor White
                         } else {
                             $parts = $menuSource[$i] -split '\|'
-                            Write-Host "     [$($i + 1)] $($parts[0])  (状态: $($parts[1])  端口: $($parts[2]))" -ForegroundColor White
+                            Write-Host (_m "     [$($i + 1)] $($parts[0])  (状态: $($parts[1])  端口: $($parts[2]))" "     [$($i + 1)] $($parts[0])  (Status: $($parts[1])  Ports: $($parts[2]))") -ForegroundColor White
                         }
                     }
                     Write-Host ""
-                    Write-Host "  输入选择 [默认1]: " -NoNewline -ForegroundColor White
+                    Write-Host (_m "  输入选择 [默认1]: " "  Enter choice [default 1]: ") -NoNewline -ForegroundColor White
                     $rbChoice = (Read-Host).Trim()
                     if ($rbChoice -match '^\d+$' -and [int]$rbChoice -ge 1 -and [int]$rbChoice -le $menuSource.Count) {
                         if ($menuSource[[int]$rbChoice - 1] -is [hashtable]) {
@@ -4169,46 +4177,46 @@ function Main {
                     }
                 }
                 $containerName = $rebuildContainerName
-                Write-Info "停止并删除: $containerName"
+                Write-Info (_m "停止并删除: $containerName" "Stopping and deleting: $containerName")
                 & docker rm -f $containerName 2>&1 | Out-Null
                 Start-Sleep -Seconds 2
-                Write-OK "旧容器已删除"
+                Write-OK (_m "旧容器已删除" "Old container deleted")
                 $rbStateVolume = Get-StateVolumeName -ContainerName $containerName
-                Write-Info "💡 状态卷 ($rbStateVolume) 不会被删除，容器内 openclaw 相关数据保留"
-                Write-Info "   端口/HTTPS 将重新配置"
+                Write-Info (_m "💡 状态卷 ($rbStateVolume) 不会被删除，容器内 openclaw 相关数据保留" "💡 State volume ($rbStateVolume) will not be deleted; openclaw data in container preserved")
+                Write-Info (_m "   端口/HTTPS 将重新配置" "   Ports/HTTPS will be reconfigured")
             } elseif ($choice -eq '3') {
                 # -- 全新重建模式：删除旧容器 + 状态卷，重新配置端口/HTTPS --
                 if ($runningContainers.Count -eq 1) {
                     # 只有一个，直接删除
                     $rcName = ($runningContainers[0] -split '\|')[0]
-                    Write-Info "停止并删除: $rcName"
+                    Write-Info (_m "停止并删除: $rcName" "Stopping and deleting: $rcName")
                     & docker rm -f $rcName 2>&1 | Out-Null
                     $containerName = $rcName   # 复用原容器名
                 } else {
                     # 多个容器，列出让用户选择
                     Write-Host ""
-                    Write-Host "  请选择要删除的容器:" -ForegroundColor Cyan
+                    Write-Host (_m "  请选择要删除的容器:" "  Select the container(s) to delete:") -ForegroundColor Cyan
                     for ($i = 0; $i -lt $runningContainers.Count; $i++) {
                         $parts = $runningContainers[$i] -split '\|'
-                        Write-Host "     [$($i + 1)] $($parts[0])  (状态: $($parts[1])  端口: $($parts[2]))" -ForegroundColor White
+                        Write-Host (_m "     [$($i + 1)] $($parts[0])  (状态: $($parts[1])  端口: $($parts[2]))" "     [$($i + 1)] $($parts[0])  (Status: $($parts[1])  Ports: $($parts[2]))") -ForegroundColor White
                     }
-                    Write-Host "     [A] 全部删除" -ForegroundColor White
+                    Write-Host (_m "     [A] 全部删除" "     [A] Delete all") -ForegroundColor White
                     Write-Host ""
-                    Write-Host "  输入选择 [编号/A，默认A]: " -NoNewline -ForegroundColor White
+                    Write-Host (_m "  输入选择 [编号/A，默认A]: " "  Enter choice [number/A, default A]: ") -NoNewline -ForegroundColor White
                     $delChoice = (Read-Host).Trim().ToUpper()
 
                     if ($delChoice -match '^\d+$' -and [int]$delChoice -ge 1 -and [int]$delChoice -le $runningContainers.Count) {
                         # 删除指定容器
                         $selIdx = [int]$delChoice - 1
                         $rcName = ($runningContainers[$selIdx] -split '\|')[0]
-                        Write-Info "停止并删除: $rcName"
+                        Write-Info (_m "停止并删除: $rcName" "Stopping and deleting: $rcName")
                         & docker rm -f $rcName 2>&1 | Out-Null
                         $containerName = $rcName   # 复用被删除容器的名字
                     } else {
                         # 全部删除
                         foreach ($rc in $runningContainers) {
                             $rcName = ($rc -split '\|')[0]
-                            Write-Info "停止并删除: $rcName"
+                            Write-Info (_m "停止并删除: $rcName" "Stopping and deleting: $rcName")
                             & docker rm -f $rcName 2>&1 | Out-Null
                         }
                         # 复用默认容器名 clawnook
@@ -4216,13 +4224,13 @@ function Main {
                     }
                 }
                 Start-Sleep -Seconds 2  # 等待端口释放
-                Write-OK "旧容器已删除"
+                Write-OK (_m "旧容器已删除" "Old container deleted")
                 $delStateVolume = Get-StateVolumeName -ContainerName $containerName
                 try {
                     & docker volume rm -f $delStateVolume 2>$null | Out-Null
-                    Write-Info "已删除状态卷: $delStateVolume"
+                    Write-Info (_m "已删除状态卷: $delStateVolume" "Deleted state volume: $delStateVolume")
                 } catch {
-                    Write-Warn "删除状态卷失败: $delStateVolume"
+                    Write-Warn (_m "删除状态卷失败: $delStateVolume" "Failed to delete state volume: $delStateVolume")
                 }
 
                 $delHomeDataName = "home-data"
@@ -4232,7 +4240,7 @@ function Main {
                 # 兼容清理：旧版本可能残留宿主机 home-data 目录
                 $delHomeDataPath = Join-Path $homeBaseDir $delHomeDataName
                 if (Test-Path $delHomeDataPath) {
-                    try { Remove-Item $delHomeDataPath -Recurse -Force -ErrorAction Stop; Write-Info "已删除遗留旧数据目录: $delHomeDataPath" } catch { Write-Warn "删除遗留旧数据目录失败: $delHomeDataPath" }
+                    try { Remove-Item $delHomeDataPath -Recurse -Force -ErrorAction Stop; Write-Info (_m "已删除遗留旧数据目录: $delHomeDataPath" "Deleted legacy data directory: $delHomeDataPath") } catch { Write-Warn (_m "删除遗留旧数据目录失败: $delHomeDataPath" "Failed to delete legacy data directory: $delHomeDataPath") }
                 }
             }
         }
@@ -4241,7 +4249,7 @@ function Main {
 
         # Interactive port/domain configuration (upgrade mode skips this)
         if ($script:upgradeMode -and $deployConfig) {
-            Write-OK "升级模式：沿用旧容器配置，跳过端口/域名配置"
+            Write-OK (_m "升级模式：沿用旧容器配置，跳过端口/域名配置" "Upgrade mode: reusing old container config, skipping port/domain configuration")
         } else {
             $deployConfig = Get-DeployConfig
             $script:actualGatewayPort = $deployConfig.GatewayPort
@@ -4255,7 +4263,7 @@ function Main {
             $script:browserBridgeEnabled = $deployConfig.BrowserBridgeEnabled
         }
 
-        Write-Info "正在准备镜像..."
+        Write-Info (_m "正在准备镜像..." "Preparing image...")
         $launched = $false
         try {
             $pushedLocal = $false
@@ -4272,15 +4280,15 @@ function Main {
             Write-Host ""
             $script:imageEdition = "lite"
             $assetName = "clawnook-image-lite.tar.gz"
-            Write-Info "发布仅保留 Lite 镜像，已自动选择 lite"
+            Write-Info (_m "发布仅保留 Lite 镜像，已自动选择 lite" "Only Lite image available in release, auto-selected lite")
             if ($latestReleaseTag) {
-                Write-Info "远端目标版本: $latestReleaseTag ($script:imageEdition)"
+                Write-Info (_m "远端目标版本: $latestReleaseTag ($script:imageEdition)" "Remote target version: $latestReleaseTag ($script:imageEdition)")
             }
 
             # -- 尝试 0: 检查镜像是否已存在 --
             $existingImage = & docker image inspect clawnook 2>$null
             if ($LASTEXITCODE -eq 0) {
-                Write-OK "检测到本地镜像 clawnook"
+                Write-OK (_m "检测到本地镜像 clawnook" "Local image clawnook detected")
                 $localImageReleaseTag = ""
                 $tagStateVolumeName = Get-StateVolumeName -ContainerName $containerName
 
@@ -4290,7 +4298,7 @@ function Main {
                     $localTags = (& docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -join ';'
                     if ($localTags -match 'clawnook:lite') { $localImageEdition = 'lite' }
                     elseif ($localTags -match 'clawnook:latest') { $localImageEdition = 'latest' }
-                    if ($localTags) { Write-Info "本地镜像标签: $localTags (detected edition: $localImageEdition)" }
+                    if ($localTags) { Write-Info (_m "本地镜像标签: $localTags (detected edition: $localImageEdition)" "Local image tags: $localTags (detected edition: $localImageEdition)") }
                 } catch { }
 
                 # 若未记录本地版本标记，尝试从本地镜像 tag 反推出 release 版本
@@ -4301,7 +4309,7 @@ function Main {
                             $derived = ($Matches[1] -replace '(-lite)$','')
                             if ($derived) {
                                 $localImageReleaseTag = $derived
-                                Write-Info "根据当前主镜像标签推断版本: $localImageReleaseTag"
+                                Write-Info (_m "根据当前主镜像标签推断版本: $localImageReleaseTag" "Inferred version from primary image tag: $localImageReleaseTag")
                             }
                         }
                     } catch { }
@@ -4313,12 +4321,12 @@ function Main {
                 $currentImageId = (& docker image inspect clawnook --format '{{.Id}}' 2>$null)
                 if ($currentImageId -and $localImageDigest) {
                     if ($currentImageId -eq $localImageDigest) {
-                        Write-Info "镜像 digest 校验通过"
+                        Write-Info (_m "镜像 digest 校验通过" "Image digest verification passed")
                     } else {
-                        Write-Warn "镜像 digest 不一致 — 本地镜像可能已被修改或重建"
+                        Write-Warn (_m "镜像 digest 不一致 — 本地镜像可能已被修改或重建" "Image digest mismatch — local image may have been modified or rebuilt")
                     }
                 } elseif ($currentImageId) {
-                    Write-Info "镜像 ID: $($currentImageId.Substring(0, [Math]::Min(19, $currentImageId.Length)))"
+                    Write-Info (_m "镜像 ID: $($currentImageId.Substring(0, [Math]::Min(19, $currentImageId.Length)))" "Image ID: $($currentImageId.Substring(0, [Math]::Min(19, $currentImageId.Length)))")
                 }
 
                 $effectiveLatestTag = $latestReleaseTag
@@ -4335,31 +4343,31 @@ function Main {
                 $refreshReason = ""
                 if ($effectiveLatestTag -and ($localImageReleaseTag -ne $effectiveLatestTag)) {
                     $shouldRefreshImage = $true
-                    $refreshReason = "远端最新: $effectiveLatestTag，本地: $(if ($localImageReleaseTag) { $localImageReleaseTag } else { '未知' })"
+                    $refreshReason = (_m "远端最新: $effectiveLatestTag，本地: $(if ($localImageReleaseTag) { $localImageReleaseTag } else { '未知' })" "Remote latest: $effectiveLatestTag, Local: $(if ($localImageReleaseTag) { $localImageReleaseTag } else { 'Unknown' })")
                 }
                 if ($localImageEdition -and $localImageEdition -ne 'unknown' -and $localImageEdition -ne $script:imageEdition) {
                     $shouldRefreshImage = $true
-                    $refreshReason = "本地镜像版本类型: $localImageEdition，与所选 $($script:imageEdition) 不一致"
+                    $refreshReason = (_m "本地镜像版本类型: $localImageEdition，与所选 $($script:imageEdition) 不一致" "Local image edition: $localImageEdition, does not match selected $($script:imageEdition)")
                 }
                 if ($localImageDigest -and $currentImageId -and $currentImageId -ne $localImageDigest) {
                     $shouldRefreshImage = $true
-                    $refreshReason = "本地镜像 digest 与记录不一致"
+                    $refreshReason = (_m "本地镜像 digest 与记录不一致" "Local image digest does not match recorded value")
                 }
 
                 if ($shouldRefreshImage) {
                     $forceRefreshImage = $true
-                    if ($refreshReason) { Write-Info "自动判定需要刷新镜像：$refreshReason" }
+                    if ($refreshReason) { Write-Info (_m "自动判定需要刷新镜像：$refreshReason" "Auto-determined image refresh needed: $refreshReason") }
                     & docker rmi -f clawnook 2>&1 | Out-Null
                     Start-Sleep -Milliseconds 500
                 } else {
-                    Write-OK "自动判定使用本地镜像（版本一致），跳过下载/构建"
+                    Write-OK (_m "自动判定使用本地镜像（版本一致），跳过下载/构建" "Auto-determined to use local image (version matches), skipping download/build")
                     $imageReady = $true
                 }
             }
 
             # -- 尝试 1: 下载预构建镜像 tar.gz（分块断点续传） --
             if (-not $imageReady) {
-            Write-Info "检查 Release 预构建镜像..."
+            Write-Info (_m "检查 Release 预构建镜像..." "Checking Release prebuilt image...")
 
             try {
                 $imageTar = Join-Path $TMP_DIR $assetName
@@ -4377,12 +4385,12 @@ function Main {
                         $imageUrl = $imageAsset.browser_download_url
                         $expectedSize = [long]$imageAsset.size
                         $tagText = ($releaseInfo.tag_name | ForEach-Object { "$_" }).Trim()
-                        Write-Info "GitHub API 返回: $tagText, $([math]::Round($expectedSize / 1MB, 1))MB"
+                        Write-Info (_m "GitHub API 返回: $tagText, $([math]::Round($expectedSize / 1MB, 1))MB" "GitHub API returned: $tagText, $([math]::Round($expectedSize / 1MB, 1))MB")
                     }
                 } catch {
                     # 很多网络环境 api.github.com 可能被拦；后面会走直链兜底
                     Write-Log "Release API fetch failed: $($_.Exception.Message)"
-                    Write-Info "GitHub API 不可用，将通过代理镜像下载..."
+                    Write-Info (_m "GitHub API 不可用，将通过代理镜像下载..." "GitHub API unavailable, downloading via proxy...")
                 }
 
                 # 构建下载源（API URL 优先；否则用 github.com 的 latest/download 直链）
@@ -4416,10 +4424,10 @@ function Main {
                 $downloadUrls += $baseUrls
 
                 if ($expectedSize -le 0) {
-                    Write-Info "检测文件大小 (探测 $($downloadUrls.Count) 个下载源)..."
+                    Write-Info (_m "检测文件大小 (探测 $($downloadUrls.Count) 个下载源)..." "Detecting file size (probing $($downloadUrls.Count) download sources)...")
                     $expectedSize = Get-RemoteFileSize -Urls $downloadUrls
                     if ($expectedSize -gt 0) {
-                        Write-Info "文件大小: $([math]::Round($expectedSize / 1MB, 1))MB (通过代理探测)"
+                        Write-Info (_m "文件大小: $([math]::Round($expectedSize / 1MB, 1))MB (通过代理探测)" "File size: $([math]::Round($expectedSize / 1MB, 1))MB (detected via proxy)")
                     }
                 }
 
@@ -4434,16 +4442,16 @@ function Main {
                     $existingSize = (Get-Item $imageTar).Length
                     if ($expectedSize -gt 0 -and [math]::Abs($existingSize - $expectedSize) -lt 1MB) {
                         if ($tagText -and $diskTag -and $diskTag -eq "$tagText|$script:imageEdition") {
-                            Write-OK "检测到已下载的镜像文件 ($([math]::Round($existingSize / 1MB, 1))MB)，版本匹配，跳过下载"
+                            Write-OK (_m "检测到已下载的镜像文件 ($([math]::Round($existingSize / 1MB, 1))MB)，版本匹配，跳过下载" "Downloaded image file detected ($([math]::Round($existingSize / 1MB, 1))MB), version matches, skipping download")
                             $downloadOK = $true
                         } elseif ($tagText -and $diskTag -and $diskTag -ne "$tagText|$script:imageEdition") {
-                            Write-Warn "本地镜像文件版本 ($diskTag) 与远端 ($tagText|$script:imageEdition) 不一致，重新下载"
+                            Write-Warn (_m "本地镜像文件版本 ($diskTag) 与远端 ($tagText|$script:imageEdition) 不一致，重新下载" "Local image file version ($diskTag) does not match remote ($tagText|$script:imageEdition), re-downloading")
                             Remove-Item $imageTar -Force -ErrorAction SilentlyContinue
                             if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
                             $downloadOK = $false
                         } else {
                             # 文件大小匹配但缺少 tag 元数据：无法确认版本，必须重新下载
-                            Write-Warn "检测到已下载镜像缺少版本元数据，无法确认版本，重新下载"
+                            Write-Warn (_m "检测到已下载镜像缺少版本元数据，无法确认版本，重新下载" "Downloaded image missing version metadata, cannot confirm version, re-downloading")
                             Remove-Item $imageTar -Force -ErrorAction SilentlyContinue
                             if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
                             $downloadOK = $false
@@ -4451,15 +4459,15 @@ function Main {
                     } elseif ($expectedSize -le 0 -and $existingSize -gt 500MB) {
                         # 无法获取远端大小时，若本地文件 > 500MB 也认为可能是完整的
                         if ($diskTag -and $tagText -and $diskTag -ne "$tagText|$script:imageEdition") {
-                            Write-Warn "本地镜像文件版本 ($diskTag) 与远端 ($tagText|$script:imageEdition) 不一致，重新下载"
+                            Write-Warn (_m "本地镜像文件版本 ($diskTag) 与远端 ($tagText|$script:imageEdition) 不一致，重新下载" "Local image file version ($diskTag) does not match remote ($tagText|$script:imageEdition), re-downloading")
                             Remove-Item $imageTar -Force -ErrorAction SilentlyContinue
                             if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
                         } elseif ($diskTag -and $tagText -and $diskTag -eq "$tagText|$script:imageEdition") {
-                            Write-OK "检测到已下载的镜像文件，版本匹配，跳过下载"
+                            Write-OK (_m "检测到已下载的镜像文件，版本匹配，跳过下载" "Downloaded image file detected, version matches, skipping download")
                             $downloadOK = $true
                         } else {
                             # 缺少版本元数据：无法确认版本，必须重新下载
-                            Write-Warn "检测到已下载镜像缺少版本元数据，无法确认版本，重新下载"
+                            Write-Warn (_m "检测到已下载镜像缺少版本元数据，无法确认版本，重新下载" "Downloaded image missing version metadata, cannot confirm version, re-downloading")
                             Remove-Item $imageTar -Force -ErrorAction SilentlyContinue
                             if (Test-Path $tagFile) { Remove-Item $tagFile -Force -ErrorAction SilentlyContinue }
                         }
@@ -4467,11 +4475,11 @@ function Main {
                 }
 
                 if (-not $downloadOK -and $expectedSize -le 0) {
-                    Write-Warn "无法获取 Release 镜像大小（可能网络拦截），将逐个尝试直链下载..."
+                    Write-Warn (_m "无法获取 Release 镜像大小（可能网络拦截），将逐个尝试直链下载..." "Cannot get Release image size (possibly blocked by network), trying direct download links...")
                     foreach ($u in $downloadUrls) {
                         try {
                             $shortUrl = if ($u.Length -gt 80) { $u.Substring(0, 77) + "..." } else { $u }
-                            Write-Info "尝试: $shortUrl"
+                            Write-Info (_m "尝试: $shortUrl" "Trying: $shortUrl")
                             if (Test-Path $imageTar) { Remove-Item $imageTar -Force -ErrorAction SilentlyContinue }
                             # --connect-timeout 15: 连接15秒内无响应则放弃; --max-time 600: 单次最多10分钟
                             & curl.exe -L --fail --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 3 --progress-bar -o $imageTar $u 2>&1 | ForEach-Object {
@@ -4482,19 +4490,19 @@ function Main {
                                 # 写入 tag 元数据以便下次比较
                                 try { "$tagText|$script:imageEdition" | Set-Content -Path "$imageTar.tag" -Force -ErrorAction SilentlyContinue } catch { }
                                 $downloadOK = $true
-                                Write-OK "直链下载成功"
+                                Write-OK (_m "直链下载成功" "Direct download succeeded")
                                 break
                             } else {
-                                Write-Info "  → 下载不完整或被拦截，换下一个源..."
+                                Write-Info (_m "  → 下载不完整或被拦截，换下一个源..." "  → Download incomplete or blocked, switching to next source...")
                             }
                         } catch {
-                            Write-Info "  → 连接失败，换下一个源..."
+                            Write-Info (_m "  → 连接失败，换下一个源..." "  → Connection failed, switching to next source...")
                         }
                     }
                 } elseif (-not $downloadOK) {
                     $imageSizeMB = [math]::Round($expectedSize / 1MB, 1)
-                    Write-Info "发现预构建镜像 ($tagText, ${imageSizeMB}MB)"
-                    Write-Info "正在下载... (无需从 Docker Hub 拉取)"
+                    Write-Info (_m "发现预构建镜像 ($tagText, ${imageSizeMB}MB)" "Found prebuilt image ($tagText, ${imageSizeMB}MB)")
+                    Write-Info (_m "正在下载... (无需从 Docker Hub 拉取)" "Downloading... (no Docker Hub pull needed)")
 
                     # 多线程分块下载 — 8线程并行，每块 2MB，每块最多重试20次
                     $downloadOK = Download-Robust `
@@ -4506,7 +4514,7 @@ function Main {
                         -RetryPerChunk 20
 
                     if (-not $downloadOK) {
-                        Write-Warn "首轮 8 线程下载未完成，立即按原策略重试（仅补失败块，8线程）..."
+                        Write-Warn (_m "首轮 8 线程下载未完成，立即按原策略重试（仅补失败块，8线程）..." "First round 8-thread download incomplete, retrying with same strategy (retry failed chunks only, 8 threads)...")
                         $downloadOK = Download-Robust `
                             -Urls $downloadUrls `
                             -OutFile $imageTar `
@@ -4519,12 +4527,12 @@ function Main {
 
                 if ($downloadOK) {
                     try { "$tagText|$script:imageEdition" | Set-Content -Path "$imageTar.tag" -Force -ErrorAction SilentlyContinue } catch { }
-                        Write-OK "镜像下载完成"
-                        $loadSizeText = "未知大小"
+                        Write-OK (_m "镜像下载完成" "Image download complete")
+                        $loadSizeText = (_m "未知大小" "Unknown size")
                         if (Test-Path $imageTar) {
                             $loadSizeText = "$( [math]::Round((Get-Item $imageTar).Length / 1MB, 1) )MB"
                         }
-                        Write-Info "正在加载镜像到 Docker...（$loadSizeText，通常需 1-5 分钟，请耐心等待）"
+                        Write-Info (_m "正在加载镜像到 Docker...（$loadSizeText，通常需 1-5 分钟，请耐心等待）" "Loading image into Docker... ($loadSizeText, usually takes 1-5 minutes, please wait)")
 
                         # 清理可能残留的 docker load 进程（上次 Ctrl+C 后遗留的 Start-Job 子进程）
                         try {
@@ -4559,14 +4567,14 @@ function Main {
                             $min = [math]::Floor($elapsed / 60)
                             $sec = $elapsed % 60
                             $spinChar = $spinner[$si % $spinner.Count]
-                            Write-Host "`r  $spinChar 加载中... 已耗时 ${min}分${sec}秒    " -NoNewline -ForegroundColor Cyan
+                            Write-Host (_m "`r  $spinChar 加载中... 已耗时 ${min}分${sec}秒    " "`r  $spinChar Loading... elapsed ${min}m${sec}s    ") -NoNewline -ForegroundColor Cyan
                             if (-not $slowLoadHintShown -and $elapsed -ge 300) {
                                 $slowLoadHintShown = $true
                                 Write-Host ""
-                                Write-Warn "镜像加载已超过 5 分钟，可能存在磁盘/杀软扫描/后台任务竞争" 
-                                Write-Host "     诊断建议: docker system df" -ForegroundColor DarkGray
-                                Write-Host "     诊断建议: Get-Process docker" -ForegroundColor DarkGray
-                                Write-Host "     若长时间无进展，可重启 Docker Desktop 后重试" -ForegroundColor DarkGray
+                                Write-Warn (_m "镜像加载已超过 5 分钟，可能存在磁盘/杀软扫描/后台任务竞争" "Image loading exceeded 5 minutes, possible disk/antivirus scan/background task contention") 
+                                Write-Host (_m "     诊断建议: docker system df" "     Diagnostics: docker system df") -ForegroundColor DarkGray
+                                Write-Host (_m "     诊断建议: Get-Process docker" "     Diagnostics: Get-Process docker") -ForegroundColor DarkGray
+                                Write-Host (_m "     若长时间无进展，可重启 Docker Desktop 后重试" "     If no progress for a long time, restart Docker Desktop and retry") -ForegroundColor DarkGray
                             }
                             $si++
                             Start-Sleep -Milliseconds 200
@@ -4574,7 +4582,7 @@ function Main {
                         } finally {
                             # Ctrl+C 时确保清理 job 及其子进程
                             if ($loadJob.State -eq 'Running') {
-                                Write-Host "`n  正在清理后台加载进程..." -ForegroundColor Yellow
+                                Write-Host (_m "`n  正在清理后台加载进程..." "`n  Cleaning up background loading process...") -ForegroundColor Yellow
                                 Stop-Job $loadJob -ErrorAction SilentlyContinue
                             }
                         }
@@ -4615,7 +4623,7 @@ function Main {
                             }
                         }
                         if ($sawLiteLoaded) {
-                            Write-Info "检测到已加载 lite 镜像，执行强化 tag 修复（clawnook:lite -> clawnook:latest）..."
+                            Write-Info (_m "检测到已加载 lite 镜像，执行强化 tag 修复（clawnook:lite -> clawnook:latest）..." "Loaded lite image detected, performing tag fix (clawnook:lite -> clawnook:latest)...")
                             for ($ti = 1; $ti -le 3; $ti++) {
                                 try { & docker tag "clawnook:lite" "clawnook:latest" 2>$null } catch { }
                                 Start-Sleep -Milliseconds 300
@@ -4660,7 +4668,7 @@ function Main {
                             Remove-NewDanglingImages -BeforeIds $danglingBeforeLoad
                             $totalSec = [math]::Floor($loadTimer.Elapsed.TotalSeconds)
                             $imageReady = $true
-                            Write-OK "预构建镜像加载完成 (耗时 ${totalSec} 秒)"
+                            Write-OK (_m "预构建镜像加载完成 (耗时 ${totalSec} 秒)" "Prebuilt image loaded (elapsed ${totalSec} seconds)")
                             # 保存镜像 digest 用于完整性校验
                             try {
                                 $newImageId = (& docker image inspect clawnook:latest --format '{{.Id}}' 2>$null)
@@ -4670,17 +4678,17 @@ function Main {
                             } catch { }
                         } else {
                             Remove-NewDanglingImages -BeforeIds $danglingBeforeLoad
-                            Write-Warn "docker load 失败，继续尝试其他方式..."
-                            Write-Info "镜像文件已保留: $imageTar（下次运行可直接加载，无需重新下载）"
+                            Write-Warn (_m "docker load 失败，继续尝试其他方式..." "docker load failed, trying other methods...")
+                            Write-Info (_m "镜像文件已保留: $imageTar（下次运行可直接加载，无需重新下载）" "Image file retained: $imageTar (can be loaded directly next time, no re-download needed)")
                         }
                         # 镜像文件始终保留在 tmp 目录（便于重试和排查）
                 } else {
-                    Write-Warn "Release 镜像下载失败，继续尝试其他方式..."
+                    Write-Warn (_m "Release 镜像下载失败，继续尝试其他方式..." "Release image download failed, trying other methods...")
                     # 若是分块下载失败，会保留部分下载的文件以便续传（下次运行自动恢复）
                 }
             } catch {
                 Write-Log "Pre-built image download failed: $_"
-                Write-Info "Release 镜像获取失败，继续尝试其他方式..."
+                Write-Info (_m "Release 镜像获取失败，继续尝试其他方式..." "Release image acquisition failed, trying other methods...")
             }
             }  # end if (-not $imageReady) for download
 
@@ -4701,7 +4709,7 @@ function Main {
                 foreach ($tag in $ghcrTags) {
                     if ($imageReady) { break }
                     $ghcrImage = "ghcr.io/${GITHUB_REPO}:${tag}"
-                    Write-Info "尝试从 GHCR 拉取镜像: $ghcrImage ..."
+                    Write-Info (_m "尝试从 GHCR 拉取镜像: $ghcrImage ..." "Trying to pull image from GHCR: $ghcrImage ...")
                     for ($attempt = 1; $attempt -le 2 -and -not $imageReady; $attempt++) {
                         try {
                             $pullOutput = & docker pull $ghcrImage 2>&1
@@ -4719,7 +4727,7 @@ function Main {
                                     $tagCheck = & docker image inspect "clawnook:latest" 2>$null
                                     if ($LASTEXITCODE -eq 0) {
                                         $imageReady = $true
-                                        Write-OK "GHCR 镜像拉取成功（tag: $tag）"
+                                        Write-OK (_m "GHCR 镜像拉取成功（tag: $tag）" "GHCR image pull succeeded (tag: $tag)")
                                         try {
                                             $pulledId = (& docker image inspect clawnook --format '{{.Id}}' 2>$null)
                                             if ($pulledId) { $script:loadedImageDigest = $pulledId }
@@ -4728,7 +4736,7 @@ function Main {
                                 }
                             }
                             if (-not $imageReady -and $attempt -lt 2) {
-                                Write-Warn "GHCR 拉取失败（tag: $tag，第 $attempt 次），2 秒后重试..."
+                                Write-Warn (_m "GHCR 拉取失败（tag: $tag，第 $attempt 次），2 秒后重试..." "GHCR pull failed (tag: $tag, attempt $attempt), retrying in 2 seconds...")
                                 Start-Sleep -Seconds 2
                             }
                         } catch {
@@ -4739,14 +4747,14 @@ function Main {
                 }
 
                 if (-not $imageReady) {
-                    Write-Warn "GHCR 多标签拉取均失败，继续尝试本地构建..."
+                    Write-Warn (_m "GHCR 多标签拉取均失败，继续尝试本地构建..." "All GHCR tag pulls failed, trying local build...")
                 }
             }
 
             # -- 尝试 3: 本地构建 (fallback) --
             # 如果处于 explicit ImageOnly 模式则跳过本地构建
             if (-not $imageReady -and -not ($ImageOnly -and $ImageOnlyExplicit)) {
-                Write-Info "正在本地构建镜像...（首次约需 5-10 分钟）"
+                Write-Info (_m "正在本地构建镜像...（首次约需 5-10 分钟）" "Building image locally... (first time may take 5-10 minutes)")
                 $buildOK = $false
                 $dockerfilePath = Join-Path $localDeployDir "Dockerfile.lite"
                 $originalDockerfile = Get-Content $dockerfilePath -Raw
@@ -4759,10 +4767,10 @@ function Main {
 
                 foreach ($prefix in $mirrorPrefixes) {
                     if ($prefix) {
-                        Write-Warn "Docker Hub 连接失败，尝试镜像源: $prefix"
+                        Write-Warn (_m "Docker Hub 连接失败，尝试镜像源: $prefix" "Docker Hub connection failed, trying mirror: $prefix")
                         $mirroredContent = $originalDockerfile -replace '^FROM ubuntu:', "FROM ${prefix}ubuntu:"
                         $mirroredContent | Set-Content $dockerfilePath -Force -NoNewline
-                        Write-Info "已修改 Dockerfile.lite 使用镜像源"
+                        Write-Info (_m "已修改 Dockerfile.lite 使用镜像源" "Modified Dockerfile.lite to use mirror")
                     }
 
                     # 重要: 不能用 | ForEach-Object，PowerShell 5.1 中 pipeline 会导致 $LASTEXITCODE 不可靠
@@ -4785,7 +4793,7 @@ function Main {
 
                 if (-not $buildOK) {
                     $originalDockerfile | Set-Content $dockerfilePath -Force -NoNewline
-                    throw "镜像获取失败 — GHCR拉取、下载和本地构建均不可用。请检查网络连接后重试。"
+                    throw (_m "镜像获取失败 — GHCR拉取、下载和本地构建均不可用。请检查网络连接后重试。" "Image acquisition failed — GHCR pull, download, and local build all unavailable. Please check network connection and retry.")
                 }
                 $imageReady = $true
                 # 保存本地构建的镜像 digest
@@ -4796,13 +4804,13 @@ function Main {
                     }
                 } catch { }
             }
-            Write-OK "镜像准备完成"
+            Write-OK (_m "镜像准备完成" "Image preparation complete")
             Write-Log "Image ready. imageReady=$imageReady. Proceeding to pre-run checks."
 
             # 启动前强校验：确保 clawnook:latest 标签真实存在
             $preRunImageCheck = & docker image inspect clawnook 2>$null
             if ($LASTEXITCODE -ne 0) {
-                Write-Warn "镜像标签 clawnook:latest 缺失，尝试自动修复..."
+                Write-Warn (_m "镜像标签 clawnook:latest 缺失，尝试自动修复..." "Image tag clawnook:latest missing, attempting auto-repair...")
                 Write-Log "Pre-run image check FAILED. Attempting repair."
 
                 # 优先把已存在的 GHCR 镜像重新 tag 为 clawnook:latest
@@ -4821,7 +4829,7 @@ function Main {
                     # 仍缺失时，直接拉取 GHCR 并 tag
                     $repairTag = if ($latestReleaseTag) { $latestReleaseTag } else { "latest" }
                     $repairImage = "ghcr.io/${GITHUB_REPO}:${repairTag}"
-                    Write-Info "镜像修复: 拉取 $repairImage"
+                    Write-Info (_m "镜像修复: 拉取 $repairImage" "Image repair: pulling $repairImage")
                     try {
                         # 不能用 pipeline，PS 5.1 中 $LASTEXITCODE 在 | ForEach-Object 后不可靠
                         $repairPullOutput = & docker pull $repairImage 2>&1
@@ -4844,9 +4852,9 @@ function Main {
 
                 $preRunImageCheck = & docker image inspect clawnook 2>$null
                 if ($LASTEXITCODE -ne 0) {
-                    throw "镜像修复失败：未找到 clawnook:latest"
+                    throw (_m "镜像修复失败：未找到 clawnook:latest" "Image repair failed: clawnook:latest not found")
                 }
-                Write-OK "镜像标签修复完成"
+                Write-OK (_m "镜像标签修复完成" "Image tag repair complete")
             }
 
             # 再次检查目标容器名是否有残留（防御性检查）
@@ -4877,17 +4885,17 @@ function Main {
 
             if ($conflicts.Count -gt 0) {
                 Write-Host ""
-                Write-Warn "检测到端口冲突（启动前复检）:"
+                Write-Warn (_m "检测到端口冲突（启动前复检）:" "Port conflict detected (pre-launch recheck):")
                 foreach ($c in $conflicts) {
-                    Write-Host "     宿主机端口 $($c.HostPort) -> 容器 $($c.ContainerPort)" -ForegroundColor DarkGray
+                    Write-Host (_m "     宿主机端口 $($c.HostPort) -> 容器 $($c.ContainerPort)" "     Host port $($c.HostPort) -> Container $($c.ContainerPort)") -ForegroundColor DarkGray
                 }
                 Write-Host ""
-                Write-Host "  请选择处理方式:" -ForegroundColor White
-                Write-Host "     [1] 自动分配可用端口（默认）" -ForegroundColor Gray
-                Write-Host "     [2] 手动输入新端口" -ForegroundColor Gray
-                Write-Host "     [3] 退出并手动处理" -ForegroundColor Gray
+                Write-Host (_m "  请选择处理方式:" "  Select resolution:") -ForegroundColor White
+                Write-Host (_m "     [1] 自动分配可用端口（默认）" "     [1] Auto-assign available port (default)") -ForegroundColor Gray
+                Write-Host (_m "     [2] 手动输入新端口" "     [2] Manually enter new port") -ForegroundColor Gray
+                Write-Host (_m "     [3] 退出并手动处理" "     [3] Exit and handle manually") -ForegroundColor Gray
                 Write-Host ""
-                Write-Host "  输入选择 [1/2/3，默认1]: " -NoNewline -ForegroundColor White
+                Write-Host (_m "  输入选择 [1/2/3，默认1]: " "  Enter choice [1/2/3, default 1]: ") -NoNewline -ForegroundColor White
                 $fixChoice = (Read-Host).Trim()
                 if (-not $fixChoice) { $fixChoice = '1' }
 
@@ -4899,20 +4907,20 @@ function Main {
                     $newPort = 0
                     if ($fixChoice -eq '2') {
                         while ($true) {
-                            Write-Host "  请输入容器 $($c.ContainerPort) 对应的新宿主机端口 [默认 $($c.HostPort)]: " -NoNewline -ForegroundColor White
+                            Write-Host (_m "  请输入容器 $($c.ContainerPort) 对应的新宿主机端口 [默认 $($c.HostPort)]: " "  Enter new host port for container port $($c.ContainerPort) [default $($c.HostPort)]: ") -NoNewline -ForegroundColor White
                             $pIn = (Read-Host).Trim()
                             if (-not $pIn) { $pIn = "$($c.HostPort)" }
                             if ($pIn -notmatch '^\d+$') {
-                                Write-Warn "端口必须是数字"
+                                Write-Warn (_m "端口必须是数字" "Port must be a number")
                                 continue
                             }
                             $tryPort = [int]$pIn
                             if ($tryPort -lt 1 -or $tryPort -gt 65535) {
-                                Write-Warn "端口范围应为 1-65535"
+                                Write-Warn (_m "端口范围应为 1-65535" "Port range must be 1-65535")
                                 continue
                             }
                             if (-not (Test-PortAvailable $tryPort)) {
-                                Write-Warn "端口 $tryPort 仍被占用，请换一个"
+                                Write-Warn (_m "端口 $tryPort 仍被占用，请换一个" "Port $tryPort is still in use, please choose another")
                                 continue
                             }
                             $newPort = $tryPort
@@ -4956,14 +4964,14 @@ function Main {
                 $script:httpsPort         = $deployConfig.HttpsPort
                 $script:sshPort           = $deployConfig.SshPort
 
-                Write-OK "端口冲突已处理，已更新端口映射"
+                Write-OK (_m "端口冲突已处理，已更新端口映射" "Port conflict resolved, port mapping updated")
             }
 
             $stateVolumeName = Get-StateVolumeName -ContainerName $containerName
             try { & docker volume create $stateVolumeName 2>$null | Out-Null } catch { }
             Write-Host ""
-            Write-Info "ImageOnly 模式：使用状态卷 $stateVolumeName"
-            Write-OK "状态卷: $stateVolumeName -> /root/.openclaw"
+            Write-Info (_m "ImageOnly 模式：使用状态卷 $stateVolumeName" "ImageOnly mode: using state volume $stateVolumeName")
+            Write-OK (_m "状态卷: $stateVolumeName -> /root/.openclaw" "State volume: $stateVolumeName -> /root/.openclaw")
 
             # Write config for container's start-services.sh (Caddy reads domain from here)
             $dockerConfigJson = @{
@@ -4983,7 +4991,7 @@ function Main {
                 created    = (Get-Date -Format "o")
             } | ConvertTo-Json -Depth 2
             if (-not (Write-StateVolumeFile -VolumeName $stateVolumeName -ImageName "clawnook:latest" -RelativePath "docker-config.json" -Content $dockerConfigJson)) {
-                throw "写入状态卷 docker-config.json 失败"
+                throw (_m "写入状态卷 docker-config.json 失败" "Failed to write docker-config.json to state volume")
             }
             if ($latestReleaseTag) {
                 [void](Write-StateVolumeFile -VolumeName $stateVolumeName -ImageName "clawnook:latest" -RelativePath "image-release-tag.txt" -Content $latestReleaseTag)
@@ -5010,7 +5018,7 @@ function Main {
                 # 日志记录 docker images 列表以辅助诊断
                 $imgList = & docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" 2>$null | Out-String
                 Write-Log "FINAL IMAGE CHECK FAILED. Docker images: $imgList"
-                throw "镜像 clawnook:latest 不可用 — 所有获取方式均已失败。请检查网络后重新运行安装脚本。"
+                throw (_m "镜像 clawnook:latest 不可用 — 所有获取方式均已失败。请检查网络后重新运行安装脚本。" "Image clawnook:latest unavailable — all acquisition methods failed. Please check network and re-run the install script.")
             }
             $finalImageId = & docker image inspect clawnook --format '{{.Id}}' 2>$null
             Write-Log "Final image check OK. ID=$finalImageId"
@@ -5023,11 +5031,11 @@ function Main {
 
             if ($hostUser -and $hostUser -ne "root" -and $hostUser -ne "administrator") {
                 if ($rawHostUser -and $rawHostUser -ne $hostUser) {
-                    Write-Warn "检测到 Windows 用户名 '$rawHostUser' 含不兼容字符，容器 SSH 用户将使用: $hostUser"
+                    Write-Warn (_m "检测到 Windows 用户名 '$rawHostUser' 含不兼容字符，容器 SSH 用户将使用: $hostUser" "Windows username '$rawHostUser' contains incompatible characters, container SSH user will be: $hostUser")
                 }
                 $script:hostUserForSSH = $hostUser
             } else {
-                Write-Warn "未检测到可用普通用户，将仅保留 root 密钥登录兜底"
+                Write-Warn (_m "未检测到可用普通用户，将仅保留 root 密钥登录兜底" "No available regular user detected, falling back to root key-based login only")
             }
 
             # Build docker run arguments
@@ -5103,10 +5111,10 @@ function Main {
             # Docker Desktop/Windows 偶发端口竞争：自动改端口并重试一次
             if ($LASTEXITCODE -ne 0 -and ($runOutputText -match "port is already allocated" -or $runOutputText -match "address already in use") -and $runOutputText -match '(?:Bind for [^:]*:|address already in use|listen tcp[^:]*:)(\d+)') {
                 $conflictPort = [int]$Matches[1]
-                Write-Warn "检测到端口冲突: $conflictPort，正在自动分配新端口并重试..."
+                Write-Warn (_m "检测到端口冲突: $conflictPort，正在自动分配新端口并重试..." "Port conflict detected: $conflictPort, auto-assigning new port and retrying...")
 
                 $newPort = Find-AvailablePort -PreferredPort ($conflictPort + 1) -RangeStart ($conflictPort + 1) -RangeEnd ($conflictPort + 200)
-                Write-Info "端口 $conflictPort → $newPort"
+                Write-Info (_m "端口 $conflictPort → $newPort" "Port $conflictPort → $newPort")
 
                 for ($i = 0; $i -lt $runArgs.Count; $i++) {
                     if ($runArgs[$i] -ne '-p') { continue }
@@ -5138,7 +5146,7 @@ function Main {
             }
 
             if ($LASTEXITCODE -eq 0) {
-                Write-OK "容器已启动"
+                Write-OK (_m "容器已启动" "Container started")
                 $launched = $true
                 $script:deployedContainerName = $containerName
 
@@ -5156,9 +5164,9 @@ function Main {
                     }
                     $script:sshServiceReady = $sshReady
                     if ($sshReady) {
-                        Write-OK "SSH 服务已就绪"
+                        Write-OK (_m "SSH 服务已就绪" "SSH service ready")
                     } else {
-                        Write-Warn "SSH 服务状态未确认，请稍后执行 docker logs $containerName 查看"
+                        Write-Warn (_m "SSH 服务状态未确认，请稍后执行 docker logs $containerName 查看" "SSH service status unconfirmed, run docker logs $containerName to check later")
                     }
 
                     # ── SSH 安全配置：禁用密码登录，禁用 root 登录，仅密钥登录 ──
@@ -5201,7 +5209,7 @@ function Main {
                     # 注入到普通用户（如果有）
                     $userReady = $false
                     if ($hostUser -and $hostUser -ne "root" -and $hostUser -ne "administrator") {
-                        Write-Info "等待容器创建用户 $hostUser ..."
+                        Write-Info (_m "等待容器创建用户 $hostUser ..." "Waiting for container to create user $hostUser ...")
                         for ($retryUser = 1; $retryUser -le 30; $retryUser++) {
                             & docker exec $containerName bash -lc "id '$hostUser' >/dev/null 2>&1" 2>$null | Out-Null
                             if ($LASTEXITCODE -eq 0) {
@@ -5212,13 +5220,13 @@ function Main {
                         }
 
                         if (-not $userReady) {
-                            Write-Warn "容器内普通用户 $hostUser 尚未就绪（已等待 30s），先将公钥注入 root，容器启动后会自动同步到 $hostUser"
+                            Write-Warn (_m "容器内普通用户 $hostUser 尚未就绪（已等待 30s），先将公钥注入 root，容器启动后会自动同步到 $hostUser" "Regular user $hostUser not ready in container (waited 30s), injecting public key to root first; it will auto-sync to $hostUser after container startup")
                         }
 
                         foreach ($keyFile in $pubKeyCandidates) {
                             if (-not (Test-Path $keyFile)) { continue }
                             if (-not $userReady) { break }
-                            Write-Info "注入公钥到用户 $hostUser : $keyFile"
+                            Write-Info (_m "注入公钥到用户 $hostUser : $keyFile" "Injecting public key to user $hostUser : $keyFile")
                             & docker exec $containerName bash -lc "mkdir -p '/home/$hostUser/.ssh' && chmod 700 '/home/$hostUser/.ssh'" 2>$null | Out-Null
                             & docker cp $keyFile "${containerName}:/tmp/host_user_key.pub" 2>$null | Out-Null
                             if ($LASTEXITCODE -eq 0) {
@@ -5228,7 +5236,7 @@ function Main {
                                     $injected = $true
                                     $script:sshRootFallback = $false
                                     $script:hostUserForSSH = $hostUser
-                                    Write-OK "已自动注入宿主机 SSH 公钥到用户 $hostUser : $keyFile"
+                                    Write-OK (_m "已自动注入宿主机 SSH 公钥到用户 $hostUser : $keyFile" "Auto-injected host SSH public key to user $hostUser : $keyFile")
                                     break
                                 }
                             }
@@ -5253,7 +5261,7 @@ function Main {
                             if ($LASTEXITCODE -eq 0) {
                                 $script:sshInjectedKeyPath = $keyFile
                                 $injected = $true
-                                Write-Info "公钥已注入 root，容器健康检查会自动同步到 $hostUser : $keyFile"
+                                Write-Info (_m "公钥已注入 root，容器健康检查会自动同步到 $hostUser : $keyFile" "Public key injected to root, container health check will auto-sync to $hostUser : $keyFile")
                                 break
                             }
                         }
@@ -5271,7 +5279,7 @@ function Main {
                             if (-not (Test-Path $pubPath)) {
                                 $sshKeygen = Get-Command ssh-keygen -ErrorAction SilentlyContinue
                                 if ($sshKeygen) {
-                                    Write-Info "未检测到宿主机公钥，正在自动生成 id_ed25519..."
+                                    Write-Info (_m "未检测到宿主机公钥，正在自动生成 id_ed25519..." "No host public key detected, auto-generating id_ed25519...")
                                     $sshCmd = "`"$($sshKeygen.Source)`" -q -t ed25519 -N `"`" -f `"$keyPath`""
                                     & cmd /c $sshCmd 2>$null | Out-Null
                                 }
@@ -5288,7 +5296,7 @@ function Main {
                                             $injected = $true
                                             $script:sshRootFallback = $false
                                             $script:hostUserForSSH = $hostUser
-                                            Write-OK "已自动生成并注入宿主机 SSH 公钥到用户 $hostUser : $pubPath"
+                                            Write-OK (_m "已自动生成并注入宿主机 SSH 公钥到用户 $hostUser : $pubPath" "Auto-generated and injected host SSH public key to user $hostUser : $pubPath")
                                         }
                                     }
                                 } else {
@@ -5306,7 +5314,7 @@ function Main {
                                             } else {
                                                 $script:hostUserForSSH = "root"
                                             }
-                                            Write-OK "已自动生成并注入宿主机 SSH 公钥（将同步到 $hostUser）: $pubPath"
+                                            Write-OK (_m "已自动生成并注入宿主机 SSH 公钥（将同步到 $hostUser）: $pubPath" "Auto-generated and injected host SSH public key (will sync to $hostUser): $pubPath")
                                         }
                                     }
                                 }
@@ -5320,9 +5328,9 @@ function Main {
                         if ($userReady -and $hostUser -and $hostUser -ne "root" -and $hostUser -ne "administrator") {
                             $script:sshRootFallback = $false
                             $script:hostUserForSSH = $hostUser
-                            Write-Warn "普通用户已创建，但宿主机 SSH 公钥未自动注入，请手动配置 /home/$hostUser/.ssh/authorized_keys"
+                            Write-Warn (_m "普通用户已创建，但宿主机 SSH 公钥未自动注入，请手动配置 /home/$hostUser/.ssh/authorized_keys" "Regular user created, but host SSH public key was not auto-injected. Please manually configure /home/$hostUser/.ssh/authorized_keys")
                         } else {
-                            Write-Warn "未发现可用宿主机公钥（id_ed25519/id_rsa/id_ecdsa），请手动注入 authorized_keys"
+                            Write-Warn (_m "未发现可用宿主机公钥（id_ed25519/id_rsa/id_ecdsa），请手动注入 authorized_keys" "No usable host public key found (id_ed25519/id_rsa/id_ecdsa), please manually inject authorized_keys")
                         }
                     }
 
@@ -5333,18 +5341,18 @@ function Main {
                     }
                 } catch {
                     Write-Log "Post-deploy SSH/bootstrap step failed: $_" "WARN"
-                    Write-Warn "安装后 SSH/公钥收尾步骤部分失败，请在完成页按提示手动处理"
+                    Write-Warn (_m "安装后 SSH/公钥收尾步骤部分失败，请在完成页按提示手动处理" "Post-install SSH/public key steps partially failed, please follow instructions on the completion page")
                 }
 
                 if ($deployConfig.HttpsEnabled) {
-                    $certModeText = if ($deployConfig.CertMode -eq "internal") { "自签证书" } else { "Let's Encrypt" }
-                    Write-Info "正在初始化 HTTPS 证书（${certModeText}）..."
+                    $certModeText = if ($deployConfig.CertMode -eq "internal") { (_m "自签证书" "Self-signed certificate") } else { "Let's Encrypt" }
+                    Write-Info (_m "正在初始化 HTTPS 证书（${certModeText}）..." "Initializing HTTPS certificate (${certModeText})...")
                     $spinner = @('|','/','-','\','|','/','-','\','|','/','-','\','|','/','-','\')
                     $si = 0
                     $tlsReady = $false
                     for ($i = 1; $i -le 30; $i++) {
                         $spinChar = $spinner[$si % $spinner.Count]
-                        Write-Host "`r  $spinChar 证书处理中... ${i}s/30s" -NoNewline -ForegroundColor Cyan
+                        Write-Host (_m "`r  $spinChar 证书处理中... ${i}s/30s" "`r  $spinChar Processing certificate... ${i}s/30s") -NoNewline -ForegroundColor Cyan
                         $si++
                         try {
                             $tcp = New-Object System.Net.Sockets.TcpClient
@@ -5361,11 +5369,11 @@ function Main {
                     }
                     Write-Host ""
                     if ($tlsReady) {
-                        Write-OK "HTTPS 端口已就绪，证书流程已启动"
+                        Write-OK (_m "HTTPS 端口已就绪，证书流程已启动" "HTTPS port ready, certificate process started")
                     } else {
-                        Write-Warn "证书流程仍在后台进行，可继续等待"
+                        Write-Warn (_m "证书流程仍在后台进行，可继续等待" "Certificate process still running in background, please wait")
                     }
-                    Write-Host "     查看证书日志: docker logs $containerName | findstr /I caddy cert acme tls" -ForegroundColor DarkGray
+                    Write-Host (_m "     查看证书日志: docker logs $containerName | findstr /I caddy cert acme tls" "     View certificate logs: docker logs $containerName | findstr /I caddy cert acme tls") -ForegroundColor DarkGray
                 }
 
                 # Windows 防火墙端口处理（按用户选择）
@@ -5398,16 +5406,16 @@ function Main {
                         $fwRuleName = if ($containerName -eq 'clawnook') { 'OpenClaw' } else { "OpenClaw-$containerName" }
                         & netsh advfirewall firewall add rule name=$fwRuleName dir=in action=allow protocol=tcp localport=$fwPorts 2>&1 | Out-Null
                         if ($LASTEXITCODE -eq 0) {
-                            Write-OK "防火墙端口已自动开放 ($fwPorts)"
+                            Write-OK (_m "防火墙端口已自动开放 ($fwPorts)" "Firewall ports auto-opened ($fwPorts)")
                         } else {
-                            Write-Warn "防火墙设置需要管理员权限，请手动执行:"
+                            Write-Warn (_m "防火墙设置需要管理员权限，请手动执行:" "Firewall configuration requires administrator privileges, please run manually:")
                             Write-Host "     netsh advfirewall firewall add rule name=`"$fwRuleName`" dir=in action=allow protocol=tcp localport=$fwPorts" -ForegroundColor White
                         }
                     } else {
                         $fwPorts = ($fwPortList | Sort-Object -Unique) -join ','
-                        Write-Info "已跳过自动开放防火墙端口"
+                        Write-Info (_m "已跳过自动开放防火墙端口" "Skipped auto-opening firewall ports")
                         if ($fwPorts) {
-                            Write-Host "     本机访问通常不需要放行；如需其他设备访问，请手动执行:" -ForegroundColor DarkGray
+                            Write-Host (_m "     本机访问通常不需要放行；如需其他设备访问，请手动执行:" "     Localhost access usually does not require firewall rules; for other devices, run manually:") -ForegroundColor DarkGray
                             Write-Host "     netsh advfirewall firewall add rule name=`"OpenClaw-Manual`" dir=in action=allow protocol=tcp localport=$fwPorts" -ForegroundColor White
                         }
                     }
@@ -5423,13 +5431,13 @@ function Main {
                 elseif ($runOutput -match '(?:Bind for [^:]*:|address already in use|listen tcp[^:]*:)(\d+)') { $conflictPort = $Matches[1] }
                 if ($runOutput -match "port is already allocated" -or $runOutput -match "address already in use" -or $dockerErr -match "port is already allocated" -or $dockerErr -match "address already in use") {
                     if ($conflictPort) {
-                        Write-Err "端口 ${conflictPort} 被占用，请关闭占用端口的程序后重试"
-                        Write-Host "  💡 查看端口占用: netstat -ano | findstr :${conflictPort}" -ForegroundColor Cyan
+                        Write-Err (_m "端口 ${conflictPort} 被占用，请关闭占用端口的程序后重试" "Port ${conflictPort} is in use, please close the occupying process and retry")
+                        Write-Host (_m "  💡 查看端口占用: netstat -ano | findstr :${conflictPort}" "  💡 Check port usage: netstat -ano | findstr :${conflictPort}") -ForegroundColor Cyan
                     } else {
-                        Write-Err "端口被占用，请关闭占用端口的程序后重试"
+                        Write-Err (_m "端口被占用，请关闭占用端口的程序后重试" "Port is in use, please close the occupying process and retry")
                     }
                 } else {
-                    Write-Err "docker run 失败"
+                    Write-Err (_m "docker run 失败" "docker run failed")
                 }
                 throw "docker run failed: $runOutputText"
             }
@@ -5442,9 +5450,9 @@ function Main {
                 if ($errMsg -match '(?:Bind for [^:]*:|address already in use|listen tcp[^:]*:)(\d+)') { $conflictPort = $Matches[1] }
                 if (-not $conflictPort) { $conflictPort = "?" }
                 Write-Host "" 
-                Write-Host "  💡 解决方法:" -ForegroundColor Cyan
-                Write-Host "     1. 查看占用: netstat -ano | findstr :${conflictPort}" -ForegroundColor White
-                Write-Host "     2. 或者重新运行安装脚本，选择其他端口" -ForegroundColor White
+                Write-Host (_m "  💡 解决方法:" "  💡 Solutions:") -ForegroundColor Cyan
+                Write-Host (_m "     1. 查看占用: netstat -ano | findstr :${conflictPort}" "     1. Check usage: netstat -ano | findstr :${conflictPort}") -ForegroundColor White
+                Write-Host (_m "     2. 或者重新运行安装脚本，选择其他端口" "     2. Or re-run the install script and choose a different port") -ForegroundColor White
                 Write-Host "" 
             } elseif ($errMsg -match "No such image") {
                 # -- 镜像缺失 — 在交互式运行时先询问用户是否尝试从 Release 下载，再尝试 GHCR 拉取 --
@@ -5457,25 +5465,25 @@ function Main {
                     if (-not $script:imageEdition -or $script:imageEdition -eq '') {
                         $script:imageEdition = 'lite'
                     }
-                    Write-Info "发布仅保留 Lite 镜像，已选择镜像版本: $script:imageEdition"
+                    Write-Info (_m "发布仅保留 Lite 镜像，已选择镜像版本: $script:imageEdition" "Only Lite image available in release, selected image edition: $script:imageEdition")
 
                     Write-Host ""
-                    Write-Host "  本地镜像不存在，是否尝试从 Release 下载镜像并加载？[Y/n]: " -NoNewline -ForegroundColor White
+                    Write-Host (_m "  本地镜像不存在，是否尝试从 Release 下载镜像并加载？[Y/n]: " "  Local image not found. Try downloading from Release? [Y/n]: ") -NoNewline -ForegroundColor White
                     $recChoice = (Read-Host).Trim().ToLower()
                     if ($recChoice -eq 'n' -or $recChoice -eq 'no') {
                         $doRecover = $false
-                        Write-Info "已选择跳过 Release 下载，后续将尝试 GHCR 或本地构建（如可用）"
+                        Write-Info (_m "已选择跳过 Release 下载，后续将尝试 GHCR 或本地构建（如可用）" "Skipped Release download, will try GHCR or local build next (if available)")
                     }
                 }
 
-                if ($doRecover) { Write-Info "尝试自动从 Release 恢复本地镜像..." } else { Write-Info "跳过 Release 下载，继续尝试 GHCR 拉取或本地构建..." }
+                if ($doRecover) { Write-Info (_m "尝试自动从 Release 恢复本地镜像..." "Attempting to restore local image from Release...") } else { Write-Info (_m "跳过 Release 下载，继续尝试 GHCR 拉取或本地构建..." "Skipping Release download, trying GHCR pull or local build...") }
                 if (-not $doRecover) { $releaseRecoverReason = "skipped" }
 
                 # 恢复方式 1: Download-Robust 多线程分块下载 Release tar.gz
                 $recoverTag = if ($latestReleaseTag) { $latestReleaseTag } else { "latest" }
                 $recoverTagIsAliasLatest = ($recoverTag -eq "latest")
                 $recoverAssetName = "clawnook-image-lite.tar.gz"
-                Write-Info "远端目标版本: $recoverTag ($script:imageEdition)"
+                Write-Info (_m "远端目标版本: $recoverTag ($script:imageEdition)" "Remote target version: $recoverTag ($script:imageEdition)")
                 $recoverTar = Join-Path $TMP_DIR $recoverAssetName
                 $releaseBaseUrl = if ($latestReleaseTag) {
                     "https://github.com/$GITHUB_REPO/releases/download/$latestReleaseTag/$recoverAssetName"
@@ -5497,7 +5505,7 @@ function Main {
                     $recoverUrls
                 }
 
-                Write-Info "尝试从 Release 下载镜像 (多线程分块断点续传)..."
+                Write-Info (_m "尝试从 Release 下载镜像 (多线程分块断点续传)..." "Trying to download image from Release (multi-threaded chunked resume download)...")
                 try {
                     $recoverDownloadOK = $false
 
@@ -5511,31 +5519,31 @@ function Main {
                         $existRecoverSize = (Get-Item $recoverTar).Length
                         if ($recoverTag -and $recoverDiskTag -and ($recoverDiskTag -eq "$recoverTag|$script:imageEdition" -or ($recoverTagIsAliasLatest -and $recoverDiskTag -match "^.+\|$([regex]::Escape($script:imageEdition))$"))) {
                             if ($hasRecoverProgress) {
-                                Write-Warn "检测到未完成分块进度文件，继续断点续传以确保完整性"
+                                Write-Warn (_m "检测到未完成分块进度文件，继续断点续传以确保完整性" "Incomplete chunk progress file detected, resuming download to ensure integrity")
                                 $recoverDownloadOK = $false
                             } else {
-                            Write-OK "检测到已下载的镜像文件 ($([math]::Round($existRecoverSize / 1MB, 1))MB)，版本匹配，跳过下载"
+                            Write-OK (_m "检测到已下载的镜像文件 ($([math]::Round($existRecoverSize / 1MB, 1))MB)，版本匹配，跳过下载" "Downloaded image file detected ($([math]::Round($existRecoverSize / 1MB, 1))MB), version matches, skipping download")
                             $recoverDownloadOK = $true
                             }
                         } else {
-                            Write-Info "检测到已下载的镜像文件 ($([math]::Round($existRecoverSize / 1MB, 1))MB)，将校验版本..."
+                            Write-Info (_m "检测到已下载的镜像文件 ($([math]::Round($existRecoverSize / 1MB, 1))MB)，将校验版本..." "Downloaded image file detected ($([math]::Round($existRecoverSize / 1MB, 1))MB), verifying version...")
                             if ($recoverDiskTag -and $recoverTag -and (-not $recoverTagIsAliasLatest) -and $recoverDiskTag -ne "$recoverTag|$script:imageEdition") {
-                                Write-Warn "本地镜像文件版本 ($recoverDiskTag) 与远端 ($recoverTag|$script:imageEdition) 不一致，重新下载"
+                                Write-Warn (_m "本地镜像文件版本 ($recoverDiskTag) 与远端 ($recoverTag|$script:imageEdition) 不一致，重新下载" "Local image file version ($recoverDiskTag) does not match remote ($recoverTag|$script:imageEdition), re-downloading")
                                 Remove-Item $recoverTar -Force -ErrorAction SilentlyContinue
                                 if (Test-Path $recoverTagFile) { Remove-Item $recoverTagFile -Force -ErrorAction SilentlyContinue }
                             } else {
                                 $recoverSizeHint = Get-RemoteFileSize -Urls $recoverUrls
                                 if (($recoverSizeHint -gt 0 -and [math]::Abs($existRecoverSize - $recoverSizeHint) -lt 1MB) -or ($recoverSizeHint -le 0 -and $existRecoverSize -gt 200MB)) {
                                     if ($hasRecoverProgress) {
-                                        Write-Warn "检测到已下载镜像缺少版本元数据，且存在分块进度，继续断点续传"
+                                        Write-Warn (_m "检测到已下载镜像缺少版本元数据，且存在分块进度，继续断点续传" "Downloaded image missing version metadata with existing chunk progress, resuming download")
                                         $recoverDownloadOK = $false
                                     } else {
-                                        Write-Warn "检测到已下载镜像缺少版本元数据，默认复用并补写元数据"
+                                        Write-Warn (_m "检测到已下载镜像缺少版本元数据，默认复用并补写元数据" "Downloaded image missing version metadata, reusing by default and writing metadata")
                                         if ($recoverTag) { try { "$recoverTag|$script:imageEdition" | Set-Content -Path $recoverTagFile -Force -ErrorAction SilentlyContinue } catch { } }
                                         $recoverDownloadOK = $true
                                     }
                                 } else {
-                                    Write-Warn "本地镜像文件大小与远端不匹配，重新下载"
+                                    Write-Warn (_m "本地镜像文件大小与远端不匹配，重新下载" "Local image file size does not match remote, re-downloading")
                                     Remove-Item $recoverTar -Force -ErrorAction SilentlyContinue
                                     if (Test-Path $recoverTagFile) { Remove-Item $recoverTagFile -Force -ErrorAction SilentlyContinue }
                                     $recoverDownloadOK = $false
@@ -5548,7 +5556,7 @@ function Main {
                     $recoverSize = Get-RemoteFileSize -Urls $recoverUrls
                     if ($recoverSize -gt 0) {
                         $recoverMB = [math]::Round($recoverSize / 1MB, 1)
-                        Write-Info "文件大小: ${recoverMB}MB，开始 8 线程下载..."
+                        Write-Info (_m "文件大小: ${recoverMB}MB，开始 8 线程下载..." "File size: ${recoverMB}MB, starting 8-thread download...")
                         $recoverDownloadOK = Download-Robust `
                             -Urls $recoverUrls `
                             -OutFile $recoverTar `
@@ -5557,7 +5565,7 @@ function Main {
                             -Threads 8 `
                             -RetryPerChunk 20
                         if (-not $recoverDownloadOK) {
-                            Write-Warn "首轮 8 线程下载未完成，立即按原策略重试（仅补失败块，8线程）..."
+                            Write-Warn (_m "首轮 8 线程下载未完成，立即按原策略重试（仅补失败块，8线程）..." "First round 8-thread download incomplete, retrying with same strategy (retry failed chunks only, 8 threads)...")
                             $recoverDownloadOK = Download-Robust `
                                 -Urls $recoverUrls `
                                 -OutFile $recoverTar `
@@ -5567,7 +5575,7 @@ function Main {
                                 -RetryPerChunk 30
                         }
                     } else {
-                        Write-Warn "无法获取文件大小，尝试 curl.exe 直链下载..."
+                        Write-Warn (_m "无法获取文件大小，尝试 curl.exe 直链下载..." "Cannot get file size, trying curl.exe direct download...")
                         $recoverDownloadOK = $false
                         foreach ($ru in $recoverUrls) {
                             try {
@@ -5589,7 +5597,7 @@ function Main {
 
                     if ($recoverDownloadOK) {
                         try { "$recoverTag|$script:imageEdition" | Set-Content -Path "$recoverTagFile" -Force -ErrorAction SilentlyContinue } catch { }
-                        Write-OK "镜像下载完成"
+                        Write-OK (_m "镜像下载完成" "Image download complete")
                     }
 
                     # ── 校验 + 加载循环（最多 2 轮：首次加载 + 重新下载重试） ──
@@ -5598,7 +5606,7 @@ function Main {
                         $loadAttempt++
 
                         # ── 加载前校验 tar 完整性（快速读取归档头部条目） ──
-                        Write-Info "校验镜像文件完整性..."
+                        Write-Info (_m "校验镜像文件完整性..." "Verifying image file integrity...")
                         $tarValid = $false
                         $tarExitCode = -1
                         $tarErrorSample = @()
@@ -5642,19 +5650,19 @@ function Main {
                                 }
                             }
                             if ($loadAttempt -ge 2) {
-                                Write-Warn "重新下载后镜像文件仍无法通过完整性校验"
+                                Write-Warn (_m "重新下载后镜像文件仍无法通过完整性校验" "Image file still fails integrity verification after re-download")
                                 $releaseRecoverReason = "download"
                                 $recoverDownloadOK = $false
                                 break
                             }
-                            Write-Warn "镜像文件损坏或不完整，删除并重新下载..."
+                            Write-Warn (_m "镜像文件损坏或不完整，删除并重新下载..." "Image file corrupted or incomplete, deleting and re-downloading...")
                             Remove-Item $recoverTar -Force -ErrorAction SilentlyContinue
                             if (Test-Path $recoverTagFile) { Remove-Item $recoverTagFile -Force -ErrorAction SilentlyContinue }
                             $recoverDownloadOK = $false
                             $recoverSize = Get-RemoteFileSize -Urls $recoverUrls
                             if ($recoverSize -gt 0) {
                                 $recoverMB = [math]::Round($recoverSize / 1MB, 1)
-                                Write-Info "完整性校验失败，切换到下一个下载源优先重试 (${recoverMB}MB)..."
+                                Write-Info (_m "完整性校验失败，切换到下一个下载源优先重试 (${recoverMB}MB)..." "Integrity verification failed, switching to next download source and retrying (${recoverMB}MB)...")
                                 $recoverDownloadOK = Download-Robust `
                                     -Urls $recoverRetryUrls `
                                     -OutFile $recoverTar `
@@ -5664,7 +5672,7 @@ function Main {
                                     -RetryPerChunk 20 `
                                     -ForceFresh
                                 if (-not $recoverDownloadOK) {
-                                    Write-Warn "8 线程重试未完成，继续按原策略重试（仅补失败块，8线程）..."
+                                    Write-Warn (_m "8 线程重试未完成，继续按原策略重试（仅补失败块，8线程）..." "8-thread retry incomplete, retrying with same strategy (retry failed chunks only, 8 threads)...")
                                     $recoverDownloadOK = Download-Robust `
                                         -Urls $recoverRetryUrls `
                                         -OutFile $recoverTar `
@@ -5683,13 +5691,13 @@ function Main {
                             continue  # 回到循环顶部重新校验
                         }
 
-                        Write-OK "镜像文件校验通过"
+                        Write-OK (_m "镜像文件校验通过" "Image file verification passed")
 
-                        $recoverLoadSizeText = "未知大小"
+                        $recoverLoadSizeText = (_m "未知大小" "Unknown size")
                         if (Test-Path $recoverTar) {
                             $recoverLoadSizeText = "$( [math]::Round((Get-Item $recoverTar).Length / 1MB, 1) )MB"
                         }
-                        Write-Info "正在加载镜像到 Docker...（$recoverLoadSizeText，通常需 1-5 分钟，请耐心等待）"
+                        Write-Info (_m "正在加载镜像到 Docker...（$recoverLoadSizeText，通常需 1-5 分钟，请耐心等待）" "Loading image into Docker... ($recoverLoadSizeText, usually takes 1-5 minutes, please wait)")
 
                         # 清理可能残留的 docker load 进程（上次 Ctrl+C 后遗留的 Start-Job 子进程）
                         try {
@@ -5724,21 +5732,21 @@ function Main {
                             $min = [math]::Floor($elapsed / 60)
                             $sec = $elapsed % 60
                             $spinChar = $spinner[$si % $spinner.Count]
-                            Write-Host "`r  $spinChar 加载中... 已耗时 ${min}分${sec}秒    " -NoNewline -ForegroundColor Cyan
+                            Write-Host (_m "`r  $spinChar 加载中... 已耗时 ${min}分${sec}秒    " "`r  $spinChar Loading... elapsed ${min}m${sec}s    ") -NoNewline -ForegroundColor Cyan
                             if (-not $slowLoadHintShown -and $elapsed -ge 300) {
                                 $slowLoadHintShown = $true
                                 Write-Host ""
-                                Write-Warn "镜像加载已超过 5 分钟，可能存在磁盘/杀软扫描/后台任务竞争"
-                                Write-Host "     诊断建议: docker system df" -ForegroundColor DarkGray
-                                Write-Host "     诊断建议: Get-Process docker" -ForegroundColor DarkGray
-                                Write-Host "     若长时间无进展，可重启 Docker Desktop 后重试" -ForegroundColor DarkGray
+                                Write-Warn (_m "镜像加载已超过 5 分钟，可能存在磁盘/杀软扫描/后台任务竞争" "Image loading exceeded 5 minutes, possible disk/antivirus scan/background task contention")
+                                Write-Host (_m "     诊断建议: docker system df" "     Diagnostics: docker system df") -ForegroundColor DarkGray
+                                Write-Host (_m "     诊断建议: Get-Process docker" "     Diagnostics: Get-Process docker") -ForegroundColor DarkGray
+                                Write-Host (_m "     若长时间无进展，可重启 Docker Desktop 后重试" "     If no progress for a long time, restart Docker Desktop and retry") -ForegroundColor DarkGray
                             }
                             $si++
                             Start-Sleep -Milliseconds 200
                         }
                         } finally {
                             if ($loadJob.State -eq 'Running') {
-                                Write-Host "`n  正在清理后台加载进程..." -ForegroundColor Yellow
+                                Write-Host (_m "`n  正在清理后台加载进程..." "`n  Cleaning up background loading process...") -ForegroundColor Yellow
                                 Stop-Job $loadJob -ErrorAction SilentlyContinue
                             }
                         }
@@ -5779,7 +5787,7 @@ function Main {
                             }
                         }
                         if ($recoverSawLite) {
-                            Write-Info "检测到已加载 lite 镜像，执行强化 tag 修复（clawnook:lite -> clawnook:latest）..."
+                            Write-Info (_m "检测到已加载 lite 镜像，执行强化 tag 修复（clawnook:lite -> clawnook:latest）..." "Loaded lite image detected, performing tag fix (clawnook:lite -> clawnook:latest)...")
                             for ($rti = 1; $rti -le 3; $rti++) {
                                 try { & docker tag "clawnook:lite" "clawnook:latest" 2>$null } catch { }
                                 Start-Sleep -Milliseconds 300
@@ -5811,19 +5819,19 @@ function Main {
                         if ($LASTEXITCODE -eq 0) {
                             Remove-ReplacedImageIdsFromLoadOutput -LoadOutput $loadOutput
                             Remove-NewDanglingImages -BeforeIds $recoverDanglingBeforeLoad
-                            Write-OK "Release 镜像加载完成 (耗时 ${totalLoadSec} 秒)"
+                            Write-OK (_m "Release 镜像加载完成 (耗时 ${totalLoadSec} 秒)" "Release image loaded (elapsed ${totalLoadSec} seconds)")
                             $recoverOK = $true
                         } else {
                             Remove-NewDanglingImages -BeforeIds $recoverDanglingBeforeLoad
                             if ($loadAttempt -lt 2) {
-                                Write-Warn "docker load 失败，删除镜像文件并重新下载重试..."
+                                Write-Warn (_m "docker load 失败，删除镜像文件并重新下载重试..." "docker load failed, deleting image file and retrying download...")
                                 Remove-Item $recoverTar -Force -ErrorAction SilentlyContinue
                                 if (Test-Path $recoverTagFile) { Remove-Item $recoverTagFile -Force -ErrorAction SilentlyContinue }
                                 $recoverDownloadOK = $false
                                 $recoverSize = Get-RemoteFileSize -Urls $recoverUrls
                                 if ($recoverSize -gt 0) {
                                     $recoverMB = [math]::Round($recoverSize / 1MB, 1)
-                                    Write-Info "加载失败后切换到下一个下载源优先重试 (${recoverMB}MB)..."
+                                    Write-Info (_m "加载失败后切换到下一个下载源优先重试 (${recoverMB}MB)..." "Load failed, switching to next download source and retrying (${recoverMB}MB)...")
                                     $recoverDownloadOK = Download-Robust `
                                         -Urls $recoverRetryUrls `
                                         -OutFile $recoverTar `
@@ -5833,7 +5841,7 @@ function Main {
                                         -RetryPerChunk 20 `
                                         -ForceFresh
                                     if (-not $recoverDownloadOK) {
-                                        Write-Warn "8 线程重试未完成，继续按原策略重试（仅补失败块，8线程）..."
+                                        Write-Warn (_m "8 线程重试未完成，继续按原策略重试（仅补失败块，8线程）..." "8-thread retry incomplete, retrying with same strategy (retry failed chunks only, 8 threads)...")
                                         $recoverDownloadOK = Download-Robust `
                                             -Urls $recoverRetryUrls `
                                             -OutFile $recoverTar `
@@ -5849,11 +5857,11 @@ function Main {
                                     break
                                 }
                                 try { "$recoverTag|$script:imageEdition" | Set-Content -Path "$recoverTagFile" -Force -ErrorAction SilentlyContinue } catch { }
-                                Write-Info "重新下载完成，重试加载..."
+                                Write-Info (_m "重新下载完成，重试加载..." "Re-download complete, retrying load...")
                             } else {
                                 $releaseRecoverReason = "load"
-                                Write-Warn "docker load 重试仍失败"
-                                Write-Info "镜像文件已保留: $recoverTar（可手动执行 docker load -i 排查）"
+                                Write-Warn (_m "docker load 重试仍失败" "docker load retry still failed")
+                                Write-Info (_m "镜像文件已保留: $recoverTar（可手动执行 docker load -i 排查）" "Image file retained: $recoverTar (you can manually run docker load -i to troubleshoot)")
                             }
                         }
                     }
@@ -5866,18 +5874,18 @@ function Main {
                     }
                     Write-Log "Recovery Release step failed: $_"
                     if ($releaseRecoverReason -eq "load") {
-                        Write-Warn "Release 镜像加载阶段异常，将尝试 GHCR 回退"
+                        Write-Warn (_m "Release 镜像加载阶段异常，将尝试 GHCR 回退" "Release image loading stage failed, falling back to GHCR")
                     }
                 }
 
                 # 恢复方式 2: GHCR 拉取
                 if (-not $recoverOK) {
                     if (-not $doRecover) {
-                        Write-Info "已跳过 Release 下载，尝试从 GHCR 拉取..."
+                        Write-Info (_m "已跳过 Release 下载，尝试从 GHCR 拉取..." "Skipped Release download, trying GHCR pull...")
                     } elseif ($releaseRecoverReason -eq "load") {
-                        Write-Info "Release 镜像已下载但加载未完成，尝试从 GHCR 拉取..."
+                        Write-Info (_m "Release 镜像已下载但加载未完成，尝试从 GHCR 拉取..." "Release image downloaded but loading incomplete, trying GHCR pull...")
                     } else {
-                        Write-Info "Release 下载失败，尝试从 GHCR 拉取..."
+                        Write-Info (_m "Release 下载失败，尝试从 GHCR 拉取..." "Release download failed, trying GHCR pull...")
                     }
                     try {
                         $recoverGhcrTag = $recoverTag
@@ -5896,7 +5904,7 @@ function Main {
                             & docker tag $recoverImage "clawnook:latest" 2>$null
                             $tagOk = & docker image inspect "clawnook:latest" 2>$null
                             if ($LASTEXITCODE -eq 0) {
-                                Write-OK "GHCR 镜像拉取成功"
+                                Write-OK (_m "GHCR 镜像拉取成功" "GHCR image pull succeeded")
                                 $recoverOK = $true
                             }
                         }
@@ -5907,7 +5915,7 @@ function Main {
 
                 # 恢复后重试启动容器
                 if ($recoverOK) {
-                    Write-Info "正在重试启动容器..."
+                    Write-Info (_m "正在重试启动容器..." "Retrying container startup...")
                     $retryStateVolume = Get-StateVolumeName -ContainerName $containerName
                     try { & docker volume create $retryStateVolume 2>$null | Out-Null } catch { }
                     try {
@@ -5937,7 +5945,7 @@ function Main {
                         $retryResult = & docker @retryArgs 2>&1
                         $retryCode = $LASTEXITCODE
                         if ($retryCode -eq 0) {
-                            Write-OK "容器启动成功"
+                            Write-OK (_m "容器启动成功" "Container started successfully")
                             $launched = $true
                             $script:deployedContainerName = $containerName
                         } else {
@@ -5951,15 +5959,15 @@ function Main {
                 }
 
                 if (-not $launched) {
-                    Write-Err "镜像获取失败"
+                    Write-Err (_m "镜像获取失败" "Image acquisition failed")
                     Write-Host ""
-                    Write-Host "  💡 请手动执行以下命令后重新运行安装脚本:" -ForegroundColor Cyan
+                    Write-Host (_m "  💡 请手动执行以下命令后重新运行安装脚本:" "  💡 Please run the following commands manually, then re-run the install script:") -ForegroundColor Cyan
                     Write-Host "     docker pull ghcr.io/${GITHUB_REPO}:latest" -ForegroundColor White
                     Write-Host "     docker tag ghcr.io/${GITHUB_REPO}:latest clawnook:latest" -ForegroundColor White
                     Write-Host ""
                 }
             } else {
-                Write-Err "Docker 操作失败: $_"
+                Write-Err (_m "Docker 操作失败: $_" "Docker operation failed: $_")
             }
             Pop-Location -ErrorAction SilentlyContinue
         }
@@ -5982,12 +5990,12 @@ function Main {
         } catch { }
 
         if ($containerExists) {
-            Write-OK "检测到已有 OpenClaw 容器"
-            Write-Info "将由安装脚本处理升级/重装逻辑"
+            Write-OK (_m "检测到已有 OpenClaw 容器" "Existing OpenClaw container detected")
+            Write-Info (_m "将由安装脚本处理升级/重装逻辑" "Upgrade/reinstall logic will be handled by the install script")
         }
 
         # -- Phase 5: Cleanup + Launch ------------------------------------------
-        Write-Step 5 5 "启动 OpenClaw 安装..."
+        Write-Step 5 5 (_m "启动 OpenClaw 安装..." "Starting OpenClaw installation...")
 
         Remove-ResumeTask
         Remove-InstallState
@@ -6022,7 +6030,7 @@ function Main {
     if ($null -eq $launched) { $launched = $false }
     Show-Completion -DeployLaunched $launched -HomeBaseDir $homeBaseDir -IsDockerDesktop $dockerDesktopMode -GatewayPort $gwPort -PanelPort $wpPort -Domain $dom -CertMode $cmode -HttpPort $hPort -HttpsPort $hsPort -SshPort $sPort -AutoOpenFirewall $autoFw -BrowserBridgeEnabled $bbEnabled
 
-    Read-Host "按回车关闭此窗口"
+    Read-Host (_m "按回车关闭此窗口" "Press Enter to close this window")
 }
 
 # --- Entry Point --------------------------------------------------------------
@@ -6033,11 +6041,11 @@ try {
     Write-Log "FATAL: $errMsg" "ERROR"
     Write-Log "Stack trace: $($_.ScriptStackTrace)" "ERROR"
     Write-Host ""
-    Write-Host "  ❌ 安装程序遇到意外错误:" -ForegroundColor Red
+    Write-Host (_m "  ❌ 安装程序遇到意外错误:" "  ❌ Installer encountered an unexpected error:") -ForegroundColor Red
     Write-Host "  $errMsg" -ForegroundColor Red
     Write-Host ""
-    Write-Host "  📄 日志文件: $LOG_FILE" -ForegroundColor DarkGray
+    Write-Host (_m "  📄 日志文件: $LOG_FILE" "  📄 Log file: $LOG_FILE") -ForegroundColor DarkGray
     Write-Host ""
-    Read-Host "按回车退出"
+    Read-Host (_m "按回车退出" "Press Enter to exit")
     return
 }
