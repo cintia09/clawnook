@@ -350,6 +350,7 @@ const ROUTES = [
   { id: 'messaging', title: _t('消息平台') },
   { id: 'browser', title: _t('远端设备管理') },
   { id: 'plugins', title: _t('插件市场') },
+  { id: 'app-center', title: _t('应用中心') },
   { id: 'terminal', title: _t('终端') },
   { id: 'settings', title: _t('系统设置') },
   { id: 'logs', title: _t('日志') },
@@ -5227,16 +5228,16 @@ window._i18nRefresh = function() {
 async function refreshAppCenter() {
   const container = $('app-center-list');
   if (!container) return;
-  container.innerHTML = '<div class="card dim" style="text-align:center;padding:32px">正在扫描已安装的应用...</div>';
+  container.innerHTML = '<div class="card dim" style="grid-column:span 12;text-align:center;padding:32px">正在扫描已安装的应用...</div>';
   try {
-    const res = await api('/api/app-center/list');
-    const data = await res.json();
+    const data = await api('/api/app-center/list');
+    if (data.error) throw new Error(data.error);
     const apps = data.apps || [];
     if (!apps.length) {
-      container.innerHTML = `<div class="card" style="text-align:center;padding:32px">
+      container.innerHTML = `<div class="card" style="grid-column:span 12;text-align:center;padding:32px">
         <div style="font-size:48px;margin-bottom:12px">📦</div>
         <p style="font-weight:600;margin-bottom:6px">${_t('还没有安装任何应用')}</p>
-        <p class="dim" style="font-size:12px">${_t('在 OpenClaw 对话中说「帮我安装物理知识网站」即可自动安装')}</p>
+        <p class="dim" style="font-size:12px">${_t('在 OpenClaw 对话中说「帮我安装 xxx 应用」即可自动搜索并安装')}</p>
       </div>`;
       return;
     }
@@ -5244,7 +5245,7 @@ async function refreshAppCenter() {
       const statusColor = app.status === 'running' ? '#22c55e' : app.status === 'stopped' ? '#ef4444' : '#f59e0b';
       const statusText = app.status === 'running' ? '运行中' : app.status === 'stopped' ? '已停止' : '未知';
       const features = (app.features || []).map(f => `<span style="display:inline-block;padding:1px 6px;background:rgba(99,102,241,.1);color:#6366f1;border-radius:4px;font-size:10px;margin:1px">${f}</span>`).join('');
-      return `<div class="card" style="cursor:pointer;transition:transform .15s,box-shadow .15s" onmouseenter="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.12)'" onmouseleave="this.style.transform='';this.style.boxShadow=''" onclick="window.open('${app.entryPath}','_blank')">
+      return `<div class="card" style="grid-column:span 6;cursor:pointer;transition:transform .15s,box-shadow .15s" onmouseenter="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.12)'" onmouseleave="this.style.transform='';this.style.boxShadow=''" onclick="window.open('${app.entryPath}','_blank')">
         <div style="display:flex;align-items:flex-start;gap:12px">
           <div style="font-size:36px;line-height:1">${app.icon || '📦'}</div>
           <div style="flex:1;min-width:0">
@@ -5263,6 +5264,6 @@ async function refreshAppCenter() {
       </div>`;
     }).join('');
   } catch (e) {
-    container.innerHTML = `<div class="card dim" style="text-align:center;padding:32px">加载失败: ${e.message}</div>`;
+    container.innerHTML = `<div class="card dim" style="grid-column:span 12;text-align:center;padding:32px">加载失败: ${e.message}</div>`;
   }
 }

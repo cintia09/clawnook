@@ -65,7 +65,7 @@
           (function(){
             var h = (location.hash||'').replace('#','').trim();
             if(h==='ai') h='openclaw-ai'; if(h==='openclaw') h='openclaw-engine';
-            var validRoutes = ['dashboard','openclaw-engine','openclaw-ai','messaging','browser','plugins','terminal','settings','logs'];
+            var validRoutes = ['dashboard','openclaw-engine','openclaw-ai','messaging','browser','plugins','app-center','terminal','settings','logs'];
             var route = validRoutes.indexOf(h) >= 0 ? h : 'dashboard';
             var el = document.getElementById('page-' + route);
             if(el) el.classList.add('active');
@@ -563,18 +563,23 @@
 
       <!-- 应用中心 -->
       <section class="page" id="page-app-center" data-title="应用中心">
-        <div class="card" style="margin-bottom:16px">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-            <span style="font-size:28px">⊞</span>
-            <div>
-              <h3 style="margin:0">应用中心</h3>
-              <p class="dim" style="margin:2px 0 0;font-size:12px">通过 OpenClaw 安装的应用在此处统一管理和访问</p>
+        <div class="grid">
+          <div class="card" style="grid-column: span 12;">
+            <div class="row" style="justify-content:space-between">
+              <div>
+                <div style="font-weight:900;font-size:18px">⊞ 应用中心</div>
+                <div class="muted" style="margin-top:4px;font-size:13px">通过 OpenClaw 安装的应用在此处统一管理和访问</div>
+              </div>
+              <div class="row">
+                <button class="btn" onclick="refreshAppCenter()">刷新</button>
+              </div>
             </div>
+            <div class="sep"></div>
+            <div class="dim small">💡 提示：在 OpenClaw 对话中说「帮我安装 xxx 应用」即可自动搜索并安装</div>
           </div>
-          <p class="dim" style="font-size:12px;margin-bottom:8px">💡 提示：在 OpenClaw 对话中说「帮我安装物理知识网站」即可自动安装应用</p>
-        </div>
-        <div id="app-center-list" class="grid" style="gap:12px">
-          <div class="card dim" style="text-align:center;padding:32px">正在加载已安装的应用...</div>
+          <div id="app-center-list" style="grid-column: span 12; display:grid; grid-template-columns: repeat(12, minmax(0,1fr)); gap:12px;">
+            <div class="card dim" style="grid-column: span 12; text-align:center;padding:32px">正在加载已安装的应用...</div>
+          </div>
         </div>
       </section>
 
