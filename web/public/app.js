@@ -391,6 +391,7 @@ function setActiveRoute(route){
   if (route === 'messaging') { loadMessagingConfig(); }
   if (route === 'browser') startDeviceManagementPolling();
   if (route === 'plugins') refreshPlugins();
+  if (route === 'app-center') refreshAppCenter();
   if (route === 'terminal') {
     bindTerminalInteraction();
     terminalConnect();
@@ -5221,3 +5222,47 @@ window._i18nRefresh = function() {
   });
   resetInactivityTimer();
 })();
+
+// ===================== APP CENTER =====================
+async function refreshAppCenter() {
+  const container = $('app-center-list');
+  if (!container) return;
+  container.innerHTML = '<div class="card dim" style="text-align:center;padding:32px">正在扫描已安装的应用...</div>';
+  try {
+    const res = await api('/api/app-center/list');
+    const data = await res.json();
+    const apps = data.apps || [];
+    if (!apps.length) {
+      container.innerHTML = `<div class="card" style="text-align:center;padding:32px">
+        <div style="font-size:48px;margin-bottom:12px">📦</div>
+        <p style="font-weight:600;margin-bottom:6px">${_t('还没有安装任何应用')}</p>
+        <p class="dim" style="font-size:12px">${_t('在 OpenClaw 对话中说「帮我安装物理知识网站」即可自动安装')}</p>
+      </div>`;
+      return;
+    }
+    container.innerHTML = apps.map(app => {
+      const statusColor = app.status === 'running' ? '#22c55e' : app.status === 'stopped' ? '#ef4444' : '#f59e0b';
+      const statusText = app.status === 'running' ? '运行中' : app.status === 'stopped' ? '已停止' : '未知';
+      const features = (app.features || []).map(f => `<span style="display:inline-block;padding:1px 6px;background:rgba(99,102,241,.1);color:#6366f1;border-radius:4px;font-size:10px;margin:1px">${f}</span>`).join('');
+      return `<div class="card" style="cursor:pointer;transition:transform .15s,box-shadow .15s" onmouseenter="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.12)'" onmouseleave="this.style.transform='';this.style.boxShadow=''" onclick="window.open('${app.entryPath}','_blank')">
+        <div style="display:flex;align-items:flex-start;gap:12px">
+          <div style="font-size:36px;line-height:1">${app.icon || '📦'}</div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <strong style="font-size:14px">${app.displayName || app.name}</strong>
+              <span style="display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${statusColor}20;color:${statusColor}">
+                <span style="width:6px;height:6px;border-radius:50%;background:${statusColor}"></span>${_t(statusText)}
+              </span>
+              <span class="dim" style="font-size:10px">v${app.version || '?'}</span>
+            </div>
+            <p class="dim" style="font-size:12px;margin:0 0 6px">${app.description || ''}</p>
+            <div>${features}</div>
+          </div>
+          <div style="font-size:18px;color:var(--dim);margin-top:4px">→</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="card dim" style="text-align:center;padding:32px">加载失败: ${e.message}</div>`;
+  }
+}

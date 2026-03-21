@@ -10872,6 +10872,44 @@ app.post('/api/plugins/skill/upload-install', (req, res) => {
   });
 });
 
+// ===================== APP CENTER =====================
+const APPS_DIR = path.join(process.env.HOME || '/root', '.openclaw', 'apps');
+
+app.get('/api/app-center/list', async (req, res) => {
+  const apps = [];
+  try {
+    if (fs.existsSync(APPS_DIR)) {
+      const entries = fs.readdirSync(APPS_DIR, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        const appJsonPath = path.join(APPS_DIR, e.name, 'app.json');
+        if (!fs.existsSync(appJsonPath)) continue;
+        try {
+          const meta = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+          // Check if service is running (best effort)
+          let status = 'unknown';
+          if (meta.port) {
+            try {
+              const http = require('http');
+              status = await new Promise((resolve) => {
+                const r = http.get({ hostname: '127.0.0.1', port: meta.port, path: '/api/auth/me', timeout: 2000 }, (resp) => {
+                  resolve(resp.statusCode ? 'running' : 'stopped');
+                });
+                r.on('error', () => resolve('stopped'));
+                r.on('timeout', () => { r.destroy(); resolve('stopped'); });
+              });
+            } catch { status = 'unknown'; }
+          }
+          apps.push({ ...meta, status, dirName: e.name });
+        } catch {}
+      }
+    }
+  } catch (e) {
+    console.error('[app-center] scan error:', e.message);
+  }
+  res.json({ apps });
+});
+
 // Legacy: direct install from git URL (backward compat)
 app.post('/api/plugins/skill/install', async (req, res) => {
   const { url } = req.body || {};
