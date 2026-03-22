@@ -5302,7 +5302,7 @@ async function installApp(appId) {
   try {
     var resp = await api('/api/app-center/install', {
       method: 'POST',
-      body: JSON.stringify({ id: appId, name: appId, displayName: app.name, description: app.description, icon: app.icon, version: app.version, features: app.features, repo: app.repo, port: app.port, entryPath: app.entryPath, category: app.category })
+      body: { id: appId, name: appId, displayName: app.name, description: app.description, icon: app.icon, version: app.version, features: app.features, repo: app.repo, port: app.port, entryPath: app.entryPath, category: app.category }
     });
     if (resp.error) throw new Error(resp.error);
     appLog('✅ 应用 ' + app.name + ' 注册成功');
@@ -5318,7 +5318,7 @@ async function uninstallApp(appId) {
   if (!confirm('确定卸载 ' + appId + '？\n\n注意：这只会移除应用注册，不会删除应用数据。')) return;
   appLog('正在卸载: ' + appId);
   try {
-    var resp = await api('/api/app-center/uninstall', { method: 'POST', body: JSON.stringify({ id: appId }) });
+    var resp = await api('/api/app-center/uninstall', { method: 'POST', body: { id: appId } });
     if (resp.error) throw new Error(resp.error);
     appLog('✅ 已卸载: ' + appId);
     refreshAppCenter();
