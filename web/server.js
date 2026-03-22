@@ -279,10 +279,13 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'"
-  );
+  // Skip strict CSP for proxied apps — they load their own CDN resources
+  if (!req.path.startsWith('/apps/')) {
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'"
+    );
+  }
   next();
 });
 
@@ -3539,8 +3542,8 @@ function requireAuthApi(req, res, next) {
     const ip = req.socket?.remoteAddress || req.connection?.remoteAddress || '';
     if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
   }
-  // Allow app-center AI calls from localhost (embedded apps)
-  if (req.path.startsWith('/app-center/ai/')) {
+  // Allow app-center calls from localhost (proxied by Caddy/Gateway)
+  if (req.path.startsWith('/app-center/')) {
     const ip = req.socket?.remoteAddress || req.connection?.remoteAddress || '';
     if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
   }

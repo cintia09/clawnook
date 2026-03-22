@@ -5168,14 +5168,14 @@ $('btn-logout').addEventListener('click', async ()=>{
 });
 
 // ------------------------
-// Init
+// Init (deferred to ensure all let/const declarations are initialized)
 // ------------------------
-{
+setTimeout(function(){
   const _initRoute = getRouteFromHash();
   setActiveRoute(_initRoute);
   // setActiveRoute calls refreshStatus for dashboard; for other routes, do it once
   if (_initRoute !== 'dashboard') refreshStatus();
-}
+}, 0);
 setInterval(refreshStatus, 30000);
 setInterval(() => {
   const route = getRouteFromHash();
@@ -5237,7 +5237,7 @@ const APP_CATALOG = [
     category: 'education',
     repo: 'https://github.com/cintia09/jiangsu-physics-knowledge',
     port: 8080,
-    entryPath: '/apps/physics/',
+    entryPath: '/apps/jiangsu-physics/',
     displayName: '江苏高考物理知识网站'
   }
 ];
@@ -5253,43 +5253,73 @@ function appLog(msg) {
 }
 
 async function refreshAppCenter() {
-  const installedContainer = $('app-center-installed');
-  const catalogContainer = $('app-center-catalog');
-  if (!installedContainer || !catalogContainer) return;
-  installedContainer.innerHTML = '<div style="grid-column:span 12;text-align:center;padding:20px;color:var(--dim)">扫描中...</div>';
+  var container = $('app-center-catalog');
+  if (!container) return;
+  container.innerHTML = '<div style="grid-column:span 12;text-align:center;padding:20px;color:var(--dim)">扫描中...</div>';
   appLog('正在扫描已安装的应用...');
-  let installedApps = [];
+
+  var installedApps = [];
   try {
-    const data = await api('/api/app-center/list');
+    var data = await api('/api/app-center/list');
     installedApps = data.apps || [];
     appLog('扫描完成，发现 ' + installedApps.length + ' 个已安装应用');
   } catch(e) { appLog('⚠ 扫描失败: ' + e.message); }
-  const installedIds = new Set(installedApps.map(a => a.name));
-  // Installed apps
-  if (!installedApps.length) {
-    installedContainer.innerHTML = '<div style="grid-column:span 12;text-align:center;padding:24px;color:var(--dim)"><div style="font-size:32px;margin-bottom:6px">📭</div><p style="font-size:13px">' + _t('还没有安装任何应用') + '</p><p class="dim" style="font-size:11px;margin-top:4px">👇 从下方应用商店安装</p></div>';
-  } else {
-    installedContainer.innerHTML = installedApps.map(function(app) {
-      var sc = app.status === 'running' ? '#22c55e' : app.status === 'stopped' ? '#ef4444' : '#f59e0b';
-      var st = app.status === 'running' ? _t('运行中') : app.status === 'stopped' ? _t('已停止') : _t('未知');
-      var feats = (app.features || []).map(function(f){ return '<span style="display:inline-block;padding:1px 6px;background:rgba(99,102,241,.1);color:#6366f1;border-radius:4px;font-size:10px;margin:1px">'+f+'</span>'; }).join('');
-      var openBtn = app.status === 'running' ? '<button class="btn btn-primary" style="font-size:11px;padding:3px 12px" onclick="window.open(\''+app.entryPath+'\',\'_blank\')">'+_t('打开')+'</button>' : '';
-      return '<div class="card" style="grid-column:span 6;transition:transform .15s" onmouseenter="this.style.transform=\'translateY(-2px)\'" onmouseleave="this.style.transform=\'\'"><div style="display:flex;align-items:flex-start;gap:12px"><div style="font-size:36px;line-height:1">'+(app.icon||'📦')+'</div><div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap"><strong style="font-size:14px">'+(app.displayName||app.name)+'</strong><span style="display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;background:'+sc+'20;color:'+sc+'"><span style="width:6px;height:6px;border-radius:50%;background:'+sc+'"></span>'+st+'</span><span class="dim" style="font-size:10px">v'+(app.version||'?')+'</span></div><p class="dim" style="font-size:12px;margin:0 0 6px">'+(app.description||'')+'</p><div style="margin-bottom:8px">'+feats+'</div><div style="display:flex;align-items:center;gap:8px">'+openBtn+'<button class="btn" style="font-size:11px;padding:3px 12px;color:#ef4444;border-color:#ef4444" onclick="uninstallApp(\''+app.name+'\')">'+_t('卸载')+'</button></div></div></div></div>';
-    }).join('');
-  }
-  // Catalog
-  catalogContainer.innerHTML = APP_CATALOG.map(function(app) {
-    var isInstalled = installedIds.has(app.id) || installedIds.has(app.name) || installedApps.some(function(a){ return a.displayName === app.name; });
-    var isRunning = installedApps.some(function(a){ return (a.name === app.id || a.displayName === app.name) && a.status === 'running'; });
-    var actionHtml;
-    if (isInstalled) {
-      actionHtml = '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;background:rgba(34,197,94,.1);color:#22c55e">✓ '+_t('已安装')+'</span>';
-      if (isRunning) actionHtml += ' <button class="btn btn-primary" style="font-size:11px;padding:3px 12px;margin-left:4px" onclick="event.stopPropagation();window.open(\''+app.entryPath+'\',\'_blank\')">'+_t('打开')+'</button>';
-    } else {
-      actionHtml = '<button class="btn btn-primary" id="install-btn-'+app.id+'" style="font-size:11px;padding:3px 14px" onclick="event.stopPropagation();installApp(\''+app.id+'\')">'+_t('安装')+'</button>';
+
+  var installedMap = {};
+  installedApps.forEach(function(a) { installedMap[a.name] = a; });
+
+  container.innerHTML = APP_CATALOG.map(function(app) {
+    var installed = installedMap[app.id];
+    var isInstalled = !!installed;
+    var isRunning = installed && installed.status === 'running';
+    var isStopped = installed && installed.status === 'stopped';
+
+    // Status badge
+    var statusHtml = '';
+    if (isRunning) {
+      statusHtml = '<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(34,197,94,.15);color:#22c55e"><span style="width:6px;height:6px;border-radius:50%;background:#22c55e"></span>'+_t('运行中')+'</span>';
+    } else if (isStopped) {
+      statusHtml = '<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(239,68,68,.15);color:#ef4444"><span style="width:6px;height:6px;border-radius:50%;background:#ef4444"></span>'+_t('已停止')+'</span>';
+    } else if (isInstalled) {
+      statusHtml = '<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(245,158,11,.15);color:#f59e0b"><span style="width:6px;height:6px;border-radius:50%;background:#f59e0b"></span>'+_t('未知')+'</span>';
     }
-    var feats = (app.features || []).map(function(f){ return '<span style="display:inline-block;padding:1px 6px;background:rgba(99,102,241,.1);color:#6366f1;border-radius:4px;font-size:10px;margin:1px">'+f+'</span>'; }).join('');
-    return '<div class="card" style="grid-column:span 6;transition:transform .15s" onmouseenter="this.style.transform=\'translateY(-2px)\'" onmouseleave="this.style.transform=\'\'"><div style="display:flex;align-items:flex-start;gap:12px"><div style="font-size:36px;line-height:1">'+app.icon+'</div><div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><strong style="font-size:14px">'+app.name+'</strong><span class="dim" style="font-size:10px">v'+app.version+'</span></div><p class="dim" style="font-size:12px;margin:0 0 6px">'+app.description+'</p><div style="margin-bottom:8px">'+feats+'</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+actionHtml+(app.repo ? '<a href="'+app.repo+'" target="_blank" rel="noopener" style="font-size:11px;color:var(--dim)" onclick="event.stopPropagation()">GitHub →</a>' : '')+'</div></div></div></div>';
+
+    // Features
+    var feats = (app.features || []).map(function(f) {
+      return '<span style="display:inline-block;padding:1px 6px;background:rgba(99,102,241,.1);color:#6366f1;border-radius:4px;font-size:10px;margin:1px">'+f+'</span>';
+    }).join('');
+
+    // Action buttons
+    var actions = '';
+    var appUrl = '/apps/' + app.id + '/';
+    if (isInstalled && isRunning) {
+      actions = '<button class="btn btn-primary" style="font-size:11px;padding:3px 12px" onclick="event.stopPropagation();window.open(\''+appUrl+'\',\'_blank\')">'+_t('打开')+'</button>'
+        + '<button class="btn" style="font-size:11px;padding:3px 12px;color:#ef4444;border-color:#ef4444" onclick="event.stopPropagation();uninstallApp(\''+app.id+'\')">'+_t('卸载')+'</button>';
+    } else if (isInstalled && isStopped) {
+      actions = '<button class="btn btn-primary" style="font-size:11px;padding:3px 12px" onclick="event.stopPropagation();startApp(\''+app.id+'\')">'+_t('启动')+'</button>'
+        + '<button class="btn" style="font-size:11px;padding:3px 12px;color:#ef4444;border-color:#ef4444" onclick="event.stopPropagation();uninstallApp(\''+app.id+'\')">'+_t('卸载')+'</button>';
+    } else if (isInstalled) {
+      actions = '<button class="btn" style="font-size:11px;padding:3px 12px;color:#ef4444;border-color:#ef4444" onclick="event.stopPropagation();uninstallApp(\''+app.id+'\')">'+_t('卸载')+'</button>';
+    } else {
+      actions = '<button class="btn btn-primary" id="install-btn-'+app.id+'" style="font-size:11px;padding:3px 14px" onclick="event.stopPropagation();installApp(\''+app.id+'\')">'+_t('安装')+'</button>';
+    }
+
+    // GitHub link
+    var ghLink = app.repo ? '<a href="'+app.repo+'" target="_blank" rel="noopener" style="font-size:11px;color:var(--dim)" onclick="event.stopPropagation()">GitHub →</a>' : '';
+
+    return '<div class="card" style="grid-column:span 6;transition:transform .15s" onmouseenter="this.style.transform=\'translateY(-2px)\'" onmouseleave="this.style.transform=\'\'">'
+      + '<div style="display:flex;align-items:flex-start;gap:12px">'
+      + '<div style="font-size:36px;line-height:1">'+app.icon+'</div>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">'
+      + '<strong style="font-size:14px">'+app.name+'</strong>'
+      + statusHtml
+      + '<span class="dim" style="font-size:10px">v'+app.version+'</span>'
+      + '</div>'
+      + '<p class="dim" style="font-size:12px;margin:0 0 6px">'+app.description+'</p>'
+      + '<div style="margin-bottom:8px">'+feats+'</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+actions+ghLink+'</div>'
+      + '</div></div></div>';
   }).join('');
 }
 
@@ -5315,7 +5345,7 @@ async function installApp(appId) {
 }
 
 async function uninstallApp(appId) {
-  if (!confirm('确定卸载 ' + appId + '？\n\n注意：这只会移除应用注册，不会删除应用数据。')) return;
+  if (!confirm('确定卸载 ' + appId + '？\n\n注意：这会停止应用服务并移除应用注册。')) return;
   appLog('正在卸载: ' + appId);
   try {
     var resp = await api('/api/app-center/uninstall', { method: 'POST', body: { id: appId } });
@@ -5323,5 +5353,17 @@ async function uninstallApp(appId) {
     appLog('✅ 已卸载: ' + appId);
     refreshAppCenter();
   } catch(e) { appLog('❌ 卸载失败: ' + e.message); }
+}
+
+async function startApp(appId) {
+  var app = APP_CATALOG.find(function(a){ return a.id === appId; });
+  if (!app) return;
+  appLog('正在启动: ' + app.name);
+  try {
+    var resp = await api('/api/app-center/start', { method: 'POST', body: { id: appId, port: app.port } });
+    if (resp.error) throw new Error(resp.error);
+    appLog('✅ 已启动: ' + app.name + ' (端口 ' + app.port + ')');
+    await refreshAppCenter();
+  } catch(e) { appLog('❌ 启动失败: ' + e.message); }
 }
 
