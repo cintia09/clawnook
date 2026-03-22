@@ -3539,6 +3539,11 @@ function requireAuthApi(req, res, next) {
     const ip = req.socket?.remoteAddress || req.connection?.remoteAddress || '';
     if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
   }
+  // Allow app-center AI calls from localhost (embedded apps)
+  if (req.path.startsWith('/app-center/ai/')) {
+    const ip = req.socket?.remoteAddress || req.connection?.remoteAddress || '';
+    if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
+  }
   if (!isAuthenticated(req)) return res.status(401).json({ error: 'unauthorized' });
   next();
 }
@@ -5154,18 +5159,29 @@ function createGatewayControlUiClient(timeoutMs = 5000) {
           });
           const close = () => { try { ws.close(); } catch {} };
           const handlers = new Map();
+          const eventListeners = new Map();
+          const on = (event, cb) => {
+            if (!eventListeners.has(event)) eventListeners.set(event, []);
+            eventListeners.get(event).push(cb);
+          };
           ws.on('message', (innerData) => {
             try {
               const innerMsg = JSON.parse(String(innerData));
               const pending = handlers.get(innerMsg.id);
-              if (!pending) return;
-              handlers.delete(innerMsg.id);
-              clearTimeout(pending.reqTimer);
-              if (innerMsg.ok) pending.resolveReq(innerMsg.payload);
-              else pending.rejectReq(new Error(innerMsg.error?.message || innerMsg.error?.code || `${innerMsg.id} failed`));
+              if (pending) {
+                handlers.delete(innerMsg.id);
+                clearTimeout(pending.reqTimer);
+                if (innerMsg.ok) pending.resolveReq(innerMsg.payload);
+                else pending.rejectReq(new Error(innerMsg.error?.message || innerMsg.error?.code || `${innerMsg.id} failed`));
+                return;
+              }
+              if (innerMsg.event) {
+                const cbs = eventListeners.get(innerMsg.event);
+                if (cbs) cbs.forEach(cb => { try { cb(innerMsg.payload); } catch {} });
+              }
             } catch {}
           });
-          resolve({ request, close });
+          resolve({ request, close, on });
         }
       } catch {}
     });
@@ -10892,7 +10908,7 @@ app.get('/api/app-center/list', async (req, res) => {
             try {
               const http = require('http');
               status = await new Promise((resolve) => {
-                const r = http.get({ hostname: '127.0.0.1', port: meta.port, path: '/api/auth/me', timeout: 2000 }, (resp) => {
+                const r = http.get({ hostname: '127.0.0.1', port: meta.port, path: '/', timeout: 2000 }, (resp) => {
                   resolve(resp.statusCode ? 'running' : 'stopped');
                 });
                 r.on('error', () => resolve('stopped'));
@@ -10908,6 +10924,129 @@ app.get('/api/app-center/list', async (req, res) => {
     console.error('[app-center] scan error:', e.message);
   }
   res.json({ apps });
+});
+
+// App AI proxy: forwards chat requests through OpenClaw gateway (like Feishu/messaging plugins)
+app.post('/api/app-center/ai/chat', async (req, res) => {
+  let client = null;
+  try {
+    const { messages, sessionKey: reqSessionKey } = req.body || {};
+    if (!messages?.length) return res.status(400).json({ error: 'messages required' });
+
+    const systemMsg = messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
+    const userMsg = messages.filter(m => m.role === 'user').map(m => m.content).join('\n');
+    const fullMessage = systemMsg ? `[System Instruction]\n${systemMsg}\n\n[User Request]\n${userMsg}` : userMsg;
+    const sessionKey = reqSessionKey || 'app:physics-quiz-' + Date.now();
+
+    console.log('[app-center/ai] Connecting to gateway...');
+    client = await createGatewayControlUiClient(10000);
+    console.log('[app-center/ai] Connected.');
+
+    // Listen for chat events on the WS
+    let responseChunks = [];
+    let finalResponse = '';
+    let chatDone = false;
+    let chatError = null;
+
+    client.on('chat', (payload) => {
+      console.log('[app-center/ai] chat event: state=' + payload?.state);
+      if (!payload) return;
+      const extractText = (msg) => {
+        if (!msg) return '';
+        if (typeof msg === 'string') return msg;
+        if (typeof msg.text === 'string') return msg.text;
+        if (Array.isArray(msg.content)) return msg.content.map(b => b.text || (typeof b === 'string' ? b : '')).join('');
+        if (typeof msg.content === 'string') return msg.content;
+        return '';
+      };
+      if (payload.state === 'delta' && payload.message) {
+        const txt = extractText(payload.message);
+        if (txt) responseChunks.push(txt);
+      }
+      if (payload.state === 'final') {
+        const txt = extractText(payload.message);
+        if (txt) finalResponse = txt;
+        chatDone = true;
+      }
+      if (payload.state === 'error') {
+        chatError = payload.error || 'Unknown AI error';
+        chatDone = true;
+      }
+    });
+
+    console.log('[app-center/ai] Sending chat.send, sessionKey=' + sessionKey);
+    let sendResult;
+    try {
+      sendResult = await client.request('chat.send', {
+        sessionKey,
+        message: fullMessage,
+        deliver: true,
+        timeoutMs: 120000,
+        idempotencyKey: crypto.randomUUID()
+      }, 15000);
+      console.log('[app-center/ai] chat.send ack:', JSON.stringify(sendResult || {}).slice(0, 300));
+    } catch (sendErr) {
+      console.log('[app-center/ai] chat.send error:', sendErr.message);
+    }
+
+    // Wait for events or poll history
+    const maxWaitMs = 90000;
+    const start = Date.now();
+    let pollCount = 0;
+
+    while (!chatDone && Date.now() - start < maxWaitMs) {
+      await new Promise(r => setTimeout(r, 2000));
+      pollCount++;
+
+      // Poll history every 6s
+      if (pollCount % 3 === 0) {
+        try {
+          const hist = await client.request('chat.history', { sessionKey, limit: 10 }, 8000);
+          const msgs = hist?.messages || [];
+          if (pollCount === 3 && msgs.length > 0) {
+            console.log('[app-center/ai] history sample:', JSON.stringify(msgs[msgs.length - 1]).slice(0, 500));
+            console.log('[app-center/ai] history count=' + msgs.length);
+          }
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i];
+            const role = m.role || m.from || '';
+            let txt = '';
+            if (typeof m.text === 'string') txt = m.text;
+            else if (typeof m.content === 'string') txt = m.content;
+            else if (typeof m.message === 'string') txt = m.message;
+            else if (Array.isArray(m.blocks)) txt = m.blocks.map(b => b.text || '').join('');
+            else if (Array.isArray(m.content)) txt = m.content.map(c => c.text || (typeof c === 'string' ? c : '')).join('');
+            if ((role === 'assistant' || role === 'ai' || role === 'bot') && txt.length > 50) {
+              finalResponse = txt;
+              chatDone = true;
+              console.log('[app-center/ai] Found response in history, len=' + txt.length);
+              break;
+            }
+          }
+        } catch (e) {
+          console.log('[app-center/ai] history poll err:', e.message);
+        }
+      }
+    }
+
+    client.close();
+    client = null;
+
+    if (chatError) return res.json({ error: 'AI error: ' + chatError });
+
+    const reply = finalResponse || responseChunks.join('');
+    if (!reply) {
+      console.log('[app-center/ai] No response within timeout');
+      return res.json({ error: 'OpenClaw did not return a response in time' });
+    }
+
+    console.log('[app-center/ai] Got response, length=' + reply.length);
+    res.json({ choices: [{ message: { role: 'assistant', content: reply } }] });
+  } catch (e) {
+    if (client) try { client.close(); } catch {}
+    console.error('[app-center/ai] error:', e.message);
+    res.status(502).json({ error: 'OpenClaw Gateway error: ' + e.message });
+  }
 });
 
 // Legacy: direct install from git URL (backward compat)
