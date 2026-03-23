@@ -10045,6 +10045,63 @@ app.post('/api/openclaw/pairing/approve-discord', async (req, res) => {
   }
 });
 
+// --- WeChat QR Login ---
+app.post('/api/openclaw/wechat/qr', async (req, res) => {
+  try {
+    const command = [
+      'if command -v openclaw >/dev/null 2>&1; then',
+      '  openclaw channels login --channel wechat --qr-only 2>&1',
+      'elif [ -x /root/.npm-global/bin/openclaw ]; then',
+      '  /root/.npm-global/bin/openclaw channels login --channel wechat --qr-only 2>&1',
+      'elif [ -f /root/.openclaw/openclaw-source/openclaw.mjs ]; then',
+      '  node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs channels login --channel wechat --qr-only 2>&1',
+      'else',
+      '  echo "openclaw not found"',
+      '  exit 127',
+      'fi'
+    ].join('\n');
+    const result = await runOpenClawCli(command, 30000);
+    const output = String(result.output || '').trim();
+    // Look for QR URL in output (typically https://... or data:image/png;base64,...)
+    const urlMatch = output.match(/(https?:\/\/[^\s]+\.png[^\s]*|data:image\/[^\s]+)/);
+    if (urlMatch) {
+      return res.json({ success: true, qrUrl: urlMatch[1], output });
+    }
+    if (!result.ok) {
+      return res.status(500).json({ success: false, error: output || 'Failed to generate WeChat QR code' });
+    }
+    // If no image URL found, return raw output for debugging
+    res.json({ success: true, qrUrl: '', output, error: 'QR URL not found in output — WeChat channel may not be installed yet. Run: openclaw plugins install @openclaw/wechat' });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || 'WeChat QR generation failed' });
+  }
+});
+
+app.post('/api/openclaw/wechat/logout', async (req, res) => {
+  try {
+    const command = [
+      'if command -v openclaw >/dev/null 2>&1; then',
+      '  openclaw channels logout --channel wechat 2>&1',
+      'elif [ -x /root/.npm-global/bin/openclaw ]; then',
+      '  /root/.npm-global/bin/openclaw channels logout --channel wechat 2>&1',
+      'elif [ -f /root/.openclaw/openclaw-source/openclaw.mjs ]; then',
+      '  node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs channels logout --channel wechat 2>&1',
+      'else',
+      '  echo "openclaw not found"',
+      '  exit 127',
+      'fi'
+    ].join('\n');
+    const result = await runOpenClawCli(command, 15000);
+    const output = String(result.output || '').trim();
+    if (!result.ok) {
+      return res.status(500).json({ success: false, error: output || 'WeChat logout failed' });
+    }
+    res.json({ success: true, output });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || 'WeChat logout failed' });
+  }
+});
+
 app.get('/api/openclaw/gateway/logs', (req, res) => {
   try {
     const lines = Math.max(20, Math.min(parseInt(req.query.lines || String(LOG_VIEW_DEFAULT_LINES), 10) || LOG_VIEW_DEFAULT_LINES, OPENCLAW_GATEWAY_LOG_API_MAX_LINES));
