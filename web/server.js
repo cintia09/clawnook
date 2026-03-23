@@ -10338,6 +10338,57 @@ function ensureOpenclawPkgRoot() {
 const OPENCLAW_MANAGED_SKILLS_DIR = path.join(process.env.HOME || '/root', '.openclaw', 'skills');
 const OPENCLAW_SKILLS_DIR = OPENCLAW_MANAGED_SKILLS_DIR; // install target = managed (~/.openclaw/skills/)
 const SKILL_SCAN_TMP = '/tmp/openclaw-skill-scan';
+const OPENCLAW_USER_EXTENSIONS_DIR = path.join(process.env.HOME || '/root', '.openclaw', 'extensions');
+
+/**
+ * Ensure `require('openclaw/plugin-sdk')` resolves for user-installed plugins.
+ * When OpenClaw is source-installed (not npm global), plugins can't find the
+ * module. We create a symlink: ~/.openclaw/node_modules/openclaw → <source-root>
+ * so Node resolves it from any path under ~/.openclaw/.
+ * Returns { created, path, target, error? }
+ */
+function ensureOpenclawModuleLink() {
+  const homeDir = process.env.HOME || '/root';
+  const sourceRoot = path.join(homeDir, '.openclaw', 'openclaw-source');
+
+  // Only needed when source-installed
+  if (!fs.existsSync(path.join(sourceRoot, 'skills'))) {
+    return { created: false, reason: 'source-install not detected' };
+  }
+
+  // Check if openclaw is already resolvable from extensions dir
+  const nodeModulesDir = path.join(homeDir, '.openclaw', 'node_modules');
+  const linkPath = path.join(nodeModulesDir, 'openclaw');
+
+  try {
+    const existing = fs.lstatSync(linkPath);
+    if (existing.isSymbolicLink()) {
+      const target = fs.readlinkSync(linkPath);
+      if (target === sourceRoot || fs.realpathSync(linkPath) === fs.realpathSync(sourceRoot)) {
+        return { created: false, path: linkPath, target: sourceRoot, reason: 'symlink already exists' };
+      }
+      // Stale symlink — remove and recreate
+      fs.unlinkSync(linkPath);
+    } else if (existing.isDirectory()) {
+      // Real directory — don't touch
+      return { created: false, path: linkPath, reason: 'real directory exists' };
+    }
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      return { created: false, error: e.message };
+    }
+  }
+
+  try {
+    fs.mkdirSync(nodeModulesDir, { recursive: true });
+    fs.symlinkSync(sourceRoot, linkPath, 'dir');
+    console.log(`[plugins] Created module symlink: ${linkPath} → ${sourceRoot}`);
+    return { created: true, path: linkPath, target: sourceRoot };
+  } catch (e) {
+    console.error(`[plugins] Failed to create module symlink: ${e.message}`);
+    return { created: false, error: e.message };
+  }
+}
 const SKILL_SCAN_MAX_DEPTH = 8;
 const SKILL_MD_MAX_SIZE = 512 * 1024; // 512KB
 const SKILL_DIR_MAX_FILES = 200;
@@ -11555,21 +11606,28 @@ app.post('/api/plugins/extension/install', async (req, res) => {
   }
 
   try {
+    // Ensure openclaw/plugin-sdk is resolvable for source-installed OpenClaw
+    const linkResult = ensureOpenclawModuleLink();
+    const linkLog = linkResult.created
+      ? `[symlink] Created openclaw module link: ${linkResult.path} → ${linkResult.target}\n`
+      : '';
+
     // npx commands run directly (e.g. npx -y @tencent-weixin/openclaw-weixin-cli@latest install)
     if (isNpxCmd) {
       const npxResult = await runOpenClawCli(sanitized, 180000);
       const output = stripAnsi(String(npxResult.output || '')).trim();
+      const fullOutput = linkLog + output;
       const hasLoadError = /\b(failed to load|Cannot find module|PluginLoadFailureError)\b/i.test(output);
       const hasInstallOk = /\b(Installed plugin|Installing to|插件就绪|already at)\b/i.test(output);
       // Plugin installed but failed to load → warning
       if (hasInstallOk && hasLoadError) {
-        return res.json({ success: true, output, warning: 'Plugin installed but failed to load — possible version mismatch. Check install log for details.' });
+        return res.json({ success: true, output: fullOutput, warning: 'Plugin installed but failed to load — possible version mismatch. Check install log for details.' });
       }
       const hasFatalError = !npxResult.ok || (!hasInstallOk && /\b(failed|error|not found)\b/i.test(output));
       if (hasFatalError) {
-        return res.status(500).json({ success: false, error: output || 'npx command failed' });
+        return res.status(500).json({ success: false, error: fullOutput || 'npx command failed' });
       }
-      return res.json({ success: true, output });
+      return res.json({ success: true, output: fullOutput });
     }
 
     // Try openclaw plugins install first (proper way)
@@ -11588,18 +11646,19 @@ app.post('/api/plugins/extension/install', async (req, res) => {
     const cliOutput = stripAnsi(String(cliResult.output || '')).trim();
     if (cliResult.ok) {
       const cliHasError = /\b(failed to load|Cannot find module|PluginLoadFailureError)\b/i.test(cliOutput);
+      const cliFullOutput = linkLog + cliOutput;
       if (cliHasError) {
-        return res.json({ success: true, output: cliOutput, warning: 'Plugin installed but failed to load — possible version mismatch' });
+        return res.json({ success: true, output: cliFullOutput, warning: 'Plugin installed but failed to load — possible version mismatch' });
       }
-      return res.json({ success: true, output: cliOutput });
+      return res.json({ success: true, output: cliFullOutput });
     }
     // Fallback to npm install -g if CLI failed
     const npmResult = await runOpenClawCli(`npm install -g ${JSON.stringify(sanitized)} 2>&1`, 120000);
     const npmOutput = stripAnsi(String(npmResult.output || '')).trim();
     if (!npmResult.ok) {
-      return res.status(500).json({ success: false, error: npmOutput || 'npm install failed' });
+      return res.status(500).json({ success: false, error: linkLog + (npmOutput || 'npm install failed') });
     }
-    res.json({ success: true, output: npmOutput });
+    res.json({ success: true, output: linkLog + npmOutput });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
