@@ -419,168 +419,184 @@
           <div id="msg-panels">
             <!-- === 飞书 === -->
             <div class="msg-panel" data-panel="feishu">
-              <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
-                📖 <b>配置指引</b>：前往 <a href="https://open.feishu.cn/app" target="_blank" rel="noopener" style="color:#58a6ff">飞书开放平台</a> →
-                创建企业自建应用 → 添加「机器人」能力 → 在「凭证与基础信息」中获取 App ID 和 App Secret →
-                在「事件订阅」中配置回调 URL（格式: <code>https://你的域名/feishu/webhook</code>）
-              </div>
-              <div class="grid">
+              <div class="grid" style="margin-bottom:12px">
                 <div style="grid-column: span 3;" class="field">
                   <div class="label"><span>启用</span></div>
-                  <select class="input" id="feishu-enabled"><option value="true">启用</option><option value="false">关闭</option></select>
+                  <select class="input msg-toggle" id="feishu-enabled"><option value="true">启用</option><option value="false">关闭</option></select>
                 </div>
-                <div style="grid-column: span 3;" class="field">
-                  <div class="label"><span>私聊策略</span></div>
-                  <select class="input" id="feishu-dmpolicy"><option value="open">开放 (open)</option><option value="restricted">受限 (restricted)</option></select>
-                </div>
-                <div style="grid-column: span 6;" class="field">
-                  <div class="label"><span>机器人名称</span></div>
-                  <input class="input" id="feishu-botname" placeholder="如: 小豆豆" />
-                </div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>App ID</span> <span class="muted small">必填</span></div><input class="input" id="feishu-appid" placeholder="cli_xxxxxx" /></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>App Secret</span> <span class="muted small">必填</span></div><input class="input" type="password" id="feishu-secret" /></div>
               </div>
-              <details style="margin-top:10px">
-                <summary class="muted small" style="cursor:pointer">高级选项（Verification Token / Encrypt Key）</summary>
-                <div class="grid" style="margin-top:8px">
-                  <div style="grid-column: span 6;" class="field"><div class="label"><span>Verification Token</span></div><input class="input" id="feishu-token" /></div>
-                  <div style="grid-column: span 6;" class="field"><div class="label"><span>Encrypt Key</span></div><input class="input" type="password" id="feishu-encrypt" /></div>
+              <div class="msg-config-body" id="feishu-config-body">
+                <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
+                  📖 <b>配置指引</b>：前往 <a href="https://open.feishu.cn/app" target="_blank" rel="noopener" style="color:#58a6ff">飞书开放平台</a> →
+                  创建企业自建应用 → 添加「机器人」能力 → 在「凭证与基础信息」中获取 App ID 和 App Secret →
+                  在「事件订阅」中配置回调 URL（格式: <code>https://你的域名/feishu/webhook</code>）
                 </div>
-              </details>
-              <div class="sep"></div>
-              <div class="row"><button class="btn btn-primary" data-save-msg="feishu">保存飞书配置</button></div>
+                <div class="grid">
+                  <div style="grid-column: span 3;" class="field">
+                    <div class="label"><span>私聊策略</span></div>
+                    <select class="input" id="feishu-dmpolicy"><option value="open">开放 (open)</option><option value="restricted">受限 (restricted)</option></select>
+                  </div>
+                  <div style="grid-column: span 6;" class="field">
+                    <div class="label"><span>机器人名称</span></div>
+                    <input class="input" id="feishu-botname" placeholder="如: 小豆豆" />
+                  </div>
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>App ID</span> <span class="muted small">必填</span></div><input class="input" id="feishu-appid" placeholder="cli_xxxxxx" /></div>
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>App Secret</span> <span class="muted small">必填</span></div><input class="input" type="password" id="feishu-secret" /></div>
+                </div>
+                <details style="margin-top:10px">
+                  <summary class="muted small" style="cursor:pointer">高级选项（Verification Token / Encrypt Key）</summary>
+                  <div class="grid" style="margin-top:8px">
+                    <div style="grid-column: span 6;" class="field"><div class="label"><span>Verification Token</span></div><input class="input" id="feishu-token" /></div>
+                    <div style="grid-column: span 6;" class="field"><div class="label"><span>Encrypt Key</span></div><input class="input" type="password" id="feishu-encrypt" /></div>
+                  </div>
+                </details>
+                <div class="sep"></div>
+                <div class="row"><button class="btn btn-primary" data-save-msg="feishu">保存飞书配置</button></div>
+              </div>
             </div>
 
             <!-- === Discord === -->
             <div class="msg-panel" data-panel="discord" hidden>
-              <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
-                📖 <b>配置指引</b>：前往 <a href="https://discord.com/developers/applications" target="_blank" rel="noopener" style="color:#58a6ff">Discord Developer Portal</a> →
-                New Application → Bot → 「Reset Token」获取 Bot Token →
-                开启 Message Content Intent → 生成邀请链接将 Bot 添加到服务器
-              </div>
-              <div id="discord-runtime-status" class="muted small" style="margin-bottom:12px;padding:10px 12px;background:#1a1a2e;border-radius:6px;border:1px solid rgba(255,255,255,.08)">
-                正在检查 Discord 运行状态...
-              </div>
-              <div style="margin-bottom:12px;padding:12px;border-radius:8px;background:#141726;border:1px solid rgba(88,166,255,.18)">
-                <div style="font-weight:800;font-size:14px;margin-bottom:6px">审批 Discord 配对码</div>
-                <div class="muted small" style="margin-bottom:10px">当 Discord 里出现 access not configured 和配对码时，可在这里直接审批，无需再进容器执行命令。</div>
-                <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
-                  <div class="field" style="flex:1 1 260px;margin:0">
-                    <div class="label"><span>配对码</span></div>
-                    <input class="input" id="discord-pairing-code" placeholder="例如: G8RP2Z8R" />
-                  </div>
-                  <button class="btn btn-primary" id="btn-discord-approve-pairing">批准配对</button>
-                </div>
-                <div id="discord-pairing-result" class="muted small" style="margin-top:8px;min-height:18px"></div>
-              </div>
-              <div class="grid">
+              <div class="grid" style="margin-bottom:12px">
                 <div style="grid-column: span 3;" class="field">
                   <div class="label"><span>启用</span></div>
-                  <select class="input" id="discord-enabled"><option value="true">启用</option><option value="false">关闭</option></select>
+                  <select class="input msg-toggle" id="discord-enabled"><option value="true">启用</option><option value="false">关闭</option></select>
                 </div>
-                <div style="grid-column: span 3;" class="field">
-                  <div class="label"><span>群组策略</span></div>
-                  <select class="input" id="discord-grouppolicy"><option value="allowlist">白名单 (allowlist)</option><option value="open">开放 (open)</option></select>
-                </div>
-                <div style="grid-column: span 3;" class="field">
-                  <div class="label"><span>流式回复</span></div>
-                  <select class="input" id="discord-streaming"><option value="partial">partial（逐段）</option><option value="progress">progress（逐字）</option><option value="block">block（整段）</option><option value="off">off（关闭）</option></select>
-                </div>
-                <div style="grid-column: span 3;"></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot Token</span> <span class="muted small">必填</span></div><input class="input" type="password" id="discord-token" /></div>
-                <div style="grid-column: span 6;" class="field">
-                  <div class="label"><span>服务器 ID 列表 (Guild IDs)</span></div>
-                  <textarea class="input" id="discord-guilds" rows="3" placeholder="每行一个，或逗号分隔\n例如:\n123456789012345678\n987654321098765432"></textarea>
-                  <div class="muted small" style="margin-top:4px">将写入 channels.discord.guilds（多服务器模式）</div>
-                </div>
-                <div style="grid-column: span 4;" class="field"><div class="label"><span>群组历史条数</span></div><input class="input" type="number" id="discord-historylimit" value="30" min="1" max="200" /></div>
-                <div style="grid-column: span 4;" class="field"><div class="label"><span>私聊历史条数</span></div><input class="input" type="number" id="discord-dmhistorylimit" value="50" min="1" max="200" /></div>
               </div>
-              <div class="sep"></div>
-              <div class="row"><button class="btn btn-primary" data-save-msg="discord">保存 Discord 配置</button></div>
+              <div class="msg-config-body" id="discord-config-body">
+                <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
+                  📖 <b>配置指引</b>：前往 <a href="https://discord.com/developers/applications" target="_blank" rel="noopener" style="color:#58a6ff">Discord Developer Portal</a> →
+                  New Application → Bot → 「Reset Token」获取 Bot Token →
+                  开启 Message Content Intent → 生成邀请链接将 Bot 添加到服务器
+                </div>
+                <div id="discord-runtime-status" class="muted small" style="margin-bottom:12px;padding:10px 12px;background:#1a1a2e;border-radius:6px;border:1px solid rgba(255,255,255,.08)">
+                  正在检查 Discord 运行状态...
+                </div>
+                <div style="margin-bottom:12px;padding:12px;border-radius:8px;background:#141726;border:1px solid rgba(88,166,255,.18)">
+                  <div style="font-weight:800;font-size:14px;margin-bottom:6px">审批 Discord 配对码</div>
+                  <div class="muted small" style="margin-bottom:10px">当 Discord 里出现 access not configured 和配对码时，可在这里直接审批，无需再进容器执行命令。</div>
+                  <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+                    <div class="field" style="flex:1 1 260px;margin:0">
+                      <div class="label"><span>配对码</span></div>
+                      <input class="input" id="discord-pairing-code" placeholder="例如: G8RP2Z8R" />
+                    </div>
+                    <button class="btn btn-primary" id="btn-discord-approve-pairing">批准配对</button>
+                  </div>
+                  <div id="discord-pairing-result" class="muted small" style="margin-top:8px;min-height:18px"></div>
+                </div>
+                <div class="grid">
+                  <div style="grid-column: span 3;" class="field">
+                    <div class="label"><span>群组策略</span></div>
+                    <select class="input" id="discord-grouppolicy"><option value="allowlist">白名单 (allowlist)</option><option value="open">开放 (open)</option></select>
+                  </div>
+                  <div style="grid-column: span 3;" class="field">
+                    <div class="label"><span>流式回复</span></div>
+                    <select class="input" id="discord-streaming"><option value="partial">partial（逐段）</option><option value="progress">progress（逐字）</option><option value="block">block（整段）</option><option value="off">off（关闭）</option></select>
+                  </div>
+                  <div style="grid-column: span 6;"></div>
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot Token</span> <span class="muted small">必填</span></div><input class="input" type="password" id="discord-token" /></div>
+                  <div style="grid-column: span 6;" class="field">
+                    <div class="label"><span>服务器 ID 列表 (Guild IDs)</span></div>
+                    <textarea class="input" id="discord-guilds" rows="3" placeholder="每行一个，或逗号分隔\n例如:\n123456789012345678\n987654321098765432"></textarea>
+                    <div class="muted small" style="margin-top:4px">将写入 channels.discord.guilds（多服务器模式）</div>
+                  </div>
+                  <div style="grid-column: span 4;" class="field"><div class="label"><span>群组历史条数</span></div><input class="input" type="number" id="discord-historylimit" value="30" min="1" max="200" /></div>
+                  <div style="grid-column: span 4;" class="field"><div class="label"><span>私聊历史条数</span></div><input class="input" type="number" id="discord-dmhistorylimit" value="50" min="1" max="200" /></div>
+                </div>
+                <div class="sep"></div>
+                <div class="row"><button class="btn btn-primary" data-save-msg="discord">保存 Discord 配置</button></div>
+              </div>
             </div>
 
             <!-- === Telegram === -->
             <div class="msg-panel" data-panel="telegram" hidden>
-              <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
-                📖 <b>配置指引</b>：在 Telegram 中搜索 <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#58a6ff">@BotFather</a> →
-                发送 /newbot → 按提示创建机器人 → 获取 Bot Token。
-                Allowed User IDs 可通过 @userinfobot 获取你的 User ID。
+              <div class="grid" style="margin-bottom:12px">
+                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input msg-toggle" id="telegram-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
               </div>
-              <div class="grid">
-                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input" id="telegram-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
-                <div style="grid-column: span 8;"></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot Token</span> <span class="muted small">必填</span></div><input class="input" type="password" id="telegram-token" /></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>Allowed User IDs</span></div><input class="input" id="telegram-users" placeholder="逗号分隔，如 123456,789012" /></div>
+              <div class="msg-config-body" id="telegram-config-body">
+                <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
+                  📖 <b>配置指引</b>：在 Telegram 中搜索 <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#58a6ff">@BotFather</a> →
+                  发送 /newbot → 按提示创建机器人 → 获取 Bot Token。
+                  Allowed User IDs 可通过 @userinfobot 获取你的 User ID。
+                </div>
+                <div class="grid">
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot Token</span> <span class="muted small">必填</span></div><input class="input" type="password" id="telegram-token" /></div>
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>Allowed User IDs</span></div><input class="input" id="telegram-users" placeholder="逗号分隔，如 123456,789012" /></div>
+                </div>
+                <div class="sep"></div>
+                <div class="row"><button class="btn btn-primary" data-save-msg="telegram">保存 Telegram 配置</button></div>
               </div>
-              <div class="sep"></div>
-              <div class="row"><button class="btn btn-primary" data-save-msg="telegram">保存 Telegram 配置</button></div>
             </div>
 
             <!-- === Signal === -->
             <div class="msg-panel" data-panel="signal" hidden>
-              <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
-                📖 <b>配置指引</b>：需要先安装 <a href="https://github.com/AsamK/signal-cli" target="_blank" rel="noopener" style="color:#58a6ff">signal-cli</a>，
-                然后用 <code>signal-cli -a +手机号 register</code> 注册，
-                再用 <code>signal-cli -a +手机号 verify 验证码</code> 完成验证。
+              <div class="grid" style="margin-bottom:12px">
+                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input msg-toggle" id="signal-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
               </div>
-              <div class="grid">
-                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input" id="signal-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
-                <div style="grid-column: span 8;"></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>Signal CLI 路径</span></div><input class="input" id="signal-cli" placeholder="/usr/local/bin/signal-cli" /></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>手机号</span></div><input class="input" id="signal-phone" placeholder="+8613800138000" /></div>
+              <div class="msg-config-body" id="signal-config-body">
+                <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
+                  📖 <b>配置指引</b>：需要先安装 <a href="https://github.com/AsamK/signal-cli" target="_blank" rel="noopener" style="color:#58a6ff">signal-cli</a>，
+                  然后用 <code>signal-cli -a +手机号 register</code> 注册，
+                  再用 <code>signal-cli -a +手机号 verify 验证码</code> 完成验证。
+                </div>
+                <div class="grid">
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>Signal CLI 路径</span></div><input class="input" id="signal-cli" placeholder="/usr/local/bin/signal-cli" /></div>
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>手机号</span></div><input class="input" id="signal-phone" placeholder="+8613800138000" /></div>
+                </div>
+                <div class="sep"></div>
+                <div class="row"><button class="btn btn-primary" data-save-msg="signal">保存 Signal 配置</button></div>
               </div>
-              <div class="sep"></div>
-              <div class="row"><button class="btn btn-primary" data-save-msg="signal">保存 Signal 配置</button></div>
             </div>
 
             <!-- === WhatsApp === -->
             <div class="msg-panel" data-panel="whatsapp" hidden>
-              <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
-                📖 <b>配置指引</b>：需要 WhatsApp Business API 或兼容网关（如 <a href="https://waha.devlike.pro/" target="_blank" rel="noopener" style="color:#58a6ff">WAHA</a>）。
-                填入网关的 API 地址和密钥即可。
+              <div class="grid" style="margin-bottom:12px">
+                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input msg-toggle" id="whatsapp-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
               </div>
-              <div class="grid">
-                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input" id="whatsapp-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
-                <div style="grid-column: span 8;"></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>API URL</span></div><input class="input" id="whatsapp-url" placeholder="http://localhost:3000" /></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>API Key</span></div><input class="input" type="password" id="whatsapp-key" /></div>
+              <div class="msg-config-body" id="whatsapp-config-body">
+                <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
+                  📖 <b>配置指引</b>：需要 WhatsApp Business API 或兼容网关（如 <a href="https://waha.devlike.pro/" target="_blank" rel="noopener" style="color:#58a6ff">WAHA</a>）。
+                  填入网关的 API 地址和密钥即可。
+                </div>
+                <div class="grid">
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>API URL</span></div><input class="input" id="whatsapp-url" placeholder="http://localhost:3000" /></div>
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>API Key</span></div><input class="input" type="password" id="whatsapp-key" /></div>
+                </div>
+                <div class="sep"></div>
+                <div class="row"><button class="btn btn-primary" data-save-msg="whatsapp">保存 WhatsApp 配置</button></div>
               </div>
-              <div class="sep"></div>
-              <div class="row"><button class="btn btn-primary" data-save-msg="whatsapp">保存 WhatsApp 配置</button></div>
             </div>
 
             <!-- === WeChat === -->
             <div class="msg-panel" data-panel="wechat" hidden>
-              <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
-                📖 <b>配置指引</b>：ClawBot 通过微信对话开放平台接入，在微信中以联系人形式出现。
-                启用后点击「获取登录二维码」，使用微信扫码完成绑定即可。<br>
-                <a href="https://chatbot.weixin.qq.com/" target="_blank" rel="noopener" style="color:#58a6ff">📘 微信对话开放平台</a>
+              <div class="grid" style="margin-bottom:12px">
+                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input msg-toggle" id="wechat-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
               </div>
-              <div class="grid">
-                <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input" id="wechat-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
-                <div style="grid-column: span 8;"></div>
+              <div class="msg-config-body" id="wechat-config-body">
+                <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
+                  📖 <b>配置指引</b>：ClawBot 通过微信对话开放平台接入，在微信中以联系人形式出现。
+                  启用后点击「获取登录二维码」，使用微信扫码完成绑定即可。<br>
+                  <a href="https://chatbot.weixin.qq.com/" target="_blank" rel="noopener" style="color:#58a6ff">📘 微信对话开放平台</a>
+                </div>
+                <div class="sep"></div>
+                <div style="font-weight:800;font-size:14px;margin-bottom:6px">扫码登录</div>
+                <div class="muted small" style="margin-bottom:10px">点击下方按钮获取二维码，使用微信扫一扫完成登录绑定。ClawBot 将作为联系人出现在你的微信中。</div>
+                <div class="row" style="gap:10px;align-items:flex-start">
+                  <button class="btn btn-primary" id="btn-wechat-qr">获取登录二维码</button>
+                  <button class="btn" id="btn-wechat-logout" style="display:none">退出登录</button>
+                </div>
+                <div id="wechat-qr-container" style="margin-top:12px;display:none">
+                  <div id="wechat-qr-img" style="background:#fff;border-radius:8px;padding:12px;display:inline-block"></div>
+                </div>
+                <div id="wechat-login-status" class="muted small" style="margin-top:8px;min-height:18px"></div>
+                <div class="sep"></div>
+                <div class="grid">
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot 名称</span></div><input class="input" id="wechat-botname" placeholder="ClawBot" /></div>
+                  <div style="grid-column: span 6;" class="field"><div class="label"><span>允许的用户 (微信号，逗号分隔，留空允许所有)</span></div><input class="input" id="wechat-users" placeholder="" /></div>
+                </div>
+                <div class="sep"></div>
+                <div class="row"><button class="btn btn-primary" data-save-msg="wechat">保存微信配置</button></div>
               </div>
-
-              <div class="sep"></div>
-              <div style="font-weight:800;font-size:14px;margin-bottom:6px">扫码登录</div>
-              <div class="muted small" style="margin-bottom:10px">点击下方按钮获取二维码，使用微信扫一扫完成登录绑定。ClawBot 将作为联系人出现在你的微信中。</div>
-              <div class="row" style="gap:10px;align-items:flex-start">
-                <button class="btn btn-primary" id="btn-wechat-qr">获取登录二维码</button>
-                <button class="btn" id="btn-wechat-logout" style="display:none">退出登录</button>
-              </div>
-              <div id="wechat-qr-container" style="margin-top:12px;display:none">
-                <div id="wechat-qr-img" style="background:#fff;border-radius:8px;padding:12px;display:inline-block"></div>
-              </div>
-              <div id="wechat-login-status" class="muted small" style="margin-top:8px;min-height:18px"></div>
-
-              <div class="sep"></div>
-              <div class="grid">
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot 名称</span></div><input class="input" id="wechat-botname" placeholder="ClawBot" /></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>允许的用户 (微信号，逗号分隔，留空允许所有)</span></div><input class="input" id="wechat-users" placeholder="" /></div>
-              </div>
-              <div class="sep"></div>
-              <div class="row"><button class="btn btn-primary" data-save-msg="wechat">保存微信配置</button></div>
             </div>
           </div>
 

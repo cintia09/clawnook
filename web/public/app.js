@@ -3414,7 +3414,32 @@ async function loadMessagingConfig(){
 
   if ($('btn-msg-restart')) $('btn-msg-restart').style.display = 'none';
   appendMsgLog(_t('[load] 配置读取完成'));
+
+  // Sync config body visibility for all platforms
+  syncAllMsgToggleVisibility();
 }
+
+// Show/hide config body based on enabled toggle
+function syncMsgToggleVisibility(platform) {
+  const sel = $(`${platform}-enabled`);
+  const body = $(`${platform}-config-body`);
+  if (!sel || !body) return;
+  body.style.display = sel.value === 'true' ? '' : 'none';
+}
+
+function syncAllMsgToggleVisibility() {
+  ['feishu','wechat','discord','telegram','signal','whatsapp'].forEach(syncMsgToggleVisibility);
+}
+
+// Bind change events on all .msg-toggle selects
+qa('.msg-toggle').forEach(sel => {
+  sel.addEventListener('change', () => {
+    const panel = sel.closest('.msg-panel');
+    if (!panel) return;
+    const platform = panel.getAttribute('data-panel');
+    syncMsgToggleVisibility(platform);
+  });
+});
 
 $('btn-msg-load')?.addEventListener('click', loadMessagingConfig);
 
