@@ -573,6 +573,9 @@
                 <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input msg-toggle" id="wechat-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
               </div>
               <div class="msg-config-body" id="wechat-config-body">
+                <div class="muted small" style="margin-bottom:12px;padding:10px 14px;background:#2a1a0e;border-radius:6px;border:1px solid rgba(255,180,50,.2)">
+                  ⚠️ <b>即将推出</b>：微信通道插件尚未包含在 OpenClaw 中。此页面为预留配置，待官方插件发布后可直接使用。
+                </div>
                 <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
                   📖 <b>配置指引</b>：ClawBot 通过微信对话开放平台接入，在微信中以联系人形式出现。
                   启用后点击「获取登录二维码」，使用微信扫码完成绑定即可。<br>
@@ -582,7 +585,7 @@
                 <div style="font-weight:800;font-size:14px;margin-bottom:6px">扫码登录</div>
                 <div class="muted small" style="margin-bottom:10px">点击下方按钮获取二维码，使用微信扫一扫完成登录绑定。ClawBot 将作为联系人出现在你的微信中。</div>
                 <div class="row" style="gap:10px;align-items:flex-start">
-                  <button class="btn btn-primary" id="btn-wechat-qr">获取登录二维码</button>
+                  <button class="btn" id="btn-wechat-qr" disabled style="opacity:.5;cursor:not-allowed">获取登录二维码</button>
                   <button class="btn" id="btn-wechat-logout" style="display:none">退出登录</button>
                 </div>
                 <div id="wechat-qr-container" style="margin-top:12px;display:none">
@@ -923,10 +926,11 @@
 
           <div id="plugins-extensions" hidden>
             <div style="margin-bottom:14px">
-              <div class="muted small" style="margin-bottom:10px">OpenClaw 内置 40+ Extensions（含 Feishu、Discord、Telegram 等通道）。以下为用户额外安装的 Extensions。</div>
+              <div class="muted small" style="margin-bottom:10px">所有 OpenClaw Extensions（内置通道、Provider、工具插件 + 用户安装）。可启用/禁用，变更后需重启 Gateway 生效。</div>
               <div class="row" style="gap:8px;flex-wrap:wrap">
                 <input class="input" id="ext-npm-input" placeholder="npm 包名、github:user/repo 或 GitHub URL" style="flex:1;min-width:200px" />
                 <button class="btn btn-primary" id="btn-ext-install">安装 Extension</button>
+                <button class="btn" id="btn-ext-update-all">🔄 更新全部</button>
               </div>
               <div class="muted small" style="margin-top:6px">
                 支持三种安装方式：<b>npm 包名</b>（如 <code>@openclaw/my-ext</code>）、<b>GitHub 简写</b>（如 <code>github:user/repo</code>）、<b>GitHub URL</b>（如 <code>https://github.com/user/repo</code>）。安装后需重启 Gateway 生效。

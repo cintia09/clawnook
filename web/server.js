@@ -10155,6 +10155,10 @@ function sanitizeLogLine(line) {
   if (/\[reload\]\s+config reload skipped\s+\(invalid config\)/i.test(line)) {
     return null;
   }
+  // Filter out repetitive plugin registration logs (noisy during gateway startup)
+  if (/\[plugins\]\s+\w+:\s+Registered\s+/i.test(line)) {
+    return null;
+  }
   // Filter out Feishu/Discord channel message logs (conversation content should not leak to ops log panel)
   if (/\[(feishu|discord|telegram|signal|whatsapp|wechat)\].*(?:received message from|DM from|dispatching to agent|group message from)/i.test(line)) {
     return null;
@@ -10683,13 +10687,102 @@ async function listUserExtensions() {
   }
 }
 
+// List ALL openclaw plugins (built-in + user) via CLI JSON output
+async function listAllPlugins() {
+  const cmd = [
+    'if command -v openclaw >/dev/null 2>&1; then',
+    '  openclaw plugins list --json 2>/dev/null',
+    'elif [ -x /root/.npm-global/bin/openclaw ]; then',
+    '  /root/.npm-global/bin/openclaw plugins list --json 2>/dev/null',
+    'elif [ -f /root/.openclaw/openclaw-source/openclaw.mjs ]; then',
+    '  node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs plugins list --json 2>/dev/null',
+    'else',
+    '  echo "{}"',
+    'fi'
+  ].join('\n');
+  const result = await runOpenClawCli(cmd, 30000);
+  const raw = String(result.stdout || result.output || '');
+  // Extract JSON (skip any [plugins] log lines before the JSON)
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart < 0) return [];
+  try {
+    const parsed = JSON.parse(raw.slice(jsonStart));
+    return (parsed.plugins || []).map(p => ({
+      id: p.id,
+      name: p.name || p.id,
+      description: p.description || '',
+      version: p.version || '',
+      status: p.status || 'unknown',
+      enabled: !!p.enabled,
+      origin: p.origin || 'bundled',
+      channelIds: p.channelIds || [],
+      providerIds: p.providerIds || [],
+      toolNames: p.toolNames || [],
+      hookCount: p.hookCount || 0,
+      httpRoutes: p.httpRoutes || 0,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 app.get('/api/plugins/list', async (req, res) => {
   try {
-    const [skills, extensions] = await Promise.all([
+    const [skills, extensions, allPlugins] = await Promise.all([
       Promise.resolve(listUserSkills()),
-      listUserExtensions()
+      listUserExtensions(),
+      listAllPlugins()
     ]);
-    res.json({ skills, extensions });
+    res.json({ skills, extensions, allPlugins });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Enable/disable a plugin
+app.post('/api/plugins/extension/toggle', async (req, res) => {
+  const { id, enable } = req.body || {};
+  if (!id || typeof id !== 'string') return res.status(400).json({ error: 'missing plugin id' });
+  const action = enable ? 'enable' : 'disable';
+  const cmd = [
+    'if command -v openclaw >/dev/null 2>&1; then',
+    `  openclaw plugins ${action} ${JSON.stringify(id)} 2>&1`,
+    'elif [ -x /root/.npm-global/bin/openclaw ]; then',
+    `  /root/.npm-global/bin/openclaw plugins ${action} ${JSON.stringify(id)} 2>&1`,
+    'elif [ -f /root/.openclaw/openclaw-source/openclaw.mjs ]; then',
+    `  node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs plugins ${action} ${JSON.stringify(id)} 2>&1`,
+    'else',
+    '  echo "openclaw not found"; exit 127',
+    'fi'
+  ].join('\n');
+  try {
+    const result = await runOpenClawCli(cmd, 15000);
+    const output = String(result.output || '').trim();
+    if (!result.ok) return res.status(500).json({ success: false, error: output });
+    res.json({ success: true, output });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Update all plugins
+app.post('/api/plugins/extension/update-all', async (req, res) => {
+  const cmd = [
+    'if command -v openclaw >/dev/null 2>&1; then',
+    '  openclaw plugins update 2>&1',
+    'elif [ -x /root/.npm-global/bin/openclaw ]; then',
+    '  /root/.npm-global/bin/openclaw plugins update 2>&1',
+    'elif [ -f /root/.openclaw/openclaw-source/openclaw.mjs ]; then',
+    '  node --experimental-sqlite /root/.openclaw/openclaw-source/openclaw.mjs plugins update 2>&1',
+    'else',
+    '  echo "openclaw not found"; exit 127',
+    'fi'
+  ].join('\n');
+  try {
+    const result = await runOpenClawCli(cmd, 120000);
+    const output = String(result.output || '').trim();
+    if (!result.ok) return res.status(500).json({ success: false, error: output });
+    res.json({ success: true, output });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

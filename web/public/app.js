@@ -4058,15 +4058,37 @@ function scanSkillCard(s, idx) {
     </div>`;
 }
 
-function extensionCard(ext) {
+function extensionCard(ext, isUserInstalled) {
+  const statusColor = ext.enabled ? '#3fb950' : '#8b949e';
+  const statusText = ext.enabled ? _t('已加载') : _t('已禁用');
+  const originBadge = ext.origin === 'bundled'
+    ? `<span style="background:#1a3a5c;color:#58a6ff;padding:1px 6px;border-radius:4px;font-size:11px">${_t('内置')}</span>`
+    : `<span style="background:#3a1a5c;color:#d2a8ff;padding:1px 6px;border-radius:4px;font-size:11px">${_t('用户')}</span>`;
+  const typeBadges = [];
+  if (ext.channelIds && ext.channelIds.length) typeBadges.push(`<span style="background:#1a2e1a;color:#3fb950;padding:1px 5px;border-radius:3px;font-size:10px">📡 ${_t('通道')}</span>`);
+  if (ext.providerIds && ext.providerIds.length) typeBadges.push(`<span style="background:#2e2a1a;color:#d29922;padding:1px 5px;border-radius:3px;font-size:10px">🤖 Provider</span>`);
+  if (ext.toolNames && ext.toolNames.length) typeBadges.push(`<span style="background:#1a1a2e;color:#79c0ff;padding:1px 5px;border-radius:3px;font-size:10px">🔧 ${_t('工具')}</span>`);
+
+  const toggleBtn = `<button class="btn" style="font-size:11px;padding:2px 10px" data-ext-toggle="${escapeHtml(ext.id)}" data-ext-enable="${ext.enabled ? 'false' : 'true'}">${ext.enabled ? _t('禁用') : _t('启用')}</button>`;
+  const removeBtn = isUserInstalled
+    ? ` <button class="btn" style="font-size:11px;padding:2px 10px" data-ext-remove="${escapeHtml(ext.name || ext.id)}">${_t('卸载')}</button>`
+    : '';
+
   return `
-    <div class="card" style="margin-bottom:10px;padding:10px 14px">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <div>
-          <div style="font-weight:700">${escapeHtml(ext.name)}</div>
-          <div class="muted small" style="margin-top:2px">${escapeHtml(ext.version ? `v${ext.version}` : '')} ${escapeHtml(ext.description || '')}</div>
+    <div class="card" style="margin-bottom:8px;padding:10px 14px">
+      <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div style="flex:1;min-width:200px">
+          <div style="font-weight:700;font-size:13px">
+            ${escapeHtml(ext.name || ext.id)}
+            ${originBadge}
+            <span style="color:${statusColor};font-size:11px;margin-left:4px">● ${statusText}</span>
+          </div>
+          <div class="muted small" style="margin-top:3px">
+            ${ext.version ? `<span style="color:#8b949e">v${escapeHtml(ext.version)}</span> · ` : ''}${escapeHtml(ext.description || '')}
+          </div>
+          ${typeBadges.length ? `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${typeBadges.join('')}</div>` : ''}
         </div>
-        <button class="btn" style="font-size:12px;padding:2px 10px" data-ext-remove="${escapeHtml(ext.name)}">${_t('卸载')}</button>
+        <div class="row" style="gap:4px">${toggleBtn}${removeBtn}</div>
       </div>
     </div>`;
 }
@@ -4077,6 +4099,7 @@ async function refreshPlugins() {
 
   const skillsList = d.skills || [];
   const extsList = d.extensions || [];
+  const allPlugins = d.allPlugins || [];
   _installedSkills = skillsList; // cache for comparison
 
   // Separate managed skills from bundled and extension
@@ -4109,9 +4132,36 @@ async function refreshPlugins() {
   }
   $('skills-list').innerHTML = html;
 
-  $('extensions-list').innerHTML = extsList.length
-    ? extsList.map(extensionCard).join('')
-    : '<div class="muted small" style="padding:12px 0">' + _t('暂无用户额外安装的 Extension。OpenClaw 内置的 40+ Extensions 已自动加载。') + '</div>';
+  // --- Extensions tab: show ALL plugins grouped ---
+  const userExtNames = new Set(extsList.map(e => e.name));
+  if (allPlugins.length) {
+    const channels = allPlugins.filter(p => p.channelIds && p.channelIds.length);
+    const providers = allPlugins.filter(p => p.providerIds && p.providerIds.length && !(p.channelIds && p.channelIds.length));
+    const others = allPlugins.filter(p => !(p.channelIds && p.channelIds.length) && !(p.providerIds && p.providerIds.length));
+    const loaded = allPlugins.filter(p => p.enabled).length;
+
+    function extGroupHtml(label, plugins, collapsed) {
+      const arrow = collapsed ? '▶' : '▼';
+      const display = collapsed ? 'none' : '';
+      return `<div style="margin-top:12px;border-top:1px solid #333;padding-top:10px">
+        <div style="cursor:pointer;user-select:none;color:#8e8e93;font-size:13px" onclick="const c=this.nextElementSibling;const a=c.style.display==='none';c.style.display=a?'':'none';this.querySelector('span').textContent=a?'▼':'▶'">
+          <span>${arrow}</span> ${label} (${plugins.length})
+        </div>
+        <div style="display:${display};margin-top:8px">${plugins.map(p => extensionCard(p, userExtNames.has(p.name || p.id))).join('')}</div>
+      </div>`;
+    }
+
+    let extHtml = `<div class="muted small" style="padding:4px 0 8px">${_t('共 {0} 个插件，{1} 个已加载', allPlugins.length, loaded)}</div>`;
+    if (channels.length) extHtml += extGroupHtml(`📡 ${_t('消息通道')}`, channels, false);
+    if (providers.length) extHtml += extGroupHtml(`🤖 ${_t('模型 Provider')}`, providers, true);
+    if (others.length) extHtml += extGroupHtml(`🧩 ${_t('工具与扩展')}`, others, true);
+    $('extensions-list').innerHTML = extHtml;
+  } else {
+    // Fallback: show only user-installed extensions
+    $('extensions-list').innerHTML = extsList.length
+      ? extsList.map(e => extensionCard({ ...e, id: e.name, enabled: true, origin: 'user' }, true)).join('')
+      : '<div class="muted small" style="padding:12px 0">' + _t('暂无用户额外安装的 Extension。OpenClaw 内置的 40+ Extensions 已自动加载。') + '</div>';
+  }
 }
 
 $('btn-plugins-refresh')?.addEventListener('click', refreshPlugins);
@@ -4614,6 +4664,39 @@ document.addEventListener('click', async (e) => {
   btn.textContent = _t('卸载中...');
   const r = await api('/api/plugins/extension/remove', { method: 'POST', body: { name }, timeoutMs: 60000 });
   toast(r.success ? _t('已卸载') : _t('卸载失败'), r.error || '');
+  refreshPlugins();
+});
+
+// Toggle extension enable/disable
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-ext-toggle]');
+  if (!btn) return;
+  const id = btn.getAttribute('data-ext-toggle');
+  const enable = btn.getAttribute('data-ext-enable') === 'true';
+  btn.disabled = true;
+  btn.textContent = enable ? _t('启用中...') : _t('禁用中...');
+  const r = await api('/api/plugins/extension/toggle', { method: 'POST', body: { id, enable } });
+  toast(r.success ? _t(enable ? '已启用' : '已禁用') : _t('操作失败'), r.error || r.output || '');
+  refreshPlugins();
+});
+
+// Update all plugins
+$('btn-ext-update-all')?.addEventListener('click', async () => {
+  const btn = $('btn-ext-update-all');
+  btn.disabled = true;
+  btn.textContent = _t('更新中...');
+  const logEl = $('ext-install-log');
+  logEl.style.display = '';
+  logEl.querySelector('pre').textContent = _t('正在更新插件...\n');
+  try {
+    const r = await api('/api/plugins/extension/update-all', { method: 'POST', timeoutMs: 120000 });
+    logEl.querySelector('pre').textContent += (r.output || r.error || _t('完成')) + '\n';
+    toast(r.success ? _t('更新完成') : _t('更新失败'), r.error || '');
+  } catch (e) {
+    logEl.querySelector('pre').textContent += _t('更新失败: {0}', e.message) + '\n';
+  }
+  btn.disabled = false;
+  btn.textContent = '🔄 ' + _t('更新全部');
   refreshPlugins();
 });
 
