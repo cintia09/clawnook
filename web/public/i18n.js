@@ -394,6 +394,7 @@
     '保存 Telegram 配置': 'Save Telegram Config',
     '保存 Signal 配置': 'Save Signal Config',
     '保存 WhatsApp 配置': 'Save WhatsApp Config',
+    '保存微信配置': 'Save WeChat Config',
     '配置指引': 'Setup Guide',
     '必填': 'Required',
     '审批 Discord 配对码': 'Approve Discord Pairing Code',
@@ -1133,6 +1134,12 @@
     // WhatsApp setup guide
     '需要 WhatsApp Business API 或兼容网关（如': 'Requires WhatsApp Business API or compatible gateway (e.g.',
     '填入网关的 API 地址和密钥即可': 'Enter the gateway API address and key',
+
+    // WeChat (iLink) setup guide
+    'iLink 网关地址': 'iLink Gateway URL',
+    '认证令牌': 'Auth Token',
+    '允许的用户 (微信号，逗号分隔，留空允许所有)': 'Allowed Users (WeChat IDs, comma-separated, leave empty for all)',
+    '查看微信接入文档': 'View WeChat integration docs',
 
     // Messaging common footer
     '此页面提供常用配置项。如需更详细的通道设置，请打开': 'This page provides common settings. For advanced channel configuration, open',

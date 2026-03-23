@@ -10099,7 +10099,7 @@ function sanitizeLogLine(line) {
     return null;
   }
   // Filter out Feishu/Discord channel message logs (conversation content should not leak to ops log panel)
-  if (/\[(feishu|discord|telegram|signal|whatsapp)\].*(?:received message from|DM from|dispatching to agent|group message from)/i.test(line)) {
+  if (/\[(feishu|discord|telegram|signal|whatsapp|wechat)\].*(?:received message from|DM from|dispatching to agent|group message from)/i.test(line)) {
     return null;
   }
   const keyRegexes = [

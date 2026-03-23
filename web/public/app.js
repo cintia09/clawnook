@@ -3406,6 +3406,13 @@ async function loadMessagingConfig(){
   setVal('whatsapp-url', c.whatsapp?.apiUrl);
   setVal('whatsapp-key', c.whatsapp?.apiKey);
 
+  // -- WeChat (iLink) --
+  setBoolSelect('wechat-enabled', c.wechat?.enabled);
+  setVal('wechat-url', c.wechat?.apiUrl);
+  setVal('wechat-token', c.wechat?.token);
+  setVal('wechat-botname', c.wechat?.botName);
+  setVal('wechat-users', c.wechat?.allowedUsers);
+
   if ($('btn-msg-restart')) $('btn-msg-restart').style.display = 'none';
   appendMsgLog(_t('[load] 配置读取完成'));
 }
@@ -3505,6 +3512,12 @@ qa('[data-save-msg]').forEach(btn => {
     if (platform === 'whatsapp'){
       update.channels.whatsapp.apiUrl = $('whatsapp-url').value;
       update.channels.whatsapp.apiKey = $('whatsapp-key').value;
+    }
+    if (platform === 'wechat'){
+      update.channels.wechat.apiUrl = $('wechat-url').value;
+      update.channels.wechat.token = $('wechat-token').value;
+      update.channels.wechat.botName = $('wechat-botname').value;
+      update.channels.wechat.allowedUsers = $('wechat-users').value;
     }
 
     const r = await api('/api/config', { method:'POST', body:update });
