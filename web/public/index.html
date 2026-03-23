@@ -28,7 +28,7 @@
         <a href="#openclaw-ai" data-route="openclaw-ai"><span class="ico">◈</span><span>接入模型配置</span></a>
         <a href="#messaging" data-route="messaging"><span class="ico">⌁</span><span>消息平台</span></a>
         <a href="#plugins" data-route="plugins"><span class="ico">◌</span><span>插件市场</span></a>
-        <a href="#app-center" data-route="app-center" class="zh-only"><span class="ico">⊞</span><span>应用中心</span></a>
+        <!-- <a href="#app-center" data-route="app-center" class="zh-only"><span class="ico">⊞</span><span>应用中心</span></a> -->
         <a href="#browser" data-route="browser"><span class="ico">�</span><span>远端设备管理</span></a>
 
         <div class="nav-group-label">运维与系统</div>
@@ -65,7 +65,7 @@
           (function(){
             var h = (location.hash||'').replace('#','').trim();
             if(h==='ai') h='openclaw-ai'; if(h==='openclaw') h='openclaw-engine';
-            var validRoutes = ['dashboard','openclaw-engine','openclaw-ai','messaging','browser','plugins','app-center','terminal','settings','logs'];
+            var validRoutes = ['dashboard','openclaw-engine','openclaw-ai','messaging','browser','plugins','terminal','settings','logs'];
             var route = validRoutes.indexOf(h) >= 0 ? h : 'dashboard';
             var el = document.getElementById('page-' + route);
             if(el) el.classList.add('active');

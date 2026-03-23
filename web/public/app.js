@@ -350,7 +350,7 @@ const ROUTES = [
   { id: 'messaging', title: _t('消息平台') },
   { id: 'browser', title: _t('远端设备管理') },
   { id: 'plugins', title: _t('插件市场') },
-  { id: 'app-center', title: _t('应用中心') },
+  // { id: 'app-center', title: _t('应用中心') },
   { id: 'terminal', title: _t('终端') },
   { id: 'settings', title: _t('系统设置') },
   { id: 'logs', title: _t('日志') },
