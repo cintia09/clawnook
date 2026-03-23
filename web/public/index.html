@@ -409,11 +409,11 @@
           <div class="sep"></div>
           <div class="tabs" id="msg-tabs">
             <button class="tab active" data-tab="feishu">飞书</button>
+            <button class="tab" data-tab="wechat">微信</button>
             <button class="tab" data-tab="discord">Discord</button>
             <button class="tab" data-tab="telegram">Telegram</button>
             <button class="tab" data-tab="signal">Signal</button>
             <button class="tab" data-tab="whatsapp">WhatsApp</button>
-            <button class="tab" data-tab="wechat">微信</button>
           </div>
 
           <div id="msg-panels">
@@ -553,15 +553,29 @@
             <!-- === WeChat === -->
             <div class="msg-panel" data-panel="wechat" hidden>
               <div class="muted small" style="margin-bottom:12px;padding:8px 12px;background:#1a1a2e;border-radius:6px">
-                📖 <b>配置指引</b>：通过 <b>iLink（智联）</b>协议接入微信。ClawBot 将作为联系人出现在微信中，用户可直接发消息与 AI Agent 交互。
-                需填入 iLink 网关地址和认证令牌。<br>
-                <a href="https://github.com/openclaw/openclaw/blob/main/docs/zh-CN/web/wechat.md" target="_blank" rel="noopener" style="color:#58a6ff">📘 查看微信接入文档</a>
+                📖 <b>配置指引</b>：ClawBot 通过微信对话开放平台接入，在微信中以联系人形式出现。
+                启用后点击「获取登录二维码」，使用微信扫码完成绑定即可。<br>
+                <a href="https://chatbot.weixin.qq.com/" target="_blank" rel="noopener" style="color:#58a6ff">📘 微信对话开放平台</a>
               </div>
               <div class="grid">
                 <div style="grid-column: span 4;" class="field"><div class="label"><span>启用</span></div><select class="input" id="wechat-enabled"><option value="true">启用</option><option value="false">关闭</option></select></div>
                 <div style="grid-column: span 8;"></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>iLink 网关地址</span></div><input class="input" id="wechat-url" placeholder="http://localhost:9100" /></div>
-                <div style="grid-column: span 6;" class="field"><div class="label"><span>认证令牌</span></div><input class="input" type="password" id="wechat-token" placeholder="iLink Token" /></div>
+              </div>
+
+              <div class="sep"></div>
+              <div style="font-weight:800;font-size:14px;margin-bottom:6px">扫码登录</div>
+              <div class="muted small" style="margin-bottom:10px">点击下方按钮获取二维码，使用微信扫一扫完成登录绑定。ClawBot 将作为联系人出现在你的微信中。</div>
+              <div class="row" style="gap:10px;align-items:flex-start">
+                <button class="btn btn-primary" id="btn-wechat-qr">获取登录二维码</button>
+                <button class="btn" id="btn-wechat-logout" style="display:none">退出登录</button>
+              </div>
+              <div id="wechat-qr-container" style="margin-top:12px;display:none">
+                <div id="wechat-qr-img" style="background:#fff;border-radius:8px;padding:12px;display:inline-block"></div>
+              </div>
+              <div id="wechat-login-status" class="muted small" style="margin-top:8px;min-height:18px"></div>
+
+              <div class="sep"></div>
+              <div class="grid">
                 <div style="grid-column: span 6;" class="field"><div class="label"><span>Bot 名称</span></div><input class="input" id="wechat-botname" placeholder="ClawBot" /></div>
                 <div style="grid-column: span 6;" class="field"><div class="label"><span>允许的用户 (微信号，逗号分隔，留空允许所有)</span></div><input class="input" id="wechat-users" placeholder="" /></div>
               </div>

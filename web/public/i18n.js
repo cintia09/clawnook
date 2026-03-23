@@ -1135,11 +1135,19 @@
     '需要 WhatsApp Business API 或兼容网关（如': 'Requires WhatsApp Business API or compatible gateway (e.g.',
     '填入网关的 API 地址和密钥即可': 'Enter the gateway API address and key',
 
-    // WeChat (iLink) setup guide
-    'iLink 网关地址': 'iLink Gateway URL',
-    '认证令牌': 'Auth Token',
+    // WeChat setup guide & QR login
+    '扫码登录': 'QR Code Login',
+    '获取登录二维码': 'Get Login QR Code',
+    '退出登录': 'Log Out',
+    '正在获取二维码...': 'Getting QR code...',
+    '请使用微信扫一扫上方二维码': 'Scan the QR code above with WeChat',
+    '获取二维码失败': 'Failed to get QR code',
+    '已登录：{0}': 'Logged in: {0}',
+    '微信用户': 'WeChat User',
+    '未登录，请扫码绑定': 'Not logged in, scan QR to bind',
+    '已退出': 'Logged Out',
+    '微信已退出登录': 'WeChat logged out',
     '允许的用户 (微信号，逗号分隔，留空允许所有)': 'Allowed Users (WeChat IDs, comma-separated, leave empty for all)',
-    '查看微信接入文档': 'View WeChat integration docs',
 
     // Messaging common footer
     '此页面提供常用配置项。如需更详细的通道设置，请打开': 'This page provides common settings. For advanced channel configuration, open',

@@ -3406,12 +3406,11 @@ async function loadMessagingConfig(){
   setVal('whatsapp-url', c.whatsapp?.apiUrl);
   setVal('whatsapp-key', c.whatsapp?.apiKey);
 
-  // -- WeChat (iLink) --
+  // -- WeChat --
   setBoolSelect('wechat-enabled', c.wechat?.enabled);
-  setVal('wechat-url', c.wechat?.apiUrl);
-  setVal('wechat-token', c.wechat?.token);
   setVal('wechat-botname', c.wechat?.botName);
   setVal('wechat-users', c.wechat?.allowedUsers);
+  updateWechatLoginStatus(c.wechat);
 
   if ($('btn-msg-restart')) $('btn-msg-restart').style.display = 'none';
   appendMsgLog(_t('[load] 配置读取完成'));
@@ -3452,6 +3451,60 @@ $('btn-discord-approve-pairing')?.addEventListener('click', async ()=>{
   appendMsgLog(_t('[discord] 审批失败: {0}', result.error || 'unknown'));
   toast(_t('审批失败'), result.error || 'unknown');
   await loadDiscordRuntimeStatus();
+});
+
+// --- WeChat QR Login ---
+function updateWechatLoginStatus(wechatConfig) {
+  const el = $('wechat-login-status');
+  const logoutBtn = $('btn-wechat-logout');
+  if (!el) return;
+  if (wechatConfig?.loggedIn) {
+    el.innerHTML = '✅ ' + _t('已登录：{0}', wechatConfig.loginName || _t('微信用户'));
+    el.style.color = '#a3e635';
+    if (logoutBtn) logoutBtn.style.display = '';
+  } else {
+    el.innerHTML = _t('未登录，请扫码绑定');
+    el.style.color = '';
+    if (logoutBtn) logoutBtn.style.display = 'none';
+  }
+}
+
+$('btn-wechat-qr')?.addEventListener('click', async ()=>{
+  const btn = $('btn-wechat-qr');
+  const container = $('wechat-qr-container');
+  const statusEl = $('wechat-login-status');
+  if (btn) btn.disabled = true;
+  if (statusEl) { statusEl.textContent = _t('正在获取二维码...'); statusEl.style.color = ''; }
+  appendMsgLog(_t('[wechat] 正在获取登录二维码...'));
+
+  const r = await api('/api/openclaw/wechat/qr', { method: 'POST', timeoutMs: 30000 });
+  if (btn) btn.disabled = false;
+
+  if (r.success && r.qrUrl) {
+    if (container) {
+      var imgEl = $('wechat-qr-img');
+      imgEl.innerHTML = '<img src="' + r.qrUrl + '" alt="WeChat QR" style="width:200px;height:200px" />';
+      container.style.display = '';
+    }
+    if (statusEl) { statusEl.textContent = _t('请使用微信扫一扫上方二维码'); statusEl.style.color = '#58a6ff'; }
+    appendMsgLog(_t('[wechat] 二维码已生成，请扫码'));
+  } else {
+    if (statusEl) { statusEl.textContent = r.error || _t('获取二维码失败'); statusEl.style.color = '#f87171'; }
+    appendMsgLog(_t('[wechat] 获取二维码失败: {0}', r.error || 'unknown'));
+  }
+});
+
+$('btn-wechat-logout')?.addEventListener('click', async ()=>{
+  appendMsgLog(_t('[wechat] 正在退出登录...'));
+  const r = await api('/api/openclaw/wechat/logout', { method: 'POST' });
+  if (r.success) {
+    updateWechatLoginStatus({});
+    $('wechat-qr-container').style.display = 'none';
+    appendMsgLog(_t('[wechat] 已退出登录'));
+    toast(_t('已退出'), _t('微信已退出登录'));
+  } else {
+    appendMsgLog(_t('[wechat] 退出失败: {0}', r.error || 'unknown'));
+  }
 });
 
 // Restart Gateway to apply
@@ -3514,8 +3567,6 @@ qa('[data-save-msg]').forEach(btn => {
       update.channels.whatsapp.apiKey = $('whatsapp-key').value;
     }
     if (platform === 'wechat'){
-      update.channels.wechat.apiUrl = $('wechat-url').value;
-      update.channels.wechat.token = $('wechat-token').value;
       update.channels.wechat.botName = $('wechat-botname').value;
       update.channels.wechat.allowedUsers = $('wechat-users').value;
     }
