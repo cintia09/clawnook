@@ -10766,7 +10766,7 @@ app.post('/api/plugins/extension/toggle', async (req, res) => {
   ].join('\n');
   try {
     const result = await runOpenClawCli(cmd, 15000);
-    const output = String(result.output || '').trim();
+    const output = stripAnsi(String(result.output || '')).trim();
     if (!result.ok) return res.status(500).json({ success: false, error: output });
     res.json({ success: true, output });
   } catch (e) {
@@ -10789,7 +10789,7 @@ app.post('/api/plugins/extension/update-all', async (req, res) => {
   ].join('\n');
   try {
     const result = await runOpenClawCli(cmd, 120000);
-    const output = String(result.output || '').trim();
+    const output = stripAnsi(String(result.output || '')).trim();
     if (!result.ok) return res.status(500).json({ success: false, error: output });
     res.json({ success: true, output });
   } catch (e) {
@@ -11558,9 +11558,15 @@ app.post('/api/plugins/extension/install', async (req, res) => {
     // npx commands run directly (e.g. npx -y @tencent-weixin/openclaw-weixin-cli@latest install)
     if (isNpxCmd) {
       const npxResult = await runOpenClawCli(sanitized, 180000);
-      const output = String(npxResult.output || '').trim();
-      const hasError = !npxResult.ok || /\b(failed|error|not found|Cannot find module)\b/i.test(output);
-      if (hasError) {
+      const output = stripAnsi(String(npxResult.output || '')).trim();
+      const hasLoadError = /\b(failed to load|Cannot find module|PluginLoadFailureError)\b/i.test(output);
+      const hasInstallOk = /\b(Installed plugin|Installing to|插件就绪|already at)\b/i.test(output);
+      // Plugin installed but failed to load → warning
+      if (hasInstallOk && hasLoadError) {
+        return res.json({ success: true, output, warning: 'Plugin installed but failed to load — possible version mismatch. Check install log for details.' });
+      }
+      const hasFatalError = !npxResult.ok || (!hasInstallOk && /\b(failed|error|not found)\b/i.test(output));
+      if (hasFatalError) {
         return res.status(500).json({ success: false, error: output || 'npx command failed' });
       }
       return res.json({ success: true, output });
@@ -11579,9 +11585,8 @@ app.post('/api/plugins/extension/install', async (req, res) => {
       'fi'
     ].join('\n');
     const cliResult = await runOpenClawCli(cliCmd, 120000);
-    const cliOutput = String(cliResult.output || '').trim();
+    const cliOutput = stripAnsi(String(cliResult.output || '')).trim();
     if (cliResult.ok) {
-      // Check if output indicates actual failure despite exit 0
       const cliHasError = /\b(failed to load|Cannot find module|PluginLoadFailureError)\b/i.test(cliOutput);
       if (cliHasError) {
         return res.json({ success: true, output: cliOutput, warning: 'Plugin installed but failed to load — possible version mismatch' });
@@ -11590,7 +11595,7 @@ app.post('/api/plugins/extension/install', async (req, res) => {
     }
     // Fallback to npm install -g if CLI failed
     const npmResult = await runOpenClawCli(`npm install -g ${JSON.stringify(sanitized)} 2>&1`, 120000);
-    const npmOutput = String(npmResult.output || '').trim();
+    const npmOutput = stripAnsi(String(npmResult.output || '')).trim();
     if (!npmResult.ok) {
       return res.status(500).json({ success: false, error: npmOutput || 'npm install failed' });
     }
@@ -11624,14 +11629,14 @@ app.post('/api/plugins/extension/remove', async (req, res) => {
     ].join('\n');
     const cliResult = await runOpenClawCli(cliCmd, 60000);
     if (cliResult.ok) {
-      return res.json({ success: true, output: String(cliResult.output || '').trim() });
+      return res.json({ success: true, output: stripAnsi(String(cliResult.output || '')).trim() });
     }
     // Fallback to npm uninstall -g
     const output = await runCommandTextAsync(
       `npm uninstall -g ${JSON.stringify(sanitized)} 2>&1`,
       60000
     );
-    res.json({ success: true, output });
+    res.json({ success: true, output: stripAnsi(output || '') });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
