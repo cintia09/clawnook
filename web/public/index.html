@@ -931,12 +931,12 @@
             <div style="margin-bottom:14px">
               <div class="muted small" style="margin-bottom:10px">所有 OpenClaw Extensions（内置通道、Provider、工具插件 + 用户安装）。可启用/禁用，变更后需重启 Gateway 生效。</div>
               <div class="row" style="gap:8px;flex-wrap:wrap">
-                <input class="input" id="ext-npm-input" placeholder="npm 包名、github:user/repo 或 GitHub URL" style="flex:1;min-width:200px" />
+                <input class="input" id="ext-npm-input" placeholder="npm 包名、npx 命令、github:user/repo 或 GitHub URL" style="flex:1;min-width:200px" />
                 <button class="btn btn-primary" id="btn-ext-install">安装 Extension</button>
                 <button class="btn" id="btn-ext-update-all">🔄 更新全部</button>
               </div>
               <div class="muted small" style="margin-top:6px">
-                支持三种安装方式：<b>npm 包名</b>（如 <code>@openclaw/my-ext</code>）、<b>GitHub 简写</b>（如 <code>github:user/repo</code>）、<b>GitHub URL</b>（如 <code>https://github.com/user/repo</code>）。安装后需重启 Gateway 生效。
+                支持四种安装方式：<b>npm 包名</b>（如 <code>@openclaw/my-ext</code>）、<b>npx 命令</b>（如 <code>npx -y @tencent-weixin/openclaw-weixin-cli@latest install</code>）、<b>GitHub 简写</b>（如 <code>github:user/repo</code>）、<b>GitHub URL</b>。安装后需重启 Gateway 生效。
               </div>
             </div>
             <div id="ext-install-log" style="display:none">

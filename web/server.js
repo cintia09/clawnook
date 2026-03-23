@@ -11541,18 +11541,26 @@ app.post('/api/plugins/extension/install', async (req, res) => {
   if (!pkg || typeof pkg !== 'string') return res.status(400).json({ error: 'missing package' });
 
   const sanitized = pkg.trim();
-  // Validate: npm package name, scoped name, github:user/repo, or https URL
-  if (sanitized.length > 500 || /[;&|`$(){}\\]/.test(sanitized)) {
-    return res.status(400).json({ error: 'Invalid package name or URL' });
+  if (sanitized.length > 500 || /[;&|`$()\\]/.test(sanitized)) {
+    return res.status(400).json({ error: 'Invalid package name or command' });
   }
+
+  // Detect install format
+  const isNpxCmd = /^npx\s+(-y\s+)?@?[a-z0-9-~]/.test(sanitized);
   const isNpmPkg = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(@[^\s]*)?$/.test(sanitized);
   const isGithubShort = /^github:[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(#.*)?$/.test(sanitized);
   const isGitUrl = /^https?:\/\/(github\.com|gitlab\.com|gitee\.com)\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\.git)?(\/?#.*)?$/.test(sanitized);
-  if (!isNpmPkg && !isGithubShort && !isGitUrl) {
-    return res.status(400).json({ error: 'Please enter npm package name (e.g. @openclaw/my-ext), github:user/repo or GitHub URL' });
+  if (!isNpxCmd && !isNpmPkg && !isGithubShort && !isGitUrl) {
+    return res.status(400).json({ error: 'Supported formats: npm package, github:user/repo, GitHub URL, or npx command (e.g. npx -y @scope/cli install)' });
   }
 
   try {
+    // npx commands run directly (e.g. npx -y @tencent-weixin/openclaw-weixin-cli@latest install)
+    if (isNpxCmd) {
+      const output = await runCommandTextAsync(`${sanitized} 2>&1`, 180000);
+      return res.json({ success: true, output });
+    }
+
     // Try openclaw plugins install first (proper way)
     const cliCmd = [
       'if command -v openclaw >/dev/null 2>&1; then',
