@@ -5540,7 +5540,7 @@ async function refreshAppCenter() {
     // GitHub link
     var ghLink = app.repo ? '<a href="'+app.repo+'" target="_blank" rel="noopener" style="font-size:11px;color:var(--dim)" onclick="event.stopPropagation()">GitHub →</a>' : '';
 
-    return '<div class="card" style="grid-column:span 6;transition:transform .15s" onmouseenter="this.style.transform=\'translateY(-2px)\'" onmouseleave="this.style.transform=\'\'">'
+    return '<div class="card" style="grid-column:span 6">'
       + '<div style="display:flex;align-items:flex-start;gap:12px">'
       + '<div style="font-size:36px;line-height:1">'+app.icon+'</div>'
       + '<div style="flex:1;min-width:0">'
