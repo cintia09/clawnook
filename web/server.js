@@ -4020,7 +4020,7 @@ app.get('/api/update/check', async (req, res) => {
       }
     } catch {}
 
-    // --- Method 2: raw.githubusercontent.com version.txt (note: may be newer than release) ---
+    // --- Method 2: raw.githubusercontent.com version.txt (fallback only when API unreachable) ---
     {
       try {
         const rawResp = await fetchWithFallback(`${GITHUB_RAW_BASE}/main/version.txt`, {
@@ -4029,19 +4029,11 @@ app.get('/api/update/check', async (req, res) => {
         });
         if (rawResp.ok) {
           const versionTxt = (await rawResp.text()).trim();
-          const versionTxtNorm = normalizeVersionTag(versionTxt);
-          const releaseNorm = normalizeVersionTag(latestVersion);
           if (!latestVersion) {
-            // GitHub API unreachable
+            // GitHub API unreachable: use version.txt as fallback
             latestVersion = versionTxt;
             releaseName = versionTxt;
             console.log(`[update] GitHub API unavailable, got version from version.txt: ${versionTxt}`);
-          } else if (versionTxtNorm && releaseNorm && compareSemver(versionTxtNorm, releaseNorm) > 0) {
-            // version.txt newer than release (release not yet created)
-            latestVersion = versionTxt;
-            releaseName = versionTxt;
-            releaseUrl = `https://github.com/${GITHUB_REPO}/releases`;
-            console.log(`[update] version.txt (${versionTxt}) is newer than release (${releaseNorm}), using version.txt`);
           }
         }
       } catch {}
