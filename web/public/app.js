@@ -3532,7 +3532,7 @@ $('btn-wechat-qr')?.addEventListener('click', async ()=>{
   if (statusEl) { statusEl.textContent = _t('正在获取二维码...'); statusEl.style.color = ''; }
   appendMsgLog(_t('[wechat] 正在获取登录二维码...'));
 
-  const r = await api('/api/openclaw/wechat/qr', { method: 'POST', timeoutMs: 30000 });
+  const r = await api('/api/openclaw/wechat/qr', { method: 'POST', timeoutMs: 90000 });
   if (btn) btn.disabled = false;
 
   if (r.success && r.qrUrl) {

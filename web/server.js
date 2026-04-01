@@ -10060,8 +10060,8 @@ app.post('/api/openclaw/wechat/qr', async (req, res) => {
       '  exit 127',
       'fi'
     ].join('\n');
-    const result = await runOpenClawCli(command, 30000);
-    const output = String(result.output || '').trim();
+    const result = await runOpenClawCliWithPtyInput(command, '', 60000);
+    const output = stripAnsi(String(result.output || '')).trim();
     // Match WeChat QR URLs: liteapp.weixin.qq.com, .png images, or data URIs
     const urlMatch = output.match(/(https?:\/\/liteapp\.weixin\.qq\.com\/[^\s]+|https?:\/\/[^\s]+\.png[^\s]*|data:image\/[^\s]+)/);
     if (urlMatch) {
