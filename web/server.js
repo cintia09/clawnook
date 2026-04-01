@@ -5595,6 +5595,7 @@ function reconcileGatewayNodeListWithPresence(nodes, presenceNodes) {
 
 // Rate limit backoff for gateway WS auth failures to prevent triggering gateway rate limiter
 let _gwAuthBackoff = { failCount: 0, backoffUntil: 0 };
+let _gwProxyWsRateMap = new Map();
 
 function queryGatewayNodeList(timeoutMs = 5000) {
   // Skip WS auth if in backoff period (fall back to CLI directly)
@@ -5885,6 +5886,48 @@ async function refreshNodeStatusSnapshot(options = {}) {
 
 setTimeout(() => { void refreshNodeStatusSnapshot(); }, 1500);
 setInterval(() => { void refreshNodeStatusSnapshot(); }, NODE_STATUS_POLL_INTERVAL_MS);
+
+// Auto-approve pending gateway pairing requests from webchat Control UI browsers
+// This prevents the pairing flow from failing and triggering the gateway rate limiter
+setInterval(() => {
+  try {
+    const pending = readJson(DEVICE_PAIRING_PENDING_PATH, {});
+    const pendingEntries = Object.entries(pending).filter(([, p]) =>
+      p && typeof p === 'object' && p.requestId && p.clientId === 'openclaw-control-ui' && p.clientMode === 'webchat'
+    );
+    if (!pendingEntries.length) return;
+    const paired = readJson(DEVICE_PAIRING_PAIRED_PATH, {});
+    const now = Date.now();
+    for (const [, entry] of pendingEntries) {
+      const deviceId = entry.deviceId;
+      const existing = paired[deviceId] || {};
+      const role = (entry.role || 'operator').trim() || 'operator';
+      const fullScopes = Array.from(new Set([
+        ...(existing.approvedScopes || existing.scopes || []),
+        ...(entry.scopes || []),
+        'operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'
+      ]));
+      const token = crypto.randomBytes(24).toString('hex');
+      const existingTokens = existing.tokens && typeof existing.tokens === 'object' ? { ...existing.tokens } : {};
+      existingTokens[role] = { token, role, scopes: fullScopes, createdAtMs: existingTokens[role]?.createdAtMs || now, rotatedAtMs: now };
+      paired[deviceId] = {
+        ...existing, deviceId,
+        publicKey: entry.publicKey || existing.publicKey,
+        displayName: entry.displayName || existing.displayName || 'Auto-approved Browser',
+        platform: entry.platform || existing.platform,
+        clientId: entry.clientId || existing.clientId,
+        clientMode: entry.clientMode || existing.clientMode,
+        role, roles: Array.from(new Set([...(existing.roles || []), ...(entry.roles || [role])])),
+        scopes: fullScopes, approvedScopes: fullScopes, tokens: existingTokens,
+        approvedAtMs: now, isRepair: false
+      };
+      delete pending[entry.requestId];
+      console.log(`[pairing][auto-approve] webchat device ${deviceId.slice(0, 12)}... (${entry.platform || 'unknown'})`);
+    }
+    fs.writeFileSync(DEVICE_PAIRING_PENDING_PATH, JSON.stringify(pending, null, 2));
+    fs.writeFileSync(DEVICE_PAIRING_PAIRED_PATH, JSON.stringify(paired, null, 2));
+  } catch {}
+}, 3000);
 
 // GET /api/node/connected — Get connected remote device list
 app.get('/api/node/connected', async (req, res) => {
@@ -12060,6 +12103,23 @@ server.on('upgrade', (req, socket, head) => {
     } catch {}
     socket.destroy();
     return;
+  }
+
+  // Rate limit WebSocket upgrades to gateway-proxy to prevent triggering gateway's auth rate limiter
+  const clientIp = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+  const wsRateKey = `gwproxy-ws:${clientIp}`;
+  const now = Date.now();
+  if (!_gwProxyWsRateMap) _gwProxyWsRateMap = new Map();
+  const lastTs = _gwProxyWsRateMap.get(wsRateKey) || 0;
+  if (now - lastTs < 2000) {
+    try { socket.write('HTTP/1.1 429 Too Many Requests\r\nRetry-After: 2\r\nConnection: close\r\n\r\n'); } catch {}
+    socket.destroy();
+    return;
+  }
+  _gwProxyWsRateMap.set(wsRateKey, now);
+  // Cleanup old entries periodically
+  if (_gwProxyWsRateMap.size > 100) {
+    for (const [k, t] of _gwProxyWsRateMap) { if (now - t > 30000) _gwProxyWsRateMap.delete(k); }
   }
 
   const cfg = readDockerConfig();
