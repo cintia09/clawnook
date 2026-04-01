@@ -3408,11 +3408,12 @@ async function loadMessagingConfig(){
   setVal('whatsapp-url', c.whatsapp?.apiUrl);
   setVal('whatsapp-key', c.whatsapp?.apiKey);
 
-  // -- WeChat --
-  setBoolSelect('wechat-enabled', c.wechat?.enabled);
-  setVal('wechat-botname', c.wechat?.botName);
-  setVal('wechat-users', c.wechat?.allowedUsers);
-  updateWechatLoginStatus(c.wechat);
+  // -- WeChat (plugin channel id: openclaw-weixin) --
+  const wx = c['openclaw-weixin'] || c.wechat || {};
+  setBoolSelect('wechat-enabled', wx.enabled);
+  setVal('wechat-botname', wx.botName);
+  setVal('wechat-users', wx.allowedUsers);
+  updateWechatLoginStatus(wx);
 
   if ($('btn-msg-restart')) $('btn-msg-restart').style.display = 'none';
   appendMsgLog(_t('[load] 配置读取完成'));
@@ -3422,7 +3423,7 @@ async function loadMessagingConfig(){
     const pd = await api('/api/plugins/list');
     const allPlugins = pd.allPlugins || [];
     const pluginIds = new Set(allPlugins.map(p => p.id));
-    updateMsgPluginStatus('wechat', pluginIds.has('wechat'));
+    updateMsgPluginStatus('wechat', pluginIds.has('openclaw-weixin') || pluginIds.has('wechat'));
     updateMsgPluginStatus('whatsapp', pluginIds.has('whatsapp'));
   } catch {}
 
@@ -3537,7 +3538,8 @@ $('btn-wechat-qr')?.addEventListener('click', async ()=>{
   if (r.success && r.qrUrl) {
     if (container) {
       var imgEl = $('wechat-qr-img');
-      imgEl.innerHTML = '<img src="' + r.qrUrl + '" alt="WeChat QR" style="width:200px;height:200px" />';
+      imgEl.innerHTML = '<img src="' + r.qrUrl + '" alt="WeChat QR" style="width:200px;height:200px" />'
+        + (r.loginUrl ? '<br><a href="' + r.loginUrl + '" target="_blank" style="font-size:12px;color:#58a6ff">' + _t('浏览器打开扫码') + '</a>' : '');
       container.style.display = '';
     }
     if (statusEl) { statusEl.textContent = _t('请使用微信扫一扫上方二维码'); statusEl.style.color = '#58a6ff'; }
@@ -3575,8 +3577,9 @@ qa('[data-save-msg]').forEach(btn => {
     const platform = btn.getAttribute('data-save-msg');
     appendMsgLog(_t('[save] 开始保存 {0} 配置...', platform));
     const update = { channels: {} };
-    const enabled = ($(`${platform}-enabled`)?.value || 'false') === 'true';
-    update.channels[platform] = { enabled };
+    // Map UI platform name to actual OpenClaw channel config key
+    const channelKey = platform === 'wechat' ? 'openclaw-weixin' : platform;
+    update.channels[channelKey] = { enabled };
 
     if (platform === 'feishu'){
       // Write nested structure: accounts.default (OpenClaw requires default or bindings)
@@ -3621,8 +3624,8 @@ qa('[data-save-msg]').forEach(btn => {
       update.channels.whatsapp.apiKey = $('whatsapp-key').value;
     }
     if (platform === 'wechat'){
-      update.channels.wechat.botName = $('wechat-botname').value;
-      update.channels.wechat.allowedUsers = $('wechat-users').value;
+      update.channels['openclaw-weixin'].botName = $('wechat-botname').value;
+      update.channels['openclaw-weixin'].allowedUsers = $('wechat-users').value;
     }
 
     const r = await api('/api/config', { method:'POST', body:update });
