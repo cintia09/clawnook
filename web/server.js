@@ -4185,8 +4185,10 @@ const HOTPATCH_FILES_FALLBACK = [
   ['web/public/login.js', '/opt/openclaw-web/public/login.js'],
   ['web/public/style.css', '/opt/openclaw-web/public/style.css'],
   ['web/server.js', '/opt/openclaw-web/server.js'],
+  ['web/package.json', '/opt/openclaw-web/package.json'],
   ['start-services.sh', '/usr/local/bin/start-services.sh'],
   ['scripts/openclaw-gateway-watchdog.sh', '/usr/local/bin/openclaw-gateway-watchdog.sh'],
+  ['scripts/config-fixer.mjs', '/opt/clawnook/scripts/config-fixer.mjs'],
   ['Caddyfile.template', '/etc/caddy/Caddyfile.template'],
 ];
 
@@ -4371,6 +4373,18 @@ app.post('/api/update/hotpatch', async (req, res) => {
       }
     }
 
+    // Run npm install if package.json was updated (new dependencies)
+    if (hotpatchState.updated.includes('web/package.json')) {
+      try {
+        log('package.json updated, running npm install...');
+        execSync('cd /opt/openclaw-web && npm install --omit=dev 2>&1', { timeout: 60000, stdio: 'pipe' });
+        log('  ✓ npm install completed');
+      } catch (npmErr) {
+        const stderr = (npmErr.stderr || '').toString().trim().slice(0, 200);
+        log(`  ⚠ npm install failed (non-fatal): ${stderr}`);
+      }
+    }
+
     // Update version file ONLY if ALL files were successfully updated (no failures)
     if (hotpatchState.failed.length > 0) {
       log(`⚠️ version not updated: ${hotpatchState.failed.length} file update(s) failed, check network or GitHub access`);
@@ -4404,6 +4418,22 @@ app.post('/api/update/hotpatch', async (req, res) => {
           log(`Version updated to: ${newVersion}`);
         } else if (hotpatchState.updated.length === 0) {
           log(`All files are up to date, no changes needed`);
+        }
+      } catch {}
+    }
+
+    // Sync Dockerfile hash so future update checks don't report requiresFullUpdate
+    if (hotpatchState.updated.length > 0) {
+      try {
+        const dfResp = await fetchWithFallback(`${GITHUB_RAW_BASE}/main/Dockerfile.lite`, {
+          headers: { 'User-Agent': 'clawnook' },
+          timeout: 8000
+        });
+        if (dfResp.ok) {
+          const dfText = await dfResp.text();
+          const newHash = crypto.createHash('sha256').update(dfText).digest('hex');
+          fs.writeFileSync(DOCKERFILE_HASH_FILE, newHash + '\n');
+          log(`Dockerfile hash synced: ${newHash.slice(0, 12)}...`);
         }
       } catch {}
     }

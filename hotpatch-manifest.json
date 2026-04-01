@@ -9,8 +9,10 @@
     ["web/public/login.js",     "/opt/openclaw-web/public/login.js"],
     ["web/public/style.css",    "/opt/openclaw-web/public/style.css"],
     ["web/server.js",           "/opt/openclaw-web/server.js"],
+    ["web/package.json",        "/opt/openclaw-web/package.json"],
     ["start-services.sh",       "/usr/local/bin/start-services.sh"],
     ["scripts/openclaw-gateway-watchdog.sh", "/usr/local/bin/openclaw-gateway-watchdog.sh"],
+    ["scripts/config-fixer.mjs", "/opt/clawnook/scripts/config-fixer.mjs"],
     ["Caddyfile.template",      "/etc/caddy/Caddyfile.template"],
     ["hotpatch-manifest.json",  "/opt/openclaw-web/hotpatch-manifest.json"]
   ]
