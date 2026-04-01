@@ -5167,9 +5167,13 @@ function createGatewayControlUiClient(timeoutMs = 5000) {
         }
         if (msg.id === connectId) {
           if (!msg.ok) {
+            _gwAuthBackoff.failCount++;
+            const backoffSec = Math.min(300, 10 * Math.pow(2, _gwAuthBackoff.failCount - 1));
+            _gwAuthBackoff.backoffUntil = Date.now() + backoffSec * 1000;
             finishReject(new Error(msg.error?.message || msg.error?.code || 'gateway connect rejected'));
             return;
           }
+          _gwAuthBackoff = { failCount: 0, backoffUntil: 0 };
           if (settled) return;
           settled = true;
           clearTimeout(timer);
@@ -5589,7 +5593,18 @@ function reconcileGatewayNodeListWithPresence(nodes, presenceNodes) {
   return merged;
 }
 
+// Rate limit backoff for gateway WS auth failures to prevent triggering gateway rate limiter
+let _gwAuthBackoff = { failCount: 0, backoffUntil: 0 };
+
 function queryGatewayNodeList(timeoutMs = 5000) {
+  // Skip WS auth if in backoff period (fall back to CLI directly)
+  if (_gwAuthBackoff.backoffUntil > Date.now()) {
+    const cfg = readDockerConfig();
+    const gatewayPort = Number(cfg.port || 18789) || 18789;
+    const token = getGatewayAuthToken();
+    return queryGatewayNodeListFallback(gatewayPort, token, timeoutMs);
+  }
+
   return new Promise((resolve) => {
     const WsClient = require('ws');
     const cfg = readDockerConfig();
@@ -5636,11 +5651,16 @@ function queryGatewayNodeList(timeoutMs = 5000) {
         if (msg.id === connectId) {
           if (msg.ok) {
             // control-ui connection succeeded → call node.list
+            _gwAuthBackoff = { failCount: 0, backoffUntil: 0 };
             listId = crypto.randomUUID();
             ws.send(JSON.stringify({ type: 'req', id: listId, method: 'node.list', params: {} }));
           } else {
-            // control-ui rejected (e.g. device identity required) → degrade to cli fallback
-            logNodeProbeDebug('[node] control-ui rejected:', msg.error?.code || 'unknown', '→ cli fallback');
+            // control-ui rejected → backoff to prevent triggering gateway rate limiter
+            const errCode = msg.error?.code || msg.error?.message || 'unknown';
+            _gwAuthBackoff.failCount++;
+            const backoffSec = Math.min(300, 10 * Math.pow(2, _gwAuthBackoff.failCount - 1));
+            _gwAuthBackoff.backoffUntil = Date.now() + backoffSec * 1000;
+            logNodeProbeDebug(`[node] control-ui rejected: ${errCode} → cli fallback (backoff ${backoffSec}s)`);
             usedFallback = true;
             try { ws.close(); } catch {}
             queryGatewayNodeListFallback(gatewayPort, token, timeoutMs - 1000).then(v => { clearTimeout(timer); finish(v); });
