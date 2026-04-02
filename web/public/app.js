@@ -3579,6 +3579,7 @@ qa('[data-save-msg]').forEach(btn => {
     const update = { channels: {} };
     // Map UI platform name to actual OpenClaw channel config key
     const channelKey = platform === 'wechat' ? 'openclaw-weixin' : platform;
+    const enabled = ($(`${platform}-enabled`)?.value || 'false') === 'true';
     update.channels[channelKey] = { enabled };
 
     if (platform === 'feishu'){
